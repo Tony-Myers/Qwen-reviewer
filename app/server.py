@@ -546,6 +546,15 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         text, table_blocks = rp.load_document(file_path)
 
         _add_progress(job_id, "Structuring evidence...")
+        derived = rp.detect_derived_input(text)
+        if derived:
+            raise ValueError(
+                f"{file_path.name} looks like output from this pipeline rather "
+                f"than a manuscript (found {', '.join(repr(d) for d in derived[:3])}). "
+                "Reviewing a review produces a report that reads normally but "
+                "describes the wrong document. Upload the original manuscript."
+            )
+
         manifest = rp.structure_evidence(file_path.name, text, table_blocks)
         tables_text = rp.tables_for_prompt(table_blocks)
         mc = manifest.method_class

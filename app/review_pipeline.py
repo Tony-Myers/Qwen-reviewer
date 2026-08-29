@@ -2846,6 +2846,153 @@ Material:
     return clean_model_output(out)
 
 
+# ---------------------------------------------------------------------------
+# Guard: refuse to review this pipeline's own output
+# ---------------------------------------------------------------------------
+# Feeding a review or an evidence appendix back in produces a report that looks
+# entirely normal and is about the wrong document: the manifest picks up the
+# appendix's own prose, so flags such as "Randomisation described" come out true
+# because the words appear in the report's furniture, and the reviewer complains
+# that diagnostics are missing when it is only reading a summary of them.
+DERIVED_INPUT_MARKERS = (
+    "# Local peer-review report",
+    "# Evidence appendix",
+    "Evidence manifest for:",
+    "## Chunk previews",
+    "Detected model/result blocks",
+    "Block counts:",
+)
+
+
+def detect_derived_input(text: str) -> List[str]:
+    """Markers showing the text is output from this pipeline, not a manuscript."""
+    if not text:
+        return []
+    return [marker for marker in DERIVED_INPUT_MARKERS if marker in text]
+
+
+# ---------------------------------------------------------------------------
+# Read each model's predictor list straight out of the coefficient tables
+# ---------------------------------------------------------------------------
+_SKIP_ROW_LABELS = re.compile(
+    r"^\s*(?:r2|r\^?2|r-?squared|observations?|n|quantile|estimates?|ci|"
+    r"probability|intercept|note|source|page|label)\b",
+    re.I,
+)
+_POLY_QUALIFIER = re.compile(r"\b(?:quadratic|cubic|quartic|linear|poly\w*|spline)\b", re.I)
+# In a stacked coefficient table each model block closes with its fit
+# statistic. Treating that as the terminator stops a following descriptive
+# table being swallowed into the last model.
+_MODEL_TERMINATOR = re.compile(
+    r"^\s*(?:r2|r\^?2|r-?squared|observations?|looic|loo|waic|aic|bic|deviance|dic)\b",
+    re.I,
+)
+_TRAILING_UNIT = re.compile(r"\b(?:cm|mm|kg|m|s|yrs?|years?|pct|percent)\s*$", re.I)
+# A model section in a stacked coefficient table is conventionally labelled
+# "<something> Predictors" or "<something> Model". Requiring that keeps
+# descriptive tables out: their wrapped row labels ("Body", "Sitting", "Bi-")
+# otherwise became models of their own and buried the real signal.
+_SECTION_HEADING = re.compile(
+    r"^[A-Z][A-Za-z /-]{2,40}\b(?:predictors?|model|models|equation)\s*$", re.I
+)
+
+
+def _normalise_predictor(label: str) -> str:
+    """Fold a coefficient row label to a comparable predictor name."""
+    text = label.strip()
+    text = re.sub(r"^\s*l[no]g?\s*\(", "(", text, flags=re.I)   # ln( / log(
+    text = _POLY_QUALIFIER.sub(" ", text)
+    text = re.sub(r"\[[^\]]*\]|\([%\s]*\)", " ", text)          # units
+    text = re.sub(r"[\[\]{}()]", " ", text)
+    text = re.sub(r"\b\d+\b", " ", text)                        # term index
+    text = re.sub(r"[^A-Za-z\s-]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = _TRAILING_UNIT.sub("", text).strip()   # "... breadth cm" -> "... breadth"
+    return text.lower()
+
+
+def extract_model_predictors(
+    table_blocks: List[Tuple[int, str]]
+) -> "Dict[str, List[str]]":
+    """
+    Map each model heading in the coefficient tables to its predictor list.
+
+    Reading this off the tables mechanically, rather than asking the model to
+    notice it, is the point: a covariate present in three of four models and
+    absent from the fourth is exactly the kind of asymmetry a reviewer should
+    see, and exactly the kind a prose summary loses.
+    """
+    models: "Dict[str, List[str]]" = {}
+    current = None
+    for _, block_text in table_blocks:
+        for raw_line in block_text.splitlines():
+            cells = [c.strip() for c in raw_line.split("\t")]
+            nonempty = [c for c in cells if c]
+            if not nonempty:
+                continue
+            if len(nonempty) == 1:
+                candidate = nonempty[0]
+                if _SECTION_HEADING.match(candidate) and not re.search(r"\d", candidate):
+                    current = candidate
+                    models.setdefault(current, [])
+                continue
+            if current is None:
+                continue
+            label = nonempty[0]
+            if _MODEL_TERMINATOR.match(label):
+                current = None      # this model's block has ended
+                continue
+            if _SKIP_ROW_LABELS.match(label):
+                continue
+            if not any(re.search(r"\d", c) for c in nonempty[1:]):
+                continue
+            name = _normalise_predictor(label)
+            if name and name not in models[current]:
+                models[current].append(name)
+    return {k: v for k, v in models.items() if v}
+
+
+def summarise_model_predictors(table_blocks: List[Tuple[int, str]]) -> str:
+    """A plain statement of what each model contains, and what it omits."""
+    models = extract_model_predictors(table_blocks)
+    if len(models) < 2:
+        return ""
+
+    lines = [
+        "Predictor lists read directly from the coefficient tables. These are "
+        "what each model actually contains, not what the narrative says it "
+        "contains; where the two disagree, the table is the evidence:",
+    ]
+    for name, predictors in models.items():
+        lines.append(f"- {name}: {', '.join(predictors)}")
+
+    union: List[str] = []
+    for predictors in models.values():
+        for p in predictors:
+            if p not in union:
+                union.append(p)
+
+    asymmetries = []
+    for predictor in union:
+        present = [n for n, ps in models.items() if predictor in ps]
+        absent = [n for n, ps in models.items() if predictor not in ps]
+        if present and absent:
+            asymmetries.append(
+                f"- {predictor}: present in {', '.join(present)}; "
+                f"ABSENT from {', '.join(absent)}"
+            )
+
+    if asymmetries:
+        lines.append("")
+        lines.append(
+            "Predictors that appear in some of these models but not others. "
+            "Check each against what the manuscript claims was adjusted for or "
+            "held constant:"
+        )
+        lines.extend(asymmetries)
+    return "\n".join(lines)
+
+
 MAX_PROMPT_TABLE_ROWS = 45
 MAX_PROMPT_TABLE_CHARS = 9000
 
@@ -2955,6 +3102,9 @@ def tables_for_prompt(table_blocks: List[Tuple[int, str]]) -> str:
     if not table_blocks:
         return ""
     parts: List[str] = []
+    predictor_summary = summarise_model_predictors(table_blocks)
+    if predictor_summary:
+        parts.append(predictor_summary)
     total = 0
     for page_num, block_text in table_blocks:
         lines = [ln for ln in block_text.splitlines() if ln.strip()]
@@ -4402,6 +4552,12 @@ def main() -> int:
              f"full list. Default: {model_display_name(MODEL_NAME)}",
     )
     parser.add_argument(
+        "--allow-derived-input",
+        action="store_true",
+        help="Review a file even when it looks like this pipeline's own output "
+             "(a previous review or evidence appendix). Off by default.",
+    )
+    parser.add_argument(
         "--list-models",
         action="store_true",
         help="List the model aliases accepted by --model, then exit.",
@@ -4499,6 +4655,25 @@ def main() -> int:
             text, table_blocks = load_document(path)
         except Exception as e:
             file_summaries.append((path.name, f"Failed to read file: {e}"))
+            per_file_tables[path.name] = []
+            per_file_chunks[path.name] = []
+            continue
+
+        derived = detect_derived_input(text)
+        if derived and not getattr(args, "allow_derived_input", False):
+            print(
+                f"\n  REFUSING: {path.name} looks like output from this pipeline, "
+                f"not a manuscript.\n"
+                f"  Found: {', '.join(repr(d) for d in derived[:3])}\n"
+                f"  Reviewing a review produces a report that reads normally and "
+                f"describes the wrong document.\n"
+                f"  Point it at the original manuscript, or pass "
+                f"--allow-derived-input if this really is what you meant.\n",
+                file=sys.stderr,
+            )
+            file_summaries.append(
+                (path.name, "Skipped: input appears to be output from this pipeline.")
+            )
             per_file_tables[path.name] = []
             per_file_chunks[path.name] = []
             continue
