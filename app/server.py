@@ -547,6 +547,7 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
 
         _add_progress(job_id, "Structuring evidence...")
         manifest = rp.structure_evidence(file_path.name, text, table_blocks)
+        tables_text = rp.tables_for_prompt(table_blocks)
         mc = manifest.method_class
         _add_progress(job_id, f"Method: {mc.value}")
         if manifest.additional_method_classes:
@@ -588,6 +589,7 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
                 model, tokenizer, file_path.name, combined,
                 method_expectations=method_expectations,
                 manifest_summary=manifest_summary,
+                tables_text=tables_text,
             )
 
         file_summaries = [(file_path.name, file_summary)]
@@ -597,7 +599,9 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         _add_progress(job_id, "Synthesising final report...")
         with model_lock:
             final_report = rp.synthesize_report(
-                model, tokenizer, file_summaries, all_manifests=all_manifests,
+                model, tokenizer, file_summaries,
+                all_manifests=all_manifests,
+                tables_text=tables_text,
             )
 
         # Programmatic post-checks

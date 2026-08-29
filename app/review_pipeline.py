@@ -2841,13 +2841,56 @@ Material:
     return clean_model_output(out)
 
 
+MAX_PROMPT_TABLE_ROWS = 45
+MAX_PROMPT_TABLE_CHARS = 9000
+
+
+def tables_for_prompt(table_blocks: List[Tuple[int, str]]) -> str:
+    """
+    Render extracted tables for a synthesis prompt.
+
+    The synthesis stages previously saw only the manifest's list of table
+    labels, never the values. That is why a report could ask for a credible
+    interval that was sitting in the evidence appendix, and then declare the
+    same interval unavailable. The numbers have to be in the prompt for a
+    claim about them to be worth anything.
+    """
+    if not table_blocks:
+        return ""
+    parts: List[str] = []
+    total = 0
+    for page_num, block_text in table_blocks:
+        lines = [ln for ln in block_text.splitlines() if ln.strip()]
+        truncated = False
+        if len(lines) > MAX_PROMPT_TABLE_ROWS:
+            lines = lines[:MAX_PROMPT_TABLE_ROWS]
+            truncated = True
+        rendered = "\n".join(lines)
+        if truncated:
+            rendered += "\n... (table truncated for length)"
+        if total + len(rendered) > MAX_PROMPT_TABLE_CHARS:
+            parts.append("... (further tables omitted for length)")
+            break
+        total += len(rendered)
+        parts.append(rendered)
+    return "\n\n".join(parts)
+
+
 def synthesize_file_review(model, tokenizer, file_name: str, combined_chunk_review: str,
-                           method_expectations: str = "", manifest_summary: str = "") -> str:
+                           method_expectations: str = "", manifest_summary: str = "",
+                           tables_text: str = "") -> str:
     context_block = ""
     if method_expectations:
         context_block += f"\n{method_expectations}\n"
     if manifest_summary:
         context_block += f"\nEvidence manifest:\n{manifest_summary}\n"
+    if tables_text:
+        context_block += (
+            "\nTables extracted from this manuscript. These are the paper's own "
+            "reported values; treat them as primary evidence and quote from them "
+            "where a concern turns on a number:\n"
+            f"{tables_text}\n"
+        )
 
     user_text = f"""
 {SYSTEM_STYLE}
@@ -2868,7 +2911,9 @@ Required headings:
 Rules:
 - If a study uses MCMC or MLwiN without explicit Bayesian terminology (priors, posteriors), treat it as strictly frequentist. Do not suggest the paradigm is unclear and do not mention missing Bayesian elements.
 - Do not include complaints about OCR-garbled equations or trivial software version discrepancies.
-- Base the summary only on the chunk notes.
+- Base the summary on the chunk notes and on the extracted tables above.
+- Where a table above reports an estimate, interval or fit statistic, use it. Never describe a value as unreported, unavailable or not extractable if it appears in those tables.
+- Compare what the tables show against what the narrative claims. A covariate the text says was adjusted for, but which is absent from that model's predictor list, is a reportable inconsistency, as is a model that includes a term its counterparts omit.
 - Maximum 4 bullets under any heading.
 - Prefer directly supported points over generic reviewer concerns.
 - Do not say a table, coefficient, equation, or diagnostic is missing if the chunk notes contain it.
@@ -2903,6 +2948,7 @@ def synthesize_report(
     tokenizer,
     file_summaries: List[Tuple[str, str]],
     all_manifests: Optional[List[EvidenceManifest]] = None,
+    tables_text: str = "",
 ) -> str:
     """
     Create one integrated internal critical-appraisal memo.
@@ -2930,11 +2976,21 @@ def synthesize_report(
             manifest_parts.append(part)
         manifest_block = "\n\nEvidence manifests:\n" + "\n\n".join(manifest_parts)
 
+    tables_block = ""
+    if tables_text:
+        tables_block = (
+            "\n\nTables extracted from the manuscript(s). These are the paper's own "
+            "reported values. Treat them as primary evidence, quote from them when a "
+            "concern turns on a number, and check the narrative against them:\n"
+            f"{tables_text}\n"
+        )
+
     user_text = f"""
 {SYSTEM_STYLE}
 
 {COMMON_DIAGNOSTIC_ALIASES}
 {manifest_block}
+{tables_block}
 
 Create one integrated internal critical-appraisal memo from the file summaries below.
 
@@ -2965,7 +3021,8 @@ Required format:
 - Do not include concerns that cannot be linked to specific evidence in the supplied material.
 
 Evidence must come from the manuscript:
-- Every "Evidence:" line must quote the manuscript, a table cell, or a numeric value, with its page or table where known. Quote it verbatim in double quotes.
+- Every "Evidence:" line must quote the manuscript, a table cell, or a numeric value, with its page or table where known.
+- A quotation must reproduce the source exactly, character for character. If you cannot reproduce the wording exactly, describe it in your own words WITHOUT quotation marks. Never place quotation marks around a paraphrase, a reconstruction, or a plausible-sounding phrase: an invented quotation in a review is worse than no quotation.
 - Never cite this pipeline's own intermediate output as evidence. Phrases such as "the file summary notes", "the evidence summary flags", "the manifest indicates" are NOT evidence: they describe a summary of the paper, not the paper. If the only support for a concern is such a phrase, the concern belongs under "Verification prompts", not here.
 - If you cannot produce a verbatim quotation or a specific number for a concern, move it to "Verification prompts" or drop it.
 
@@ -3006,7 +3063,8 @@ Concern-selection rules:
 - Do not raise medication-adjustment checks unless medication use is directly relevant to the outcome or exposure and is mentioned in the evidence.
 
 Missingness and reporting rules:
-- Do not claim that a table, coefficient, equation, diagnostic, statistic, or model detail is missing if it is present in the file summaries or evidence manifest.
+- Do not claim that a table, coefficient, equation, diagnostic, statistic, or model detail is missing if it is present in the file summaries, the evidence manifest, or the extracted tables above.
+- Before writing any "Extraction limits" bullet, check the extracted tables. Do not record as an extraction limit a value that appears there. Similarly, do not raise a "Check:" asking for a number the tables already give; answer it from the table instead, and report the answer as a concern only if the number warrants one.
 - If the evidence manifest says a statistic type is present, for example "Confidence intervals reported: True", do not make blanket claims that it is missing.
 - You may say that a statistic is "reported for some analyses but not visible for [specific analysis] in the extracted material" if that is accurate.
 - Apply the same principle to standard errors, p-values, effect sizes, model fit statistics, equations, and diagnostics.
@@ -4361,6 +4419,7 @@ def main() -> int:
             mc, additional_classes=manifest.additional_method_classes,
         )
         manifest_summary = manifest.summary_text()
+        file_tables_text = tables_for_prompt(table_blocks)
 
         chunks = split_text(text)
         per_file_chunks[path.name] = chunks
@@ -4391,6 +4450,7 @@ def main() -> int:
         try:
             file_summary = synthesize_file_review(
                 model, tokenizer, path.name, combined,
+                tables_text=file_tables_text,
                 method_expectations=method_expectations,
                 manifest_summary=manifest_summary,
             )
@@ -4401,7 +4461,14 @@ def main() -> int:
     # --- Phase 5 continued: Final synthesis ---
     print("Synthesising final report...")
     try:
-        final_report = synthesize_report(model, tokenizer, file_summaries, all_manifests=all_manifests)
+        all_table_blocks = [
+            item for tables in per_file_tables.values() for item in tables
+        ]
+        final_report = synthesize_report(
+            model, tokenizer, file_summaries,
+            all_manifests=all_manifests,
+            tables_text=tables_for_prompt(all_table_blocks),
+        )
 
         # --- Phase 6: Programmatic post-checks ---
         all_corrections: List[str] = []
