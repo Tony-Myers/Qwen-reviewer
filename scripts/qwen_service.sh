@@ -55,6 +55,7 @@ LLAMA_PID_FILE="$RUN_DIR/llama-server.pid"
 APP_PID_FILE="$RUN_DIR/app-server.pid"
 LLAMA_LOG="$LOG_DIR/llama-server.log"
 APP_LOG="$LOG_DIR/app-server.log"
+SERVICE_LOG="$LOG_DIR/service.log"
 
 WAIT_FOR_READY=1
 OPEN_BROWSER=1
@@ -74,8 +75,29 @@ notify() {
 }
 
 log_line() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+  local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+  echo "$msg"
+  echo "$msg" >> "$SERVICE_LOG" 2>/dev/null || true
 }
+
+# Automator's "Run Shell Script" shows only stderr in its error dialog, and
+# only when the script exits non-zero. Diagnostics written to stdout are
+# discarded, which produces the useless message:
+#     The action "Run Shell Script" encountered an error: ""
+# So on any failing exit, replay the recent log to stderr. Interactive runs
+# already have it on screen and are left alone.
+on_exit() {
+  local rc=$?
+  if [[ $rc -ne 0 && ! -t 2 ]]; then
+    {
+      echo "qwen_service.sh ${COMMAND:-?} failed (exit $rc)."
+      echo "--- recent log ($SERVICE_LOG) ---"
+      tail -n 30 "$SERVICE_LOG" 2>/dev/null || echo "(no log available)"
+    } >&2
+  fi
+  exit $rc
+}
+trap on_exit EXIT
 
 # --- Process helpers -------------------------------------------------------
 # Never kill by port alone. A PID file can go stale and be reused by an
@@ -409,9 +431,108 @@ cmd_status() {
 
 cmd_logs() {
   case "${1:-app}" in
-    llama) tail -n 40 -f "$LLAMA_LOG" ;;
-    app|*)  tail -n 40 -f "$APP_LOG" ;;
+    llama)   tail -n 40 -f "$LLAMA_LOG" ;;
+    service) tail -n 40 -f "$SERVICE_LOG" ;;
+    app|*)   tail -n 40 -f "$APP_LOG" ;;
   esac
+}
+
+# --- Doctor ----------------------------------------------------------------
+# Reports the environment as this script sees it. Run it from Terminal and
+# from an Automator action: a difference between the two is almost always the
+# cause of "works in Terminal, fails in Automator".
+cmd_doctor() {
+  local problems=0
+  local mark
+
+  echo "Qwen review — environment report"
+  echo "================================"
+  echo "Invoked      : $([[ -t 1 ]] && echo 'interactive terminal' || echo 'non-interactive (Automator, launchd, cron)')"
+  echo "Project      : $PROJECT_DIR"
+  echo "User         : $(id -un)"
+  echo "Shell        : ${SHELL:-unset}"
+  echo ""
+  echo "PATH:"
+  echo "$PATH" | tr ':' '\n' | sed 's/^/  /'
+  echo ""
+
+  echo "Executables"
+  echo "-----------"
+  for tool in "$LLAMA_BIN" curl lsof open osascript; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf "  ok    %-14s %s\n" "$tool" "$(command -v "$tool")"
+    else
+      printf "  MISS  %-14s not found on PATH\n" "$tool"
+      [[ "$tool" == "$LLAMA_BIN" ]] && problems=1
+    fi
+  done
+  echo ""
+
+  echo "Python environment"
+  echo "------------------"
+  if [[ -x "$VENV_PYTHON" ]]; then
+    printf "  ok    venv python   %s\n" "$("$VENV_PYTHON" -V 2>&1)"
+    for module in fastapi uvicorn; do
+      if "$VENV_PYTHON" -c "import $module" 2>/dev/null; then
+        printf "  ok    %-14s importable\n" "$module"
+      else
+        printf "  MISS  %-14s not installed in the venv\n" "$module"
+        problems=1
+      fi
+    done
+  else
+    printf "  MISS  venv python   %s does not exist\n" "$VENV_PYTHON"
+    problems=1
+  fi
+  echo ""
+
+  echo "Model"
+  echo "-----"
+  if [[ "$MODEL" == *.gguf ]]; then
+    if [[ -f "$MODEL" ]]; then
+      printf "  ok    %s (%s)\n" "$(basename "$MODEL")" "$(du -h "$MODEL" 2>/dev/null | cut -f1)"
+    else
+      printf "  MISS  %s\n" "$MODEL"
+      problems=1
+    fi
+  else
+    printf "  info  MLX model: %s (no llama-server needed)\n" "$MODEL"
+  fi
+  echo ""
+
+  echo "Ports"
+  echo "-----"
+  for spec in "llama-server:$LLAMA_PORT" "app server:$APP_PORT"; do
+    local label="${spec%:*}" port="${spec##*:}"
+    if port_in_use "$port"; then
+      printf "  busy  %-13s port %s held by pid %s (%s)\n" "$label" "$port" \
+        "$(port_owner "$port")" \
+        "$(ps -p "$(port_owner "$port")" -o comm= 2>/dev/null || echo unknown)"
+    else
+      printf "  free  %-13s port %s\n" "$label" "$port"
+    fi
+  done
+  echo ""
+
+  echo "Writable paths"
+  echo "--------------"
+  for dir in "$RUN_DIR" "$LOG_DIR"; do
+    if [[ -w "$dir" ]]; then
+      printf "  ok    %s\n" "$dir"
+    else
+      printf "  MISS  %s is not writable\n" "$dir"
+      problems=1
+    fi
+  done
+  echo ""
+
+  if [[ $problems -eq 0 ]]; then
+    mark="No problems found. 'start' should work from here."
+  else
+    mark="Problems found above — fix the MISS lines before starting."
+  fi
+  echo "$mark"
+  return $problems
 }
 
 # --- Argument parsing ------------------------------------------------------
@@ -425,7 +546,7 @@ while [[ $# -gt 0 ]]; do
     --port)    APP_PORT="$2"; shift 2 ;;
     --llama-port) LLAMA_PORT="$2"; shift 2 ;;
     --model)   MODEL="$2"; shift 2 ;;
-    llama|app) LOG_TARGET="$1"; shift ;;
+    llama|app|service) LOG_TARGET="$1"; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -435,13 +556,14 @@ case "$COMMAND" in
   stop)    cmd_stop ;;
   restart) cmd_stop; sleep 2; cmd_start ;;
   status)  cmd_status ;;
+  doctor|check) cmd_doctor ;;
   logs)    cmd_logs "${LOG_TARGET:-app}" ;;
   -h|--help|help)
     sed -n '2,30p' "$0"
     ;;
   *)
     echo "Unknown command: $COMMAND" >&2
-    echo "Use: start | stop | restart | status | logs" >&2
+    echo "Use: start | stop | restart | status | doctor | logs" >&2
     exit 1
     ;;
 esac
