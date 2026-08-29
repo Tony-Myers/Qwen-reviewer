@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""
+Tests the citation check against the real run-3 report, which regressed:
+its Evidence lines cited "the summary" rather than the manuscript, after a
+previous run had obeyed the same instruction. Prompt rules alone proved
+stochastic, so this is checked mechanically.
+"""
+import sys, types
+from pathlib import Path
+def _stub(n,**a):
+    m=types.ModuleType(n)
+    for k,v in a.items(): setattr(m,k,v)
+    sys.modules[n]=m
+_stub("docx",Document=object);_stub("openpyxl",load_workbook=lambda *a,**k:None)
+sys.path.insert(0,".")
+import review_pipeline as rp
+
+fails=[]
+def check(l,c,d=""):
+    print(f"  {'PASS' if c else 'FAIL'}  {l}" + (f"  {d}" if not c and d else ""))
+    if not c: fails.append(l)
+
+text, table_blocks = rp.load_document(Path("paper.pdf"))
+SOURCE = text + "\n" + "\n".join(b for _, b in table_blocks)
+
+# Verbatim from the run-3 report.
+RUN3 = '''
+* **Concern:** There is a logical inconsistency in the narrative description of backstroke results.
+* **Evidence:** The summary states the text claims "the majority of predictors had a probability of direction <99%, yet cites arm-span (90.85%) as an exception."
+* **Concern:** The distinct age structures across stroke groups may limit generalisability.
+* **Evidence:** The summary notes the "front-crawl group is significantly older (mean 17.14 years) than other strokes (mean ~11.7-13.5 years) due to national competition regulations."
+* **Reason:** The evidence manifest confirms "Confidence intervals reported: True," but the width matters.
+'''
+
+print("\n[1] self-citation of the pipeline's own output is caught")
+probs = rp.verify_report_citations(RUN3, SOURCE)
+selfcites = [p for p in probs if "own summary" in p]
+check("flags 'The summary states'", any("summary states" in p.lower() for p in selfcites), str(selfcites))
+check("flags 'The summary notes'", any("summary notes" in p.lower() for p in selfcites))
+check("flags 'The evidence manifest confirms'", any("manifest confirms" in p.lower() for p in selfcites))
+
+print("\n[2] a paraphrase in quotation marks is caught")
+quoteprobs = [p for p in probs if "not found" in p]
+check("at least one invented quotation flagged", len(quoteprobs) >= 1, str(quoteprobs)[:200])
+
+print("\n[3] a genuine quotation verifies")
+GOOD = '''* **Evidence:** The text states "The probability of direction of the majority of somatic predictors of backstroke SS were <99%, with the exception of arm-span (90.85%)".'''
+gp = rp.verify_report_citations(GOOD, SOURCE)
+check("real quotation not flagged", not any("not found" in p for p in gp), str(gp))
+check("and no self-citation flagged", not any("own summary" in p for p in gp), str(gp))
+
+print("\n[4] typography and punctuation drift are tolerated")
+# Whitespace differs; the paper reads "coefficients (ICCs) for test-retest".
+TYPO = '''* Evidence: "ICCs for test-retest  reliability ranged from 0.97 to 0.99"'''
+tp = rp.verify_report_citations(TYPO, SOURCE)
+check("dropped bracket and extra space tolerated", not any("not found" in p for p in tp), str(tp))
+# En dash rendered as a hyphen.
+DASH = '''* Evidence: Table 1 gives the interval "-4.98 - -3.56" for the intercept.'''
+dp = rp.verify_report_citations(DASH, SOURCE)
+check("en dash vs hyphen tolerated", not any("not found" in p for p in dp), str(dp))
+
+print("\n[4b] but fabricated content is still caught")
+FAKE = '''* Evidence: The conclusion says "shoulder breadth is important for speed in all four strokes".'''
+fp = rp.verify_report_citations(FAKE, SOURCE)
+check("invented quotation flagged", any("not found" in p for p in fp), str(fp))
+
+print("\n[5] a table value verifies as a quotation")
+TBL = '''* Evidence: Table 1 reports "Ln (Bi-acromial breadth [cm])" with an estimate of 0.42.'''
+bp = rp.verify_report_citations(TBL, SOURCE)
+check("table cell text verifies", not any("not found" in p for p in bp), str(bp))
+
+print("\n[6] the report section renders both outcomes")
+clean = rp.format_citation_check([])
+check("clean report says so", "no citation refers" in clean)
+dirty = rp.format_citation_check(probs)
+check("problem report lists them", dirty.count("*") > len(probs))
+check("section is headed", "# Citation check" in clean and "# Citation check" in dirty)
+
+print()
+if fails: print(f"{len(fails)} FAILURE(S): {fails}"); sys.exit(1)
+print("All citation-check tests passed.")

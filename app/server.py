@@ -628,6 +628,13 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         final_report = rp.enforce_negative_constraints(final_report)
         final_report = rp.clean_markdown_math_artifacts(final_report)
 
+        # Mechanical citation check: quotations must be findable in the
+        # manuscript, and evidence must not cite the pipeline's own summary.
+        citation_source = text + "\n" + "\n".join(b for _, b in table_blocks)
+        final_report += rp.format_citation_check(
+            rp.verify_report_citations(final_report, citation_source)
+        )
+
         # Add header
         from datetime import datetime
         header = (

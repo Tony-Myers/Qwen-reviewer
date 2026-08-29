@@ -2231,10 +2231,15 @@ def extract_tables_pdfplumber(path: Path) -> list[dict]:
                     groups = _split_rows_on_captions(cleaned)
                     caption_index = 0
                     for group in groups:
-                        if not _looks_like_real_table(group):
-                            continue
                         first_row = " ".join(c for c in group[0] if c).strip()
                         starts_with_caption = bool(_TABLE_CAPTION_RE.match(first_row))
+                        # A caption-led group is kept even when it is thin on
+                        # numbers. A table whose caption and column headers sit
+                        # at the foot of one page, with the body overleaf, was
+                        # otherwise dropped entirely, and the quantile columns
+                        # then reached the reviewer unlabelled.
+                        if not starts_with_caption and not _looks_like_real_table(group):
+                            continue
                         label = infer_table_label({"rows": group})
                         if starts_with_caption:
                             if not label and caption_index < len(captions):
@@ -2843,6 +2848,98 @@ Material:
 
 MAX_PROMPT_TABLE_ROWS = 45
 MAX_PROMPT_TABLE_CHARS = 9000
+
+
+_SELF_CITATION_RE = re.compile(
+    r"\b(?:the\s+)?(?:file\s+|evidence\s+|chunk\s+)?"
+    r"(?:summary|summaries|manifest|notes|extraction)\s+"
+    r"(?:states|notes|says|indicates|confirms|flags|raises|reports|shows|suggests|highlights)\b",
+    re.I,
+)
+
+_QUOTE_RE = re.compile(r"[\u201c\"]([^\u201d\"]{12,400})[\u201d\"]")
+
+
+def _normalise_for_match(text: str) -> str:
+    """Fold the differences that stop a true quotation matching its source."""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("\u2019", "'").replace("\u2018", "'")
+    text = text.replace("\u201c", '"').replace("\u201d", '"')
+    for dash in ("\u2013", "\u2014", "\u2212"):
+        text = text.replace(dash, "-")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip().lower()
+
+
+def _strip_punctuation(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^0-9a-z ]+", " ", text)).strip()
+
+
+def verify_report_citations(report_text: str, source_text: str) -> List[str]:
+    """
+    Check the report's citations mechanically.
+
+    Two rules have proved unreliable when left to the prompt alone: quote the
+    manuscript rather than this pipeline's own summary, and quote it exactly.
+    One run obeyed both and the next did not, so they are checked here instead
+    of hoped for. Nothing is rewritten; the findings are appended to the report
+    so a reader can see which citations stand up.
+    """
+    problems: List[str] = []
+    haystack = _normalise_for_match(source_text)
+
+    for match in _SELF_CITATION_RE.finditer(report_text):
+        line = report_text[: match.start()].split("\n")[-1] + match.group(0)
+        problems.append(
+            f"Cites this pipeline's own summary rather than the manuscript: "
+            f"...{line.strip()[-110:]}"
+        )
+
+    for match in _QUOTE_RE.finditer(report_text):
+        quoted = match.group(1).strip()
+        if len(quoted.split()) < 4:
+            continue
+        needle = _normalise_for_match(quoted)
+        if not needle or needle in haystack:
+            continue
+        # Second chance ignoring punctuation entirely. A quotation that drops a
+        # bracket, as in "(ICCs)" rendered "ICCs", is still faithful in
+        # substance; the check is for invented content, not for typography.
+        if _strip_punctuation(needle) in _strip_punctuation(haystack):
+            continue
+        problems.append(
+            f"Quotation not found in the manuscript: \"{quoted[:110]}\""
+        )
+
+    # Collapse duplicates while keeping order.
+    seen = set()
+    unique = []
+    for p in problems:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return unique
+
+
+def format_citation_check(problems: List[str]) -> str:
+    if not problems:
+        return (
+            "\n\n# Citation check\n\n"
+            "* Every quotation in this report was located in the extracted "
+            "manuscript text, and no citation refers to the pipeline's own summary.\n"
+        )
+    lines = [
+        "\n\n# Citation check",
+        "",
+        "Checked mechanically against the extracted manuscript text. Treat the "
+        "following with caution: a quotation that cannot be found may be a "
+        "paraphrase in quotation marks, and a citation of the pipeline's own "
+        "summary is not evidence from the paper.",
+        "",
+    ]
+    for problem in problems:
+        lines.append(f"* {problem}")
+    return "\n".join(lines) + "\n"
 
 
 def tables_for_prompt(table_blocks: List[Tuple[int, str]]) -> str:
@@ -4390,6 +4487,10 @@ def main() -> int:
     file_summaries: List[Tuple[str, str]] = []
     per_file_tables: Dict[str, List[Tuple[int, str]]] = {}
     per_file_chunks: Dict[str, List[str]] = {}
+    # The manuscript's own text, kept for the citation check. The summaries
+    # must not be used for that: a quotation lifted from a summary would then
+    # verify against the summary and the check would confirm nothing.
+    per_file_source_text: Dict[str, str] = {}
     all_manifests: List[EvidenceManifest] = []
 
     for path in input_paths:
@@ -4403,6 +4504,7 @@ def main() -> int:
             continue
 
         per_file_tables[path.name] = table_blocks
+        per_file_source_text[path.name] = text
 
         # --- Phase 2: Structure evidence ---
         print(f"  Structuring evidence for {path.name}...")
@@ -4519,6 +4621,13 @@ def main() -> int:
 
         # --- Phase 6e: Remove leaked markdown/math artifacts ---
         final_report = clean_markdown_math_artifacts(final_report)
+
+        citation_source = "\n".join(per_file_source_text.values()) + "\n" + "\n".join(
+            block for tables in per_file_tables.values() for _, block in tables
+        )
+        final_report += format_citation_check(
+            verify_report_citations(final_report, citation_source)
+        )
 
     except Exception as e:
         final_report = (
