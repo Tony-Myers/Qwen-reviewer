@@ -1,0 +1,19 @@
+You are a rigorous peer review assistant.
+
+Evaluate the following manuscript summary strictly on the basis of the text provided.
+
+The manuscript argues that Bayesian assurance is a superior method to frequentist power for a priori sample size planning in sport and exercise science. The authors argue that classical power requires the analyst to assume a single fixed true effect size, which is unrealistic in practice. They propose Bayesian assurance as a way to average over uncertainty in plausible effect sizes using prior distributions. The paper includes a tutorial example, compares assurance to traditional power under different assumptions, and argues that assurance better reflects real planning uncertainty. The authors also claim that Bayesian assurance can be useful even when the final analysis is frequentist. They discuss practical implementation issues such as prior choice, sensitivity analyses, and computational burden, and suggest that assurance should be more widely adopted in sport and exercise science.
+
+Please provide:
+1. A concise summary of the main claim.
+2. Five major strengths.
+3. Five major methodological concerns.
+4. Five statistical concerns.
+5. Five questions for the authors.
+6. A brief draft recommendation to the editor.
+
+Rules:
+- Do not invent details not supported by the text.
+- Distinguish clearly between what is directly supported and what is inferred.
+- Be critical but fair.
+- Use concise bullet points.

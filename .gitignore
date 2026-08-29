@@ -1,0 +1,33 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- Virtual environments (large, machine-specific) ---
+.venv/
+env/
+source/
+
+# --- macOS ---
+.DS_Store
+
+# --- Model weights (never commit; 17 GB+) ---
+*.gguf
+*.safetensors
+*.bin
+*.npz
+
+# --- Manuscripts and generated output (may be unpublished / confidential) ---
+inputs/
+reports/
+reviews/
+logs/
+benchmarks/
+*.log
+
+# --- Nested checkouts of other projects ---
+repos/
+
+# --- Scratch ---
+research_deck_text.txt
+*.backup
