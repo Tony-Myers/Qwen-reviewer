@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Local peer-review pipeline using MLX + Qwen.
+Local peer-review pipeline using Qwen.
+
+The LLM is reached through llm_backend, which serves GGUF files via llama.cpp
+and MLX repo ids via mlx_lm. The default model is the Qwen3.8-27B GGUF; the
+previously used MLX models remain selectable with --model.
 
 Architecture:
   1. Document parsing  (PDF/docx/csv/xlsx/txt/md, optional Marker)
@@ -15,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 import sys
 import unicodedata
@@ -29,16 +34,47 @@ from docx import Document
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
-from mlx_lm import load, generate
-from mlx_lm.sample_utils import make_sampler
+# The LLM backend is a drop-in replacement for the mlx_lm API: it exposes
+# load/generate/make_sampler with identical signatures and dispatches to
+# llama.cpp (for .gguf models) or mlx_lm (for MLX repo ids).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from llm_backend import (  # noqa: E402
+    BackendError,
+    current_backend,
+    generate,
+    load,
+    make_sampler,
+    set_backend,
+    strip_reasoning,
+)
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-MODEL_NAME = "mlx-community/Qwen3.6-35B-A3B-4bit"
+# Default model: Qwen3.8-27B, Unsloth dynamic 4-bit GGUF, served by llama.cpp.
+QWEN38_27B_GGUF = str(
+    Path.home()
+    / ".cache" / "huggingface" / "hub"
+    / "models--unsloth--Qwen3.8-27B-GGUF"
+    / "snapshots" / "4ca720788d1e01f1bff70c033e0d0028fd02e502"
+    / "Qwen3.8-27B-UD-Q4_K_XL.gguf"
+)
+
+# Previous MLX models, still selectable with --model.
+QWEN36_35B_MLX = "mlx-community/Qwen3.6-35B-A3B-4bit"
+QWEN36_27B_MLX = "mlx-community/Qwen3.6-27B-6bit"
+
+MODEL_NAME = os.environ.get("MODEL_NAME") or QWEN38_27B_GGUF
 OUTPUT_DOMAIN = "general"
+
+
+def model_display_name(name: str = None) -> str:
+    """Short label for reports: the file name for a GGUF, the id otherwise."""
+    name = MODEL_NAME if name is None else name
+    return Path(name).name if name.lower().endswith(".gguf") else name
 
 MAX_SECTION_CHARS = 7000
 SECTION_MAX_TOKENS = 900
@@ -2362,6 +2398,9 @@ def make_default_sampler():
 
 
 def clean_model_output(text: str) -> str:
+    # Reasoning is disabled via the chat template, but strip any that leaks
+    # through so a <think> span can never reach a review report.
+    text = strip_reasoning(text)
     text = unicodedata.normalize("NFKC", text)
     text = text.replace("```markdown", "").replace("```text", "").replace("```", "")
     text = re.sub(r" +", " ", text)
@@ -3157,7 +3196,7 @@ def write_report(output_dir: Path, input_paths: List[Path], report_text: str,
     header = f"""# Local peer-review report
 
 Generated: {datetime.now().isoformat(timespec="seconds")}
-Model: {MODEL_NAME}
+Model: {model_display_name()}
 
 Input files:
 {sources}
@@ -3185,7 +3224,7 @@ def write_evidence_appendix(
     lines.append("# Evidence appendix")
     lines.append("")
     lines.append(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
-    lines.append(f"Model: {MODEL_NAME}")
+    lines.append(f"Model: {model_display_name()}")
     lines.append("")
     lines.append("## Input files")
     for p in input_paths:
@@ -3801,6 +3840,7 @@ def run_query_mode(args) -> int:
 
     print(f"Loading model: {MODEL_NAME}")
     model, tokenizer = load(MODEL_NAME)
+    print(f"Backend: {current_backend()}")
 
     prompt = _build_chat_prompt(tokenizer, args.query, system_text=system_text)
     sampler = make_default_sampler()
@@ -3819,6 +3859,7 @@ def run_chat_mode(args) -> int:
 
     print(f"Loading model: {MODEL_NAME}")
     model, tokenizer = load(MODEL_NAME)
+    print(f"Backend: {current_backend()}")
 
     print(f"\nChat mode active  (model: {MODEL_NAME})")
     print("Type your message and press Enter.  Commands:")
@@ -3889,7 +3930,8 @@ def main() -> int:
     global OUTPUT_DOMAIN
 
     parser = argparse.ArgumentParser(
-        description="Local manuscript review pipeline using MLX, with optional general chat mode",
+        description="Local manuscript review pipeline (llama.cpp GGUF or MLX), "
+                    "with optional general chat mode",
     )
     parser.add_argument("inputs", nargs="*", help="One or more files or folders (for review mode)")
     parser.add_argument(
@@ -3900,7 +3942,22 @@ def main() -> int:
     parser.add_argument(
         "--model",
         default=MODEL_NAME,
-        help="Model name or path (e.g. mlx-community/Qwen3.6-35B-A3B-4bit)",
+        help="Path to a .gguf file, or an MLX repo id "
+             "(e.g. mlx-community/Qwen3.6-35B-A3B-4bit). "
+             f"Default: {model_display_name(MODEL_NAME)}",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["llama-server", "llama-cpp", "mlx"],
+        default=None,
+        help="Force a backend. By default a .gguf model uses llama-server "
+             "and anything else uses mlx.",
+    )
+    parser.add_argument(
+        "--llama-url",
+        default=None,
+        help="Base URL of the llama-server instance "
+             "(default: http://127.0.0.1:8081).",
     )
     parser.add_argument(
         "--domain",
@@ -3933,6 +3990,10 @@ def main() -> int:
 
     args = parser.parse_args()
     MODEL_NAME = args.model
+    if args.llama_url:
+        os.environ["LLAMA_SERVER_URL"] = args.llama_url
+    if args.backend:
+        set_backend(args.backend)
 
     # --- Chat mode ---
     if args.chat:
@@ -3956,6 +4017,7 @@ def main() -> int:
 
     print(f"Loading model: {MODEL_NAME}")
     model, tokenizer = load(MODEL_NAME)
+    print(f"Backend: {current_backend()}")
 
     file_summaries: List[Tuple[str, str]] = []
     per_file_tables: Dict[str, List[Tuple[int, str]]] = {}

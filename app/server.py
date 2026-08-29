@@ -2,7 +2,7 @@
 """
 Unified local server for chat and manuscript review.
 
-Loads the MLX model once and exposes:
+Loads the model once (llama.cpp for GGUF, mlx_lm for MLX repo ids) and exposes:
   - GET  /                       → serves the web UI
   - POST /v1/chat/completions    → OpenAI-compatible chat
   - POST /api/review             → file upload → review pipeline
@@ -40,7 +40,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import review_pipeline as rp  # noqa: E402
-from mlx_lm import load, generate  # noqa: E402
+from llm_backend import (  # noqa: E402
+    BackendError,
+    current_backend,
+    generate,
+    load,
+    make_sampler,
+    set_backend,
+)
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -73,6 +80,12 @@ ROOT_DIR = SCRIPT_DIR.parent
 LAUNCHER_PATH = ROOT_DIR / "start_server.sh"
 
 MODEL_CHOICES = [
+    {
+        "id": "qwen38",
+        "label": "Qwen3.8 27B UD-Q4_K_XL (GGUF)",
+        "model": rp.QWEN38_27B_GGUF,
+        "aliases": ["27b-gguf", "gguf", "qwen38-27b"],
+    },
     {
         "id": "35b",
         "label": "Qwen3.6 35B-A3B 4-bit",
@@ -127,7 +140,12 @@ def _hf_cache_root() -> Path:
 
 
 def _cached_snapshot_for_model(model_id: str) -> Optional[Path]:
-    """Return a complete local HF snapshot path for a model id, if present."""
+    """Return a complete local snapshot/file path for a model id, if present."""
+    # A GGUF model is a single file, so an existence check is the whole test.
+    if model_id.lower().endswith(".gguf"):
+        gguf_path = Path(model_id).expanduser()
+        return gguf_path if gguf_path.exists() else None
+
     if "/" not in model_id:
         local_path = Path(model_id).expanduser()
         return local_path if local_path.exists() else None
@@ -193,6 +211,8 @@ def _is_valid_model_choice(value: str) -> bool:
     """Keep restart requests to simple aliases, repo ids, or local paths."""
     if not value or any(ch.isspace() for ch in value):
         return False
+    if value.lower().endswith(".gguf"):
+        return Path(value).expanduser().exists()
     return "/" in value or value.lower() in MODEL_ALIAS_MAP or value.startswith((".", "~"))
 
 
@@ -201,9 +221,16 @@ def ensure_model():
     global model, tokenizer
     if model is None:
         print(f"Loading model: {MODEL_NAME}")
-        model, tokenizer = load(MODEL_NAME)
+        try:
+            model, tokenizer = load(MODEL_NAME)
+        except BackendError as exc:
+            print("\n" + "=" * 60, file=sys.stderr)
+            print("Could not load the model.", file=sys.stderr)
+            print(exc, file=sys.stderr)
+            print("=" * 60 + "\n", file=sys.stderr)
+            raise
         rp.MODEL_NAME = MODEL_NAME
-        print("Model loaded.")
+        print(f"Model loaded via the {current_backend()} backend.")
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +381,6 @@ async def chat_completions(request: dict):
     else:
         prompt = messages[-1]["content"] if messages else ""
 
-    from mlx_lm.sample_utils import make_sampler
     sampler = make_sampler(temperature, top_p=top_p, top_k=rp.TOP_K)
 
     with model_lock:
@@ -710,10 +736,21 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Local Qwen chat + review server")
-    parser.add_argument("--model", default=MODEL_NAME, help="MLX model name")
+    parser.add_argument("--model", default=MODEL_NAME,
+                        help="Path to a .gguf file, or an MLX repo id")
+    parser.add_argument("--backend", choices=["llama-server", "llama-cpp", "mlx"],
+                        default=None,
+                        help="Force a backend (default: inferred from --model)")
+    parser.add_argument("--llama-url", default=None,
+                        help="Base URL of the llama-server instance")
     parser.add_argument("--port", type=int, default=8080, help="Server port")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address")
     args = parser.parse_args()
+
+    if args.llama_url:
+        os.environ["LLAMA_SERVER_URL"] = args.llama_url
+    if args.backend:
+        set_backend(args.backend)
 
     MODEL_NAME = args.model
     rp.MODEL_NAME = args.model
