@@ -31,3 +31,6 @@ repos/
 # --- Scratch ---
 research_deck_text.txt
 *.backup
+
+# --- Runtime state (pid files) ---
+run/
