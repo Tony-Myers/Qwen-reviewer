@@ -124,11 +124,15 @@ MODEL_CHOICES = [
     },
 ]
 
-MODEL_ALIAS_MAP = {
+# Aliases from the UI model list, folded in on top of the canonical table in
+# review_pipeline so that "35b" means the same thing here, on the command line
+# and in the launcher.
+MODEL_ALIAS_MAP = dict(rp.MODEL_ALIASES)
+MODEL_ALIAS_MAP.update({
     key.lower(): choice["model"]
     for choice in MODEL_CHOICES
     for key in [choice["id"], *choice["aliases"]]
-}
+})
 
 
 def _hf_cache_root() -> Path:
@@ -752,8 +756,8 @@ if __name__ == "__main__":
     if args.backend:
         set_backend(args.backend)
 
-    MODEL_NAME = args.model
-    rp.MODEL_NAME = args.model
+    MODEL_NAME = resolve_model_choice(args.model)
+    rp.MODEL_NAME = MODEL_NAME
     SERVER_HOST = args.host
     SERVER_PORT = args.port
 

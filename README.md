@@ -98,8 +98,16 @@ together on Ctrl+C unless `--keep-llama` is passed.
 ./run_review.sh ~/papers/manuscript.pdf
 ./run_review.sh --chat
 ./run_review.sh --query "Summarise the assumptions of a GAMLSS model"
-./run_review.sh --model 35b --backend mlx ~/papers/manuscript.pdf
+./run_review.sh --list-models
+./run_review.sh --model 35b ~/papers/manuscript.pdf   # back to MLX
 ```
+
+The same short aliases work everywhere — on the command line, in
+`start_server.sh`, and in the web UI switcher. `review_pipeline.py`, which
+`run_review.sh` calls, holds the canonical table in `MODEL_ALIASES`; the
+launcher and `server.py` fold it in rather than keeping their own copies. An
+alias that is not recognised is passed through unchanged, so full Hugging Face
+repo ids and absolute `.gguf` paths still work.
 
 ## Environment variables
 

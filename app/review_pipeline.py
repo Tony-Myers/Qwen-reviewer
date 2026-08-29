@@ -66,6 +66,63 @@ QWEN38_27B_GGUF = str(
 # Previous MLX models, still selectable with --model.
 QWEN36_35B_MLX = "mlx-community/Qwen3.6-35B-A3B-4bit"
 QWEN36_27B_MLX = "mlx-community/Qwen3.6-27B-6bit"
+QWEN36_27B_4BIT_MLX = "mlx-community/Qwen3.6-27B-4bit"
+QWEN36_27B_8BIT_MLX = "mlx-community/Qwen3.6-27B-8bit"
+GEMMA4_26B_MLX = "mlx-community/gemma-4-26b-a4b-it-4bit"
+GEMMA4_31B_MLX = "mlx-community/gemma-4-31b-it-4bit"
+
+# Short names accepted by --model, matching the launcher and the web UI.
+# This is the single source of truth: server.py folds these in as well, so the
+# same alias means the same model whichever entry point is used.
+MODEL_ALIASES = {
+    "qwen38": QWEN38_27B_GGUF,
+    "qwen38-27b": QWEN38_27B_GGUF,
+    "27b-gguf": QWEN38_27B_GGUF,
+    "gguf": QWEN38_27B_GGUF,
+    "35b": QWEN36_35B_MLX,
+    "35b-4bit": QWEN36_35B_MLX,
+    "qwen35": QWEN36_35B_MLX,
+    "27b": QWEN36_27B_MLX,
+    "27b-6bit": QWEN36_27B_MLX,
+    "qwen27": QWEN36_27B_MLX,
+    "27b-4bit": QWEN36_27B_4BIT_MLX,
+    "27b-8bit": QWEN36_27B_8BIT_MLX,
+    "gemma4": GEMMA4_26B_MLX,
+    "gemma4-26b": GEMMA4_26B_MLX,
+    "gemma4-26b-it": GEMMA4_26B_MLX,
+    "gemma4-31b": GEMMA4_31B_MLX,
+    "gemma4-31b-it": GEMMA4_31B_MLX,
+}
+
+
+def resolve_model_alias(value: str) -> str:
+    """
+    Expand a short model alias to a .gguf path or an MLX repo id.
+
+    Anything that is not a known alias is returned unchanged, so full repo ids
+    and absolute paths still work. Without this, an alias such as "35b" was
+    passed to the loader verbatim and treated as a Hugging Face repo id.
+    """
+    if not value:
+        return value
+    return MODEL_ALIASES.get(value.strip().lower(), value)
+
+
+def list_model_aliases() -> str:
+    """Human-readable alias listing for --list-models."""
+    grouped: Dict[str, List[str]] = {}
+    for alias, target in MODEL_ALIASES.items():
+        grouped.setdefault(target, []).append(alias)
+    lines = ["Model aliases accepted by --model:", ""]
+    for target, aliases in grouped.items():
+        backend = "llama.cpp" if target.lower().endswith(".gguf") else "MLX"
+        lines.append(f"  {', '.join(sorted(aliases))}")
+        lines.append(f"      -> {model_display_name(target)}  [{backend}]")
+    lines.append("")
+    lines.append("A full Hugging Face repo id or an absolute path to a .gguf "
+                 "file is also accepted.")
+    return "\n".join(lines)
+
 
 MODEL_NAME = os.environ.get("MODEL_NAME") or QWEN38_27B_GGUF
 OUTPUT_DOMAIN = "general"
@@ -3942,9 +3999,14 @@ def main() -> int:
     parser.add_argument(
         "--model",
         default=MODEL_NAME,
-        help="Path to a .gguf file, or an MLX repo id "
-             "(e.g. mlx-community/Qwen3.6-35B-A3B-4bit). "
-             f"Default: {model_display_name(MODEL_NAME)}",
+        help="Model alias (e.g. qwen38, 35b, 27b, gemma4), a path to a "
+             ".gguf file, or an MLX repo id. Run --list-models for the "
+             f"full list. Default: {model_display_name(MODEL_NAME)}",
+    )
+    parser.add_argument(
+        "--list-models",
+        action="store_true",
+        help="List the model aliases accepted by --model, then exit.",
     )
     parser.add_argument(
         "--backend",
@@ -3989,7 +4051,12 @@ def main() -> int:
     )
 
     args = parser.parse_args()
-    MODEL_NAME = args.model
+
+    if args.list_models:
+        print(list_model_aliases())
+        return 0
+
+    MODEL_NAME = resolve_model_alias(args.model)
     if args.llama_url:
         os.environ["LLAMA_SERVER_URL"] = args.llama_url
     if args.backend:
