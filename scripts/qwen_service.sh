@@ -152,17 +152,48 @@ port_owner() {
   lsof -ti:"$1" 2>/dev/null | head -1
 }
 
-http_ok() {
-  curl -s -o /dev/null -m 2 "$1" 2>/dev/null
+# Readiness must test the HTTP status code, not merely that something
+# answered. While llama.cpp is loading a model its /health returns
+#     503 {"error":{"message":"Loading model",...}}
+# and a bare `curl -s -o /dev/null` succeeds on that, which would declare a
+# 17 GB model ready seconds after launch and start the app server against a
+# server that cannot yet serve it.
+http_status() {
+  local code
+  # curl already prints 000 when it cannot connect, and *also* exits non-zero.
+  # An `|| echo 000` here would therefore append a second one, yielding
+  # "000000", which matches no expected case and was misread as "loading" --
+  # making a start against a dead server wait instead of failing. Capture the
+  # output and let a non-zero exit pass.
+  code="$(curl -s -o /dev/null -m "${2:-3}" -w '%{http_code}' "$1" 2>/dev/null || true)"
+  [[ -z "$code" ]] && code="000"        # curl missing entirely
+  printf '%s' "$code"
+}
+
+# Echoes: ready | loading | down
+llama_state() {
+  local code
+  code="$(http_status "http://$LLAMA_HOST:$LLAMA_PORT/health")"
+  case "$code" in
+    200) echo "ready"; return ;;
+    503) echo "loading"; return ;;
+    000|"") ;;                       # nothing listening; fall through to /props
+    *) echo "loading"; return ;;     # listening but unhappy: not ready yet
+  esac
+  code="$(http_status "http://$LLAMA_HOST:$LLAMA_PORT/props")"
+  case "$code" in
+    200) echo "ready" ;;
+    000|"") echo "down" ;;
+    *) echo "loading" ;;
+  esac
 }
 
 llama_ready() {
-  http_ok "http://$LLAMA_HOST:$LLAMA_PORT/health" \
-    || http_ok "http://$LLAMA_HOST:$LLAMA_PORT/props"
+  [[ "$(llama_state)" == "ready" ]]
 }
 
 app_ready() {
-  http_ok "http://$APP_HOST:$APP_PORT/v1/models"
+  [[ "$(http_status "http://$APP_HOST:$APP_PORT/v1/models")" == "200" ]]
 }
 
 stop_pid() {
@@ -224,17 +255,31 @@ start_llama() {
     return 0
   fi
 
-  local existing
+  local existing state
   existing="$(running_pid "$LLAMA_PID_FILE" "llama-server")"
-  if [[ -n "$existing" ]] && llama_ready; then
-    log_line "llama-server already running (pid $existing)."
-    return 0
+  state="$(llama_state)"
+
+  if [[ -n "$existing" ]]; then
+    case "$state" in
+      ready)
+        log_line "llama-server already running (pid $existing)."
+        return 0 ;;
+      loading)
+        log_line "llama-server (pid $existing) is still loading the model; waiting..."
+        wait_for_llama "$existing" && return 0
+        return 1 ;;
+    esac
+    # Alive but not answering at all: it is wedged. Leave it for the user.
+    log_line "ERROR: llama-server (pid $existing) is running but not answering on port $LLAMA_PORT."
+    log_line "       Run './scripts/qwen_service.sh stop' first, or check $LLAMA_LOG"
+    return 1
   fi
 
-  if llama_ready; then
-    log_line "Reusing the llama-server already answering on port $LLAMA_PORT."
+  if [[ "$state" != "down" ]]; then
+    log_line "Reusing the llama-server already on port $LLAMA_PORT (started elsewhere)."
     # Not ours, so do not record a pid: stop must not kill it.
     rm -f "$LLAMA_PID_FILE"
+    [[ "$state" == "loading" ]] && { log_line "It is still loading; waiting..."; wait_for_llama "" || return 1; }
     return 0
   fi
 
@@ -257,21 +302,42 @@ start_llama() {
   log_line "llama-server pid $(cat "$LLAMA_PID_FILE"), log: $LLAMA_LOG"
 
   [[ "$WAIT_FOR_READY" -eq 1 ]] || return 0
+  wait_for_llama "$(cat "$LLAMA_PID_FILE")"
+}
 
-  local pid deadline
-  pid="$(cat "$LLAMA_PID_FILE")"
+# Wait for llama-server to report a genuine 200. $1 is its pid, or empty when
+# the server was started elsewhere and there is no pid to watch.
+wait_for_llama() {
+  local pid="${1:-}" deadline elapsed=0
   deadline=$(( $(date +%s) + STARTUP_TIMEOUT ))
   while [[ $(date +%s) -lt $deadline ]]; do
-    llama_ready && { log_line "llama-server ready."; return 0; }
-    if ! pid_is_alive "$pid"; then
+    case "$(llama_state)" in
+      ready)
+        log_line "llama-server ready (${elapsed}s)."
+        return 0 ;;
+      down)
+        if [[ -n "$pid" ]] && ! pid_is_alive "$pid"; then
+          log_line "ERROR: llama-server exited during startup. Last lines:"
+          tail -n 20 "$LLAMA_LOG" 2>/dev/null | while IFS= read -r l; do log_line "  $l"; done
+          rm -f "$LLAMA_PID_FILE"
+          return 1
+        fi ;;
+    esac
+    if [[ -n "$pid" ]] && ! pid_is_alive "$pid"; then
       log_line "ERROR: llama-server exited during startup. Last lines:"
-      tail -n 20 "$LLAMA_LOG" 2>/dev/null
+      tail -n 20 "$LLAMA_LOG" 2>/dev/null | while IFS= read -r l; do log_line "  $l"; done
       rm -f "$LLAMA_PID_FILE"
       return 1
     fi
+    # A 17 GB model can take a while; say something every 30s.
+    if [[ $(( elapsed % 30 )) -eq 0 && $elapsed -gt 0 ]]; then
+      log_line "  still loading (${elapsed}s)..."
+    fi
     sleep 2
+    elapsed=$(( elapsed + 2 ))
   done
   log_line "ERROR: llama-server did not become ready within ${STARTUP_TIMEOUT}s."
+  log_line "       Raise it with QWEN_STARTUP_TIMEOUT, or check $LLAMA_LOG"
   return 1
 }
 
@@ -408,14 +474,20 @@ cmd_status() {
   echo "Model:       $(basename "$MODEL")"
   echo ""
 
+  local lstate
+  lstate="$(llama_state)"
   if [[ -n "$llama_pid" ]]; then
     echo "llama-server: running (pid $llama_pid, port $LLAMA_PORT)"
-  elif llama_ready; then
+  elif [[ "$lstate" != "down" ]]; then
     echo "llama-server: running on port $LLAMA_PORT, started elsewhere"
   else
     echo "llama-server: stopped"
   fi
-  echo "  responding: $(llama_ready && echo yes || echo no)"
+  case "$lstate" in
+    ready)   echo "  state:      ready" ;;
+    loading) echo "  state:      loading the model (not yet accepting requests)" ;;
+    down)    echo "  state:      not responding" ;;
+  esac
 
   if [[ -n "$app_pid" ]]; then
     echo "app server:   running (pid $app_pid, port $APP_PORT)"

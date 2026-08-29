@@ -56,6 +56,7 @@ Relevant environment variables
 ``LLAMA_SERVER_CTX``        context size for an auto-started server (32768)
 ``LLAMA_SERVER_NGL``        GPU layers for an auto-started server (99)
 ``LLAMA_REQUEST_TIMEOUT``   per-request timeout in seconds (1800)
+``LLAMA_READY_TIMEOUT``     how long to wait for a loading model (900)
 ``LLAMA_ENABLE_THINKING``   "1" to let the model emit reasoning (default off)
 ``LLAMA_REASONING_EFFORT``  low | medium | xhigh, only when thinking is on
 """
@@ -383,23 +384,47 @@ class LlamaServerModel:
                 f"{start_command_hint(self.model_path, self.base_url)}"
             ) from exc
 
-    def is_up(self, timeout: float = 3.0) -> bool:
-        try:
-            with urllib.request.urlopen(f"{self.base_url}/health", timeout=timeout):
-                return True
-        except Exception:
-            pass
-        try:
-            with urllib.request.urlopen(f"{self.base_url}/props", timeout=timeout):
-                return True
-        except Exception:
-            return False
+    def probe(self, timeout: float = 3.0) -> str:
+        """
+        Report the server as "ready", "loading" or "down".
 
-    def wait_until_up(self, timeout: float = 600.0, interval: float = 2.0) -> bool:
+        While llama.cpp is reading a model its /health answers 503 with
+        {"error": {"message": "Loading model", ...}}. That is emphatically not
+        the same as nothing listening: a 17 GB model can take minutes, and
+        treating it as "down" makes the pipeline give up on a server that is
+        seconds away from being usable.
+        """
+        for path in ("/health", "/props"):
+            try:
+                with urllib.request.urlopen(f"{self.base_url}{path}", timeout=timeout) as response:
+                    if 200 <= getattr(response, "status", 200) < 300:
+                        return "ready"
+                    return "loading"
+            except urllib.error.HTTPError as exc:
+                # Something is listening, it just cannot serve us yet.
+                return "loading" if exc.code in (500, 502, 503, 504) else "ready"
+            except Exception:
+                continue
+        return "down"
+
+    def is_up(self, timeout: float = 3.0) -> bool:
+        return self.probe(timeout) == "ready"
+
+    def wait_until_up(self, timeout: Optional[float] = None,
+                      interval: float = 2.0, announce: bool = False) -> bool:
+        """Block until the server reports ready, or the wait runs out."""
+        if timeout is None:
+            timeout = float(_env_int("LLAMA_READY_TIMEOUT", 900))
         deadline = time.time() + timeout
+        announced = False
         while time.time() < deadline:
-            if self.is_up():
+            state = self.probe()
+            if state == "ready":
                 return True
+            if state == "loading" and announce and not announced:
+                print(f"Waiting for llama-server at {self.base_url} to finish "
+                      f"loading the model...")
+                announced = True
             if self._process is not None and self._process.poll() is not None:
                 return False
             time.sleep(interval)
@@ -431,7 +456,7 @@ class LlamaServerModel:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-        if not self.wait_until_up():
+        if not self.wait_until_up(announce=True):
             raise BackendError(
                 "llama-server was started but did not become ready in time. "
                 "Run the command above in a terminal to see its output."
@@ -591,7 +616,21 @@ def load(model_id: str, *args: Any, **kwargs: Any):
         return LlamaCppModel(model_path), GGUFTokenizer(model_path)
 
     handle = LlamaServerModel(model_path)
-    if not handle.is_up():
+    state = handle.probe()
+
+    if state == "loading":
+        # The server is up but still reading the model. Wait rather than
+        # failing: this is the normal race when the launcher starts
+        # llama-server and the app server moments apart.
+        print(f"llama-server at {handle.base_url} is loading the model; waiting...")
+        if not handle.wait_until_up(announce=False):
+            raise BackendError(
+                f"llama-server at {handle.base_url} is running but did not "
+                f"finish loading in time.\n"
+                "Raise the wait with LLAMA_READY_TIMEOUT (seconds), or check "
+                "the llama-server log."
+            )
+    elif state == "down":
         if _env_flag("LLAMA_SERVER_AUTOSTART", False):
             handle.autostart()
         else:
