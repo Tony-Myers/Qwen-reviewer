@@ -1,6 +1,10 @@
-# qwen35-review
+# Qwen review
 
-A local manuscript peer-review pipeline that runs entirely on a Mac Studio. It
+A local manuscript peer-review pipeline that runs entirely on a Mac Studio.
+
+The name carries no version number deliberately: the underlying model has moved
+from Qwen3.5 to Qwen3.6 to Qwen3.8 and will move again. Swapping the model is a
+configuration change, not a rewrite. It
 parses documents, extracts typed evidence blocks, classifies the statistical
 method used, critiques each section against method-specific expectations, and
 synthesises a review report with an evidence appendix.
@@ -128,6 +132,11 @@ backups/                timestamped copies taken before significant edits
 
 `inputs/`, `reports/` and `reviews/` are excluded from version control: they
 hold manuscripts and generated reviews.
+
+The shell scripts resolve the project root from their own location, so the
+working directory can be renamed or moved without editing anything. The local
+folder is still named `qwen35-review` for historical reasons; the repository is
+not.
 
 ## Requirements
 

@@ -3936,7 +3936,7 @@ def main() -> int:
     parser.add_argument("inputs", nargs="*", help="One or more files or folders (for review mode)")
     parser.add_argument(
         "--output-dir",
-        default=str(Path.home() / "local-llm/qwen35-review/reports"),
+        default=str(Path(__file__).resolve().parent.parent / "reports"),
         help="Directory for markdown reports",
     )
     parser.add_argument(

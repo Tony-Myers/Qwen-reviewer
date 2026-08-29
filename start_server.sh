@@ -8,7 +8,9 @@
 # The previous MLX models are unchanged and still selectable, e.g.
 #   ./start_server.sh --model 35b
 
-SCRIPT_DIR="/Users/tonymyers/local-llm/qwen35-review"
+# Resolve the project root from this script's own location, so the
+# folder can be renamed or moved without editing anything.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR/app"
 DEFAULT_PORT=8080
 DEFAULT_HOST="127.0.0.1"

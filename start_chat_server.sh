@@ -6,7 +6,9 @@
 #   ./start_chat_server.sh --port 9090              # custom port
 #   ./start_chat_server.sh --model other/model-4bit # different model
 
-SCRIPT_DIR="/Users/tonymyers/local-llm/qwen35-review"
+# Resolve the project root from this script's own location, so the
+# folder can be renamed or moved without editing anything.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_MODEL="mlx-community/Qwen3.6-35B-A3B-4bit"
 DEFAULT_PORT=8080
 
