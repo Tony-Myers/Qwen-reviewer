@@ -987,7 +987,9 @@ MethodClass.FREQUENTIST_CORRELATION: """Method-specific expectations (frequentis
 - Appropriate focus: prior specification, choice of quantile(s), asymmetric Laplace likelihood or equivalent, posterior summaries with credible intervals at each quantile.
 - Reporting: quantile-specific coefficients with credible intervals, convergence diagnostics, comparison across quantiles where relevant.
 - Do NOT request random-effects structure or hierarchical model diagnostics unless the text explicitly describes multilevel/hierarchical structure.
-- Do not request frequentist p-values or confidence intervals.""",
+- Do not request frequentist p-values or confidence intervals.
+- Quantile regression does NOT split the sample. Every quantile model is fitted to the whole sample using an asymmetric loss; the tau = 0.1 and tau = 0.9 fits use all n observations, not the bottom or top ten percent. Never state or imply that a quantile was estimated from a subset, and never compute a per-quantile sample size such as "n = 59 x 0.1, so about 6 swimmers". That is a misreading of the method and authors will reject it.
+- The legitimate small-sample concern is different and may be raised where it applies: estimates at extreme quantiles carry more posterior uncertainty than those at the median, because fewer observations are informative about the tail. Judge this from the width of the reported credible intervals at each quantile, not from an invented subsample size.""",
 
     MethodClass.DISTRIBUTIONAL_MODEL: """Method-specific expectations (distributional/GAMLSS model):
 - These models simultaneously model location, scale, and shape parameters. Do not treat scale/shape submodels as unusual.
@@ -2012,11 +2014,191 @@ def normalise_table_rows(rows: list[list[str]]) -> list[list[str]]:
     return cleaned
 
 
+# pdfplumber's default strategy looks for ruled lines in both directions. Many
+# journal tables are set booktabs-style, with horizontal rules only and no
+# vertical ones, and those extract as nothing at all. A second pass using the
+# text-alignment strategy recovers them. It is noisier, so its output is
+# cleaned, split at table captions, and scored below the ruled extraction, and
+# the existing prose and reference-list filters reject what is not a table.
+_TEXT_TABLE_SETTINGS = {
+    "vertical_strategy": "text",
+    "horizontal_strategy": "text",
+}
+
+# Tolerant of a caption whose leading character was lost to column splitting,
+# which happens when the caption sits flush against a column boundary.
+_TABLE_CAPTION_RE = re.compile(r"(?:^|\s)T?able\s+(\d+|[A-Z])\b[.:]?", re.I)
+
+
+# A caption starts a line; "see Table 1" in a sentence does not. Matching
+# anywhere in the page text made every narrative page that referred to a table
+# look as though it contained one.
+_CAPTION_LINE_RE = re.compile(
+    r"(?m)^[ \t]*(?:(Supplementary)\s+)?Table\s*([0-9]+|[A-Z])?\s*[.:]", re.I
+)
+
+# A text-strategy extraction is only believed when it is dense with numbers.
+# Measured on a journal article: real tables scored 0.52-0.94, narrative pages
+# 0.11-0.40. Raise MIN_TABLE_NUMERIC_RATIO if prose still leaks through.
+MIN_TABLE_NUMERIC_RATIO = 0.45
+MIN_TABLE_NUMERIC_CELLS = 12
+
+
+def _page_table_captions(page_text: str) -> list[str]:
+    """Table captions in reading order, from captions that begin a line."""
+    if not page_text:
+        return []
+    captions = []
+    for match in _CAPTION_LINE_RE.finditer(page_text):
+        supplementary, number = match.group(1), match.group(2)
+        if supplementary:
+            label = f"Supplementary Table {number}".strip() if number else "Supplementary Table"
+        elif number:
+            label = f"Table {number}"
+        else:
+            continue
+        if label not in captions:
+            captions.append(label)
+    return captions
+
+
+def _table_numeric_ratio(rows: list[list[str]]) -> tuple[float, int]:
+    """Proportion of non-empty cells that look numeric, and the raw count."""
+    nonempty = sum(1 for row in rows for cell in row if str(cell).strip())
+    numeric = _count_numeric_cells(rows)
+    return (numeric / nonempty if nonempty else 0.0), numeric
+
+
+def _looks_like_real_table(rows: list[list[str]]) -> bool:
+    ratio, numeric = _table_numeric_ratio(rows)
+    return ratio >= MIN_TABLE_NUMERIC_RATIO and numeric >= MIN_TABLE_NUMERIC_CELLS
+
+
+_NUMERIC_TOKEN_RE = re.compile(r"^[-+(\u2212]?\d[\d,.]*\)?%?$")
+_INTERVAL_DASHES = {"\u2013", "\u2014", "-", "\u2212", "to"}
+
+
+def _split_table_line(line: str) -> list[str]:
+    """
+    Turn one line of a table into cells.
+
+    pdfplumber's text strategy derives column edges from character gaps, which
+    splits numbers down the middle ("-4.42" becomes "-4." and "42"). The page's
+    own text lines keep every number intact, so rows are built from those
+    instead: leading words form the row label, and each number becomes a cell,
+    with "0.32 - 0.90" kept together as one interval.
+    """
+    tokens = line.split()
+    if not tokens:
+        return []
+    # A caption is a sentence, not a row of cells: keep it in one piece so the
+    # table keeps its name.
+    if _TABLE_CAPTION_RE.match(line.strip()):
+        return [line.strip()]
+    first_number = next(
+        (i for i, t in enumerate(tokens) if _NUMERIC_TOKEN_RE.match(t)), None
+    )
+    if first_number is None:
+        return [line.strip()]
+    cells: list[str] = []
+    label = " ".join(tokens[:first_number]).strip()
+    if label:
+        cells.append(label)
+    rest = tokens[first_number:]
+    i = 0
+    while i < len(rest):
+        if (
+            i + 2 < len(rest)
+            and rest[i + 1] in _INTERVAL_DASHES
+            and _NUMERIC_TOKEN_RE.match(rest[i])
+            and _NUMERIC_TOKEN_RE.match(rest[i + 2])
+        ):
+            cells.append(f"{rest[i]} \u2013 {rest[i + 2]}")
+            i += 3
+        else:
+            cells.append(rest[i])
+            i += 1
+    return cells
+
+
+def _rows_from_page_text(page_text: str) -> list[list[str]]:
+    """Build candidate table rows from a page's text lines."""
+    rows = []
+    for line in (page_text or "").split("\n"):
+        if not line.strip():
+            continue
+        cells = _split_table_line(line)
+        if cells:
+            rows.append(cells)
+    return rows
+
+
+def _clean_text_strategy_rows(rows: list[list[str]]) -> list[list[str]]:
+    """Drop prose rows and wholly empty columns from a text-strategy table."""
+    kept: list[list[str]] = []
+    for row in rows:
+        cells = [str(c).strip() if c is not None else "" for c in row]
+        nonempty = [c for c in cells if c]
+        if len(nonempty) < 2:
+            if len(nonempty) == 1 and _TABLE_CAPTION_RE.match(nonempty[0]):
+                # The caption is a single cell by design; it names the table.
+                kept.append(cells)
+                continue
+            # A lone short cell with no numbers is a section heading such as
+            # "Breaststroke Predictors". Dropping those left the blocks of a
+            # stacked table unidentifiable.
+            if (
+                len(nonempty) == 1
+                and len(nonempty[0].split()) <= 8
+                and not re.search(r"\d", nonempty[0])
+            ):
+                kept.append(cells)
+            continue
+        # Keep caption rows even though they read as prose: they carry the
+        # table's identity, and dropping them left every table anonymous.
+        joined = " ".join(c for c in cells if c).strip()
+        if _TABLE_CAPTION_RE.match(joined):
+            kept.append(cells)
+            continue
+        if row_is_prose_like(cells):
+            continue
+        kept.append(cells)
+    if not kept:
+        return []
+    width = max(len(r) for r in kept)
+    kept = [r + [""] * (width - len(r)) for r in kept]
+    keep_cols = [i for i in range(width) if any(r[i] for r in kept)]
+    return [[r[i] for i in keep_cols] for r in kept]
+
+
+def _split_rows_on_captions(rows: list[list[str]]) -> list[list[list[str]]]:
+    """Split one page-wide extraction into separate tables at caption rows."""
+    groups: list[list[list[str]]] = []
+    current: list[list[str]] = []
+    for row in rows:
+        joined = " ".join(c for c in row if c).strip()
+        if _TABLE_CAPTION_RE.match(joined) and current:
+            groups.append(current)
+            current = [row]
+        else:
+            current.append(row)
+    if current:
+        groups.append(current)
+    return [g for g in groups if len(g) >= 2]
+
+
 def extract_tables_pdfplumber(path: Path) -> list[dict]:
     tables = []
     try:
         with pdfplumber.open(str(path)) as pdf:
             for page_index, page in enumerate(pdf.pages, start=1):
+                try:
+                    page_text = page.extract_text() or ""
+                except Exception:
+                    page_text = ""
+                captions = _page_table_captions(page_text)
+
+                # --- Pass 1: ruled lines (unchanged behaviour) ---
                 try:
                     raw_tables = page.extract_tables()
                 except Exception:
@@ -2034,8 +2216,44 @@ def extract_tables_pdfplumber(path: Path) -> list[dict]:
                         "page": page_index,
                         "table_index": table_counter,
                         "label": infer_table_label({"rows": rows}),
+                        "page_captions": captions,
                         "rows": rows,
                     })
+
+                # --- Pass 2: the page's own text lines, for unruled tables ---
+                text_tables = [_rows_from_page_text(page_text)]
+                for tbl in text_tables or []:
+                    if not tbl:
+                        continue
+                    cleaned = _clean_text_strategy_rows(tbl)
+                    if len(cleaned) < 2 or not _looks_like_real_table(cleaned):
+                        continue
+                    groups = _split_rows_on_captions(cleaned)
+                    caption_index = 0
+                    for group in groups:
+                        if not _looks_like_real_table(group):
+                            continue
+                        first_row = " ".join(c for c in group[0] if c).strip()
+                        starts_with_caption = bool(_TABLE_CAPTION_RE.match(first_row))
+                        label = infer_table_label({"rows": group})
+                        if starts_with_caption:
+                            if not label and caption_index < len(captions):
+                                label = captions[caption_index]
+                            caption_index += 1
+                        elif not label:
+                            # A table running on from the previous page. Give it
+                            # a label of its own so deduplication, which keeps
+                            # one unlabelled table per page, cannot discard it.
+                            label = f"Table (continued, page {page_index})"
+                        table_counter += 1
+                        tables.append({
+                            "source": "pdfplumber_text",
+                            "page": page_index,
+                            "table_index": table_counter,
+                            "label": label,
+                            "page_captions": captions,
+                            "rows": group,
+                        })
     except Exception:
         pass
     return tables
@@ -2086,6 +2304,10 @@ def infer_table_label(table: dict) -> str | None:
         label = m.group(1)
         label = re.sub(r" +", " ", label).strip()
         return label
+    # A caption can lose its leading character to a column split ("able 1.").
+    m = re.search(r"(?:^|\s)able\s+([0-9]+|[A-Z])\b", head_text)
+    if m:
+        return f"Table {m.group(1)}"
     return None
 
 
@@ -2167,6 +2389,10 @@ def score_table_candidate(table: dict) -> int:
         score += 15
     elif source == "camelot_lattice":
         score += 10
+    # Below the ruled extraction, so a properly ruled table always wins when
+    # both passes find the same one, but above nothing at all.
+    elif source == "pdfplumber_text":
+        score += 8
     elif source == "camelot_stream":
         score += 5
 
@@ -2574,6 +2800,14 @@ Instructions:
 - Where tables are present, use them as evidence.
 - If a table appears partially extracted, say so explicitly.
 - Do not claim a table, coefficient, equation, or diagnostic is missing if it is present in the chunk.
+
+Internal-consistency checks. These are among the most useful things you can find, because they are verifiable from the text alone rather than matters of opinion. Check for, and report, any of the following that this chunk actually shows:
+- A numeric statement that contradicts itself. For example, a value offered as an exception to a threshold that does not in fact breach it ("all were <99%, with the exception of X (90.85%)" - 90.85 is not an exception to <99, so either the value or the direction of the inequality is wrong).
+- A sentence that begins by describing one variable and draws a conclusion about a different one, or a comparison whose stated variable does not match the variable in the accompanying table.
+- A number in the narrative that disagrees with the corresponding cell in a table, including a coefficient, an interval, a sample size or a total that does not add up.
+- A claim about the model that the coefficient table contradicts: a covariate the text says was adjusted for that does not appear among that model's predictors, or a term present in one model but silently absent from another that is described the same way.
+- A quantity described as controlled for, held constant, or included, where the reported model for that subgroup does not list it.
+Report each with the exact quoted text and, where relevant, the conflicting table value. If the chunk shows no such inconsistency, say nothing about this; do not manufacture one.
 - If the evidence manifest above says a statistic type is present (e.g., "Confidence intervals reported: True"), do not make blanket claims that CIs are missing. You may note that CIs are not provided for a specific test in this chunk, but frame the gap narrowly.
 - For observational or survey data, distinguish between "verify whether X was handled" and "X was omitted". Use "Verify whether..." unless the text explicitly confirms the omission.
 - Do NOT raise survey-specific concerns (survey weights, clustering adjustments) unless the paper describes a population-level survey design.
@@ -2729,6 +2963,15 @@ Required format:
 - Under "Verification prompts", each bullet must start with "Check:" and include "Reason:".
 - Under "Extraction limits", each bullet must start with "Limit:".
 - Do not include concerns that cannot be linked to specific evidence in the supplied material.
+
+Evidence must come from the manuscript:
+- Every "Evidence:" line must quote the manuscript, a table cell, or a numeric value, with its page or table where known. Quote it verbatim in double quotes.
+- Never cite this pipeline's own intermediate output as evidence. Phrases such as "the file summary notes", "the evidence summary flags", "the manifest indicates" are NOT evidence: they describe a summary of the paper, not the paper. If the only support for a concern is such a phrase, the concern belongs under "Verification prompts", not here.
+- If you cannot produce a verbatim quotation or a specific number for a concern, move it to "Verification prompts" or drop it.
+
+Claims must not outrun the evidence:
+- Do not assert in the synopsis or in a concern anything you are simultaneously asking to be checked under "Verification prompts". If you are unsure whether a feature exists (an interaction term, a covariate, a correction), say so once, in "Verification prompts" only.
+- State what the reported model actually contains, judged from the coefficient tables where they are available, rather than what a method of this kind usually contains.
 
 Length limits:
 - Overall synopsis: maximum 5 bullets.
