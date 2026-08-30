@@ -53,6 +53,12 @@ RUN_DIR="$PROJECT_DIR/run"
 LOG_DIR="$PROJECT_DIR/logs"
 LLAMA_PID_FILE="$RUN_DIR/llama-server.pid"
 APP_PID_FILE="$RUN_DIR/app-server.pid"
+# Fingerprint of the Python the running server imported. server.py imports
+# review_pipeline once at start-up, so a server left running across an edit
+# serves superseded code with nothing to show it. One ran for thirteen hours
+# that way, across four reviews, because "start" on an already-running server
+# correctly reports "already running" and does nothing.
+CODE_FINGERPRINT_FILE="$RUN_DIR/code.fingerprint"
 LLAMA_LOG="$LOG_DIR/llama-server.log"
 APP_LOG="$LOG_DIR/app-server.log"
 SERVICE_LOG="$LOG_DIR/service.log"
@@ -194,6 +200,33 @@ llama_ready() {
 
 app_ready() {
   [[ "$(http_status "http://$APP_HOST:$APP_PORT/v1/models")" == "200" ]]
+}
+
+code_fingerprint() {
+  cat "$PROJECT_DIR/app/review_pipeline.py" "$PROJECT_DIR/app/server.py" \
+      "$PROJECT_DIR/app/llm_backend.py" 2>/dev/null \
+    | shasum -a 1 2>/dev/null | cut -c1-12
+}
+
+warn_if_code_changed() {
+  # Called when the app server is already running. Compares the code the
+  # running process imported against what is on disk now.
+  local recorded current
+  [[ -f "$CODE_FINGERPRINT_FILE" ]] || return 0
+  recorded="$(cat "$CODE_FINGERPRINT_FILE" 2>/dev/null)"
+  current="$(code_fingerprint)"
+  [[ -z "$current" || "$recorded" == "$current" ]] && return 0
+  log_line ""
+  log_line "=============================================================="
+  log_line "The app server that is already running was started from a"
+  log_line "DIFFERENT version of the code ($recorded, now $current)."
+  log_line "It imported review_pipeline.py at start-up and will keep using"
+  log_line "that version, so any change made since is NOT in effect."
+  log_line ""
+  log_line "  ./scripts/qwen_service.sh restart"
+  log_line "=============================================================="
+  log_line ""
+  return 1
 }
 
 stop_pid() {
@@ -346,6 +379,9 @@ start_app() {
   existing="$(running_pid "$APP_PID_FILE" "server.py")"
   if [[ -n "$existing" ]]; then
     log_line "App server already running (pid $existing)."
+    if ! warn_if_code_changed; then
+      return 1
+    fi
     return 0
   fi
 
@@ -366,6 +402,7 @@ start_app() {
     --port "$APP_PORT" \
     >> "$APP_LOG" 2>&1 < /dev/null &
   echo $! > "$APP_PID_FILE"
+  code_fingerprint > "$CODE_FINGERPRINT_FILE" 2>/dev/null || true
   log_line "App server pid $(cat "$APP_PID_FILE"), log: $APP_LOG"
 
   [[ "$WAIT_FOR_READY" -eq 1 ]] || return 0
@@ -491,6 +528,17 @@ cmd_status() {
 
   if [[ -n "$app_pid" ]]; then
     echo "app server:   running (pid $app_pid, port $APP_PORT)"
+    if [[ -f "$CODE_FINGERPRINT_FILE" ]]; then
+      local recorded current
+      recorded="$(cat "$CODE_FINGERPRINT_FILE" 2>/dev/null)"
+      current="$(code_fingerprint)"
+      if [[ -n "$current" && "$recorded" != "$current" ]]; then
+        echo "  code:       STALE - started from $recorded, disk is now $current"
+        echo "              run 'restart' or your edits are not in effect"
+      else
+        echo "  code:       current ($current)"
+      fi
+    fi
   else
     echo "app server:   stopped"
   fi
