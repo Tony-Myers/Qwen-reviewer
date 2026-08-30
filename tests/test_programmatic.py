@@ -68,6 +68,31 @@ print("\n[6] a single-model paper produces no spurious comparison")
 one = [(1, "Model 1\nIntercept\t1.0\t0.5 - 1.5\nAge\t0.2\t0.1 - 0.3\nR2\t0.5\n")]
 check("no summary for one model", rp.summarise_model_predictors(one) == "")
 
+print("\n[7] a badly extracted table is flagged, not fed in silently")
+supp = [b for _, b in tb if "time (s)" in b]
+check("supplementary table located", len(supp) == 1, str(len(supp)))
+warn = rp.table_fragmentation_warning(supp[0]) if supp else ""
+check("fragmentation detected", warn.startswith("WARNING"), warn[:80])
+check("warning forbids computing with it", "do not raise a data-integrity concern" in warn.lower())
+clean_tbl = [b for _, b in tb if "Bi-acromial Breadth" in b and "time (s)" not in b]
+check("clean coefficient table not flagged",
+      all(rp.table_fragmentation_warning(b) == "" for b in clean_tbl),
+      f"{len(clean_tbl)} clean tables")
+tp2 = rp.tables_for_prompt(tb)
+check("warning reaches the prompt", "did not extract cleanly" in tp2)
+
+print("\n[8] fabricated numbers are caught")
+SRC = paper_text + "\n" + "\n".join(b for _, b in tb)
+# The exact false concern raised in run 5.
+FAB = ('* Evidence: The table reports a speed of "1.04 m/s" alongside a time of '
+       '"13.79s" for a 100m event, implying 7.25 m/s.')
+fp = rp.verify_report_citations(FAB, SRC)
+check("13.79 flagged as absent", any("13.79" in p for p in fp), str(fp)[:200])
+check("1.04 not flagged (it is real)", not any("Number 1.04" in p for p in fp), str(fp)[:200])
+REAL = '* Evidence: Table 1 reports a coefficient of 0.42 with R2 Bayes of 0.856.'
+rp2 = rp.verify_report_citations(REAL, SRC)
+check("genuine numbers not flagged", not any("does not appear" in p for p in rp2), str(rp2))
+
 print()
 if fails: print(f"{len(fails)} FAILURE(S): {fails}"); sys.exit(1)
 print("All programmatic-guard tests passed.")

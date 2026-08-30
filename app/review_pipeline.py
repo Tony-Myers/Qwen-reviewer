@@ -2993,6 +2993,34 @@ def summarise_model_predictors(table_blocks: List[Tuple[int, str]]) -> str:
     return "\n".join(lines)
 
 
+# A cell holding a number's integer part with the fraction stranded on the
+# next row: "13." above, "5" below, for a value of 13.5. Multi-line cells in a
+# wide descriptive table do this, and the value is then unreadable. Left
+# unflagged, a reviewer invented "13.79s" from such a fragment and raised a
+# data-integrity concern about it.
+_ORPHAN_STEM_RE = re.compile(r"^-?\d+\.$")
+
+
+def table_fragmentation_warning(block_text: str) -> str:
+    """A warning line when a table's numbers have been split across rows."""
+    stems = 0
+    for line in block_text.splitlines():
+        for cell in line.split("\t"):
+            if _ORPHAN_STEM_RE.match(cell.strip()):
+                stems += 1
+    if stems < 3:
+        return ""
+    return (
+        f"WARNING: this table did not extract cleanly. {stems} cells hold only "
+        "the integer part of a number, with the digits after the decimal point "
+        "stranded on a neighbouring row, so values such as 13.5 appear as "
+        "\"13.\" and \"5\". Use this table for the variables it names and for "
+        "nothing else. Do not quote, compare, or compute with any number in it, "
+        "and do not raise a data-integrity concern about a value that looks "
+        "implausible here: the implausibility is this extraction, not the paper."
+    )
+
+
 MAX_PROMPT_TABLE_ROWS = 45
 MAX_PROMPT_TABLE_CHARS = 9000
 
@@ -3004,7 +3032,26 @@ _SELF_CITATION_RE = re.compile(
     re.I,
 )
 
-_QUOTE_RE = re.compile(r"[\u201c\"]([^\u201d\"]{12,400})[\u201d\"]")
+_QUOTE_CHAR_RE = re.compile(r"[\u201c\u201d\"]")
+
+
+def _quoted_spans(text: str) -> List[str]:
+    """
+    Quoted passages, found by pairing quote characters in order.
+
+    A regex of the form "([^"]+)" pairs the CLOSING quote of one passage with
+    the OPENING quote of the next whenever the first is too short to match,
+    inventing a span out of the words between two real quotations. Pairing
+    positionally avoids that.
+    """
+    positions = [m.start() for m in _QUOTE_CHAR_RE.finditer(text)]
+    spans = []
+    for i in range(0, len(positions) - 1, 2):
+        content = text[positions[i] + 1 : positions[i + 1]]
+        if "\n" in content or not (12 <= len(content) <= 400):
+            continue
+        spans.append(content)
+    return spans
 
 
 def _normalise_for_match(text: str) -> str:
@@ -3042,8 +3089,8 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
             f"...{line.strip()[-110:]}"
         )
 
-    for match in _QUOTE_RE.finditer(report_text):
-        quoted = match.group(1).strip()
+    for quoted in _quoted_spans(report_text):
+        quoted = quoted.strip()
         if len(quoted.split()) < 4:
             continue
         needle = _normalise_for_match(quoted)
@@ -3056,6 +3103,19 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
             continue
         problems.append(
             f"Quotation not found in the manuscript: \"{quoted[:110]}\""
+        )
+
+    # Numbers are quoted as readily as words and fabricated more easily: a
+    # value invented from a badly extracted cell reads as authoritative and is
+    # the kind of thing that gets sent to an author.
+    source_numbers = set(re.findall(r"\d+\.\d+", source_text))
+    for number in dict.fromkeys(re.findall(r"(?<![\d.])\d+\.\d+(?!\d)", report_text)):
+        if number in source_numbers:
+            continue
+        problems.append(
+            f"Number {number} does not appear in the manuscript. If it is a "
+            f"value you calculated, say so; if it was read from a table, "
+            f"re-check it against the extracted text."
         )
 
     # Collapse duplicates while keeping order.
@@ -3115,6 +3175,9 @@ def tables_for_prompt(table_blocks: List[Tuple[int, str]]) -> str:
         rendered = "\n".join(lines)
         if truncated:
             rendered += "\n... (table truncated for length)"
+        warning = table_fragmentation_warning(block_text)
+        if warning:
+            rendered = warning + "\n" + rendered
         if total + len(rendered) > MAX_PROMPT_TABLE_CHARS:
             parts.append("... (further tables omitted for length)")
             break
