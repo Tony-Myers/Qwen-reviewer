@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import os
 import re
 import sys
@@ -1317,8 +1318,17 @@ def structure_evidence(
         r"|\bancova\b|\bmancova\b|\banova\b|\bmanova\b|\bgamlss\b"
         r"|distributional\s+(?:model|regression)|centile\s+curve)", text_lower
     ))
+    # R-squared, adjusted R-squared and Wilks' Lambda are standardised effect
+    # sizes and are what ANCOVA/MANCOVA papers report. Recognising only Cohen's
+    # d and eta-squared made the manifest say "Effect sizes reported: False"
+    # for a paper whose tables give F, R2 and Adj R2 for every covariate, and
+    # the review then criticised it for omitting effect sizes entirely.
     manifest.has_effect_sizes = bool(re.search(
-        r"(?:cohen|eta.?squared|partial\s+eta|effect\s+size|odds\s+ratio|hazard\s+ratio)", text_lower
+        r"(?:cohen|hedges|glass|cliff|eta.?squared|partial\s+eta|omega.?squared"
+        r"|effect\s+size|odds\s+ratio|hazard\s+ratio|risk\s+ratio|relative\s+risk"
+        r"|rate\s+ratio|cram[e\u00e9]r|wilks|\br\s*\^?\s*2\b|r\u00b2"
+        r"|r-?squared|adj\w*\.?\s*r\s*\^?\s*2?\b"
+        r"|standardi[sz]ed\s+(?:beta|coefficient|mean\s+difference))", text_lower
     ))
     manifest.has_confidence_intervals = bool(re.search(
         r"(?:confidence\s+interval|95\s*%\s*ci|\bci\s*[=:\[])", text_lower
@@ -2855,6 +2865,40 @@ Material:
 
 
 # ---------------------------------------------------------------------------
+# Which version of this file is actually running
+# ---------------------------------------------------------------------------
+# server.py imports this module once at start-up, so edits made afterwards do
+# not take effect until it is restarted. Several reviews were produced by a
+# process running superseded code with nothing in the output to show it. The
+# report now carries the fingerprint of the code that produced it, and says so
+# when the file on disk has moved on.
+
+def _fingerprint_of(path) -> str:
+    try:
+        return hashlib.sha1(Path(path).read_bytes()).hexdigest()[:8]
+    except Exception:
+        return "unknown"
+
+
+PIPELINE_PATH = Path(__file__).resolve()
+PIPELINE_VERSION = _fingerprint_of(PIPELINE_PATH)
+
+
+def stale_module_warning() -> str:
+    """A warning when the running code is older than the file on disk."""
+    current = _fingerprint_of(PIPELINE_PATH)
+    if current in ("unknown", PIPELINE_VERSION):
+        return ""
+    return (
+        f"WARNING: this review was produced by review_pipeline.py version "
+        f"{PIPELINE_VERSION}, but the file on disk is now version {current}. "
+        f"The server was started before that change, so recent edits are NOT "
+        f"in effect here. Restart it with ./scripts/qwen_service.sh restart "
+        f"and run the review again."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Guard: refuse to review this pipeline's own output
 # ---------------------------------------------------------------------------
 # Feeding a review or an evidence appendix back in produces a report that looks
@@ -3940,6 +3984,7 @@ def write_report(output_dir: Path, input_paths: List[Path], report_text: str,
 
 Generated: {datetime.now().isoformat(timespec="seconds")}
 Model: {model_display_name()}
+Pipeline: {PIPELINE_VERSION}
 
 Input files:
 {sources}
@@ -3968,6 +4013,7 @@ def write_evidence_appendix(
     lines.append("")
     lines.append(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
     lines.append(f"Model: {model_display_name()}")
+    lines.append(f"Pipeline: {PIPELINE_VERSION}")
     lines.append("")
     lines.append("## Input files")
     for p in input_paths:
@@ -4941,6 +4987,11 @@ def main() -> int:
 
         # --- Phase 6e: Remove leaked markdown/math artifacts ---
         final_report = clean_markdown_math_artifacts(final_report)
+
+        stale = stale_module_warning()
+        if stale:
+            print(f"\n  {stale}\n")
+            final_report = f"> **{stale}**\n\n" + final_report
 
         citation_source = "\n".join(per_file_source_text.values()) + "\n" + "\n".join(
             block for tables in per_file_tables.values() for _, block in tables
