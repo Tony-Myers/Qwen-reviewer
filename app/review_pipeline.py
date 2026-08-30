@@ -2033,8 +2033,16 @@ _TABLE_CAPTION_RE = re.compile(r"(?:^|\s)T?able\s+(\d+|[A-Z])\b[.:]?", re.I)
 # A caption starts a line; "see Table 1" in a sentence does not. Matching
 # anywhere in the page text made every narrative page that referred to a table
 # look as though it contained one.
+# Journals punctuate captions in several ways, and a caption must be
+# recognised in all of them or the table arrives unlabelled:
+#   "Table 1. Caption"   "Table 1: Caption"   "Table 1 | Caption"  (Frontiers)
+#   "Table 1 Caption"    "Table1 Caption"     "TABLE I. Caption"
+# Requiring a full stop recognised only the first two, and missed captions in
+# five of fifteen papers in a real corpus.
 _CAPTION_LINE_RE = re.compile(
-    r"(?m)^[ \t]*(?:(Supplementary)\s+)?Table\s*([0-9]+|[A-Z])?\s*[.:]", re.I
+    r"(?m)^[ \t]*(?:(Supplementary)\s*)?Table\s*"
+    r"([0-9]+[a-z]?|[IVXL]+|[A-Z])\s*(?:[.:|\u2013\u2014-]|\s)\s*\S",
+    re.I,
 )
 
 # A text-strategy extraction is only believed when it is dense with numbers.
@@ -3001,6 +3009,66 @@ def summarise_model_predictors(table_blocks: List[Tuple[int, str]]) -> str:
 _ORPHAN_STEM_RE = re.compile(r"^-?\d+\.$")
 
 
+# A PDF whose word spacing is lost, or whose columns are interleaved into
+# single lines, yields text like "modelwhereWrepresentsthey-axisintercept".
+# Measured across a fifteen-paper corpus, clean documents scored 0.00% and
+# degraded ones 3.1-16.3%, so 1% separates them with room to spare.
+RUN_ON_TOKEN_THRESHOLD = 0.01
+
+
+def document_extraction_quality(text: str) -> str:
+    """A warning when the document's own text did not extract cleanly."""
+    tokens = re.findall(r"[A-Za-z]{2,}", text or "")
+    if len(tokens) < 200:
+        return ""
+    run_on = sum(1 for t in tokens if len(t) > 20) / len(tokens)
+    if run_on < RUN_ON_TOKEN_THRESHOLD:
+        return ""
+    return (
+        f"WARNING: this document did not extract cleanly. {run_on * 100:.1f}% of "
+        "words have run together, which happens when a PDF loses its word "
+        "spacing or when two columns are merged into single lines. Sentences "
+        "may be interleaved from different columns and numbers may be joined to "
+        "words. Treat absence as unproven: if something appears to be missing, "
+        "say that it could not be recovered from the extracted text, not that "
+        "the authors omitted it. Report this as an extraction limit."
+    )
+
+
+_TABLE_NUMBER_RE = re.compile(
+    r"(?mi)^[ \t]*(?:supplementary\s*)?table\s*([0-9]+|[IVXL]+)\b"
+)
+
+
+def _table_numbers(text: str) -> set:
+    """Distinct table numbers announced at the start of a line."""
+    return {m.group(1).lower() for m in _TABLE_NUMBER_RE.finditer(text or "")}
+
+
+def missing_tables_warning(text: str, table_blocks: List[Tuple[int, str]]) -> str:
+    """A warning when the paper announces tables the extractor did not find."""
+    # Counting caption LINES over-reports badly: sub-labels such as "Table 3a"
+    # and wrapped in-text references made a paper with three tables look like
+    # fourteen, and the warning then fired on 13 of 15 papers. Distinct table
+    # numbers are the honest measure.
+    announced = _table_numbers(text)
+    found = set()
+    for _, block_text in table_blocks:
+        found |= _table_numbers(block_text)
+    missing = sorted(announced - found)
+    if not announced or not missing:
+        return ""
+    return (
+        f"WARNING: the document announces {len(announced)} numbered table(s) but "
+        f"{len(missing)} of them could not be extracted "
+        f"(missing: {', '.join('Table ' + m for m in missing)}). Any table not "
+        "shown below was not read at all. Do not conclude that a value, "
+        "coefficient or diagnostic is unreported merely because it is absent "
+        "here; say that the table could not be extracted. Report this as an "
+        "extraction limit."
+    )
+
+
 def table_fragmentation_warning(block_text: str) -> str:
     """A warning line when a table's numbers have been split across rows."""
     stems = 0
@@ -3149,7 +3217,8 @@ def format_citation_check(problems: List[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def tables_for_prompt(table_blocks: List[Tuple[int, str]]) -> str:
+def tables_for_prompt(table_blocks: List[Tuple[int, str]],
+                      source_text: str = "") -> str:
     """
     Render extracted tables for a synthesis prompt.
 
@@ -3159,9 +3228,15 @@ def tables_for_prompt(table_blocks: List[Tuple[int, str]]) -> str:
     same interval unavailable. The numbers have to be in the prompt for a
     claim about them to be worth anything.
     """
+    notes = [
+        note for note in (
+            document_extraction_quality(source_text),
+            missing_tables_warning(source_text, table_blocks),
+        ) if note
+    ]
     if not table_blocks:
-        return ""
-    parts: List[str] = []
+        return "\n\n".join(notes)
+    parts: List[str] = list(notes)
     predictor_summary = summarise_model_predictors(table_blocks)
     if predictor_summary:
         parts.append(predictor_summary)
@@ -4759,7 +4834,11 @@ def main() -> int:
             mc, additional_classes=manifest.additional_method_classes,
         )
         manifest_summary = manifest.summary_text()
-        file_tables_text = tables_for_prompt(table_blocks)
+        file_tables_text = tables_for_prompt(table_blocks, source_text=text)
+        for note in (document_extraction_quality(text),
+                     missing_tables_warning(text, table_blocks)):
+            if note:
+                print(f"  {note.splitlines()[0]}")
 
         chunks = split_text(text)
         per_file_chunks[path.name] = chunks
@@ -4807,7 +4886,10 @@ def main() -> int:
         final_report = synthesize_report(
             model, tokenizer, file_summaries,
             all_manifests=all_manifests,
-            tables_text=tables_for_prompt(all_table_blocks),
+            tables_text=tables_for_prompt(
+                all_table_blocks,
+                source_text="\n".join(per_file_source_text.values()),
+            ),
         )
 
         # --- Phase 6: Programmatic post-checks ---
