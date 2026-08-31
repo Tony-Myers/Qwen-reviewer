@@ -466,7 +466,8 @@ def _build_appendix_text(
     lines.append("# Evidence appendix")
     lines.append("")
     lines.append(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
-    lines.append(f"Model: {MODEL_NAME}")
+    lines.append(f"Model: {rp.model_display_name(MODEL_NAME)}")
+    lines.append(f"Pipeline: {rp.PIPELINE_VERSION}")
     lines.append("")
     lines.append(f"## Input files\n- {file_path.name}")
     lines.append("")
@@ -640,16 +641,22 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         # Mechanical citation check: quotations must be findable in the
         # manuscript, and evidence must not cite the pipeline's own summary.
         citation_source = text + "\n" + "\n".join(b for _, b in table_blocks)
-        final_report += rp.format_citation_check(
-            rp.verify_report_citations(final_report, citation_source)
-        )
+        final_report = rp.annotate_concern_confidence(final_report, citation_source)
+        report_problems = (rp.verify_report_citations(final_report, citation_source)
+                           + rp.overclaim_problems(final_report))
+        # Both checks above read the quotation marks; strip only afterwards.
+        final_report = rp.mark_unverified_quotations(final_report, citation_source)
+        final_report += rp.format_action_list(final_report)
+        final_report += rp.format_consistency_check(text, table_blocks)
+        final_report += rp.format_citation_check(report_problems)
 
         # Add header
         from datetime import datetime
         header = (
             f"# Local peer-review report\n\n"
             f"Generated: {datetime.now().isoformat(timespec='seconds')}\n"
-            f"Model: {MODEL_NAME}\n\n"
+            f"Model: {rp.model_display_name(MODEL_NAME)}\n"
+            f"Pipeline: {rp.PIPELINE_VERSION}\n\n"
             f"Input files:\n- {file_path.name}\n\n"
             f"Evidence summary:\n"
             f"- **{file_path.name}**: method={mc.value}, "

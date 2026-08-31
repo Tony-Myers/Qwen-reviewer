@@ -28,9 +28,33 @@ _stub("openpyxl", load_workbook=lambda *a, **k: None)
 _stub("pypdf", PdfReader=object)
 
 sys.path.insert(0, str(Path(__file__).parent))
+# Import the pipeline that is actually shipped. A stale copy of
+# review_pipeline.py sits at the project root; with "." on the path first,
+# these tests silently exercised that April file instead of app/.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
+
+# These tests were written against a scratch directory holding "paper.pdf" and
+# a copy of the pipeline, so on the real repo layout they failed before running
+# a single assertion. Resolve both from the project instead.
+ROOT = Path(__file__).resolve().parent.parent
+PIPELINE_SRC = ROOT / "app" / "review_pipeline.py"
+
+
+def _paper() -> Path:
+    for candidate in (
+        Path(__file__).resolve().parent / "paper.pdf",
+        ROOT / "inputs" / "Myers et al 2020 Discerning excellence from mediocrity in swimming.pdf",
+    ):
+        if candidate.exists():
+            return candidate
+    for candidate in sorted((ROOT / "inputs").glob("*.pdf")):
+        return candidate
+    print("SKIP: no PDF available (put one in tests/paper.pdf or inputs/)")
+    raise SystemExit(0)
+
 import review_pipeline as rp  # noqa: E402
 
-PDF = Path(__file__).parent / "paper.pdf"
+PDF = _paper()
 TABLE_PAGES = {18, 19, 20, 21}      # where the tables actually are
 PROSE_PAGES = set(range(1, 18))     # everything before them is narrative
 
@@ -104,7 +128,7 @@ check("other strokes do have age terms",
       "Quadratic (Age)" in alltext and "Cubic(age)" in alltext)
 
 print("\n[8] prompt guards are in place")
-srctext = (Path(__file__).parent / "review_pipeline.py").read_text(encoding="utf-8")
+srctext = PIPELINE_SRC.read_text(encoding="utf-8")
 check("evidence must quote the manuscript", "Never cite this pipeline's own intermediate output" in srctext)
 check("quantile subsetting guard", "Quantile regression does NOT split the sample" in srctext)
 check("internal-consistency checks", "Internal-consistency checks" in srctext)

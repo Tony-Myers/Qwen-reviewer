@@ -135,6 +135,10 @@ app/
 start_server.sh         launcher: llama-server + FastAPI app
 start_llama_server.sh   llama-server on its own
 run_review.sh           command-line entry point
+scripts/
+  qwen_service.sh       start, stop and inspect the service
+tests/                  run any of these directly with .venv/bin/python;
+                        they locate the project themselves
 backups/                timestamped copies taken before significant edits
 ```
 

@@ -12,7 +12,30 @@ def _stub(n,**a):
     for k,v in a.items(): setattr(m,k,v)
     sys.modules[n]=m
 _stub("docx",Document=object);_stub("openpyxl",load_workbook=lambda *a,**k:None)
-sys.path.insert(0,".")
+# Import the pipeline that is actually shipped. A stale copy of
+# review_pipeline.py sits at the project root; with "." on the path first,
+# these tests silently exercised that April file instead of app/.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
+
+# These tests were written against a scratch directory holding "paper.pdf" and
+# a copy of the pipeline, so on the real repo layout they failed before running
+# a single assertion. Resolve both from the project instead.
+ROOT = Path(__file__).resolve().parent.parent
+PIPELINE_SRC = ROOT / "app" / "review_pipeline.py"
+
+
+def _paper() -> Path:
+    for candidate in (
+        Path(__file__).resolve().parent / "paper.pdf",
+        ROOT / "inputs" / "Myers et al 2020 Discerning excellence from mediocrity in swimming.pdf",
+    ):
+        if candidate.exists():
+            return candidate
+    for candidate in sorted((ROOT / "inputs").glob("*.pdf")):
+        return candidate
+    print("SKIP: no PDF available (put one in tests/paper.pdf or inputs/)")
+    raise SystemExit(0)
+
 import review_pipeline as rp
 
 fails=[]
@@ -20,7 +43,7 @@ def check(l,c,d=""):
     print(f"  {'PASS' if c else 'FAIL'}  {l}" + (f"  {d}" if not c and d else ""))
     if not c: fails.append(l)
 
-text, table_blocks = rp.load_document(Path("paper.pdf"))
+text, table_blocks = rp.load_document(_paper())
 SOURCE = text + "\n" + "\n".join(b for _, b in table_blocks)
 
 # Verbatim from the run-3 report.

@@ -137,7 +137,10 @@ def model_display_name(name: str = None) -> str:
 MAX_SECTION_CHARS = 7000
 SECTION_MAX_TOKENS = 900
 FILE_SYNTHESIS_MAX_TOKENS = 1200
-SYNTHESIS_MAX_TOKENS = 1600
+# Raised from 1600 when strengths gained an Evidence line and concerns a
+# Severity line. Confidence and the action list are computed after
+# generation and cost nothing here.
+SYNTHESIS_MAX_TOKENS = 2000
 VALIDATION_MAX_TOKENS = 1800
 
 TEMPERATURE = 0.2
@@ -2050,7 +2053,7 @@ _TABLE_CAPTION_RE = re.compile(r"(?:^|\s)T?able\s+(\d+|[A-Z])\b[.:]?", re.I)
 # Requiring a full stop recognised only the first two, and missed captions in
 # five of fifteen papers in a real corpus.
 _CAPTION_LINE_RE = re.compile(
-    r"(?m)^[ \t]*(?:(Supplementary)\s*)?Table\s*"
+    r"(?m)^[ \t]*(?:(Supplementary)\s*)?T\s?able\s*"
     r"([0-9]+[a-z]?|[IVXL]+|[A-Z])\s*(?:[.:|\u2013\u2014-]|\s)\s*\S",
     re.I,
 )
@@ -3079,8 +3082,11 @@ def document_extraction_quality(text: str) -> str:
     )
 
 
+# Some journal PDFs split the word: this corpus's Frontiers paper extracts its
+# captions as "T able 2", so every table in it was announced-but-unlabelled and
+# the missing-tables warning could never fire.
 _TABLE_NUMBER_RE = re.compile(
-    r"(?mi)^[ \t]*(?:supplementary\s*)?table\s*([0-9]+|[IVXL]+)\b"
+    r"(?mi)^[ \t]*(?:supplementary\s*)?t\s?able\s*([0-9]+|[IVXL]+)\b"
 )
 
 
@@ -3133,13 +3139,363 @@ def table_fragmentation_warning(block_text: str) -> str:
     )
 
 
+# A paper states its total sample once, in prose, and then reports a per-analysis
+# N in every table. When a table's N exceeds the stated total, something is
+# wrong -- a mislabelled total, a different sampling frame, or a reporting error
+# -- and it is worth an author's attention. Three consecutive runs of this
+# pipeline over one paper found the discrepancy once: the model had both numbers
+# in a single sentence on the third run and did not subtract them. An
+# observation that reduces to arithmetic should be computed, not hoped for.
+_TOTAL_SAMPLE_UNITS = (
+    r"(?:participants?|adults?|patients?|subjects?|respondents?|individuals?|"
+    r"children|adolescents?|infants?|volunteers?|cases|athletes?|players?|"
+    r"cyclists?|swimmers?|runners?|students?|boys|girls|women|men)"
+)
+_TOTAL_SAMPLE_NUM = r"(\d{1,3}(?:,\d{3})+|\d+)"
+_TOTAL_SAMPLE_RE = re.compile(
+    r"(?:total\s+)?(?:sample|cohort|data\s*set|dataset)\s+"
+    r"(?:of|comprises|comprised|comprising|consisted\s+of|was)\s+"
+    + _TOTAL_SAMPLE_NUM + r"\s*" + _TOTAL_SAMPLE_UNITS
+    + r"|total[\s:(]+n\s*[=:]\s*" + _TOTAL_SAMPLE_NUM
+    + r"|total\s+of\s+" + _TOTAL_SAMPLE_NUM + r"\s*" + _TOTAL_SAMPLE_UNITS
+    + r"|" + _TOTAL_SAMPLE_NUM + r"\s*" + _TOTAL_SAMPLE_UNITS
+    + r"\s+(?:were\s+|was\s+)?(?:recruited|enrolled|included|took\s+part|"
+      r"completed|participated|volunteered)",
+    re.I,
+)
+
+
+# An N label, then the numbers that follow it on the same line. Table rows read
+# "N 40,348 41,015 41,015 41,015": one label, one value per column.
+_N_LABEL_RE = re.compile(r"(?:^|(?<=[\s\t(]))[Nn]\s*(?:[=:]|\bZ\b)?\s*")
+_BIG_INT_RE = re.compile(r"(?:\d{1,3},)+\d{3}$|^\d{4,}$")
+
+
+_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20,
+    "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+    "eighty": 80, "ninety": 90,
+}
+_NUM_WORD = "(?:" + "|".join(sorted(_NUMBER_WORDS, key=len, reverse=True)) + "|hundred)"
+_NUM_WORD_PHRASE = _NUM_WORD + r"(?:[\s-]+(?:and[\s-]+)?" + _NUM_WORD + r")*"
+# Sports-science papers routinely open "Twenty-seven recreational cyclists
+# completed...". Written out, the sample size was invisible to the digit
+# patterns above, so the consistency check stayed silent on papers it could
+# otherwise have checked.
+_TOTAL_WORD_RE = re.compile(
+    r"\b(" + _NUM_WORD_PHRASE + r")(?:\s+[a-z][a-z-]*){0,2}\s+" + _TOTAL_SAMPLE_UNITS
+    # A breakdown often sits between the noun and the verb:
+    # "... swimmers (male [n=202]; female [n=161]) participated in the study".
+    + r"(?:\s*\([^)]{0,90}\))?"
+    + r"\s+(?:were\s+|was\s+)?(?:recruited|enrolled|included|took\s+part|"
+      r"completed|participated|volunteered)",
+    re.I,
+)
+
+
+def _words_to_int(phrase: str) -> Optional[int]:
+    """Read a written-out cardinal up to 999. Returns None if it does not parse."""
+    total = 0
+    current = 0
+    seen = False
+    for word in re.split(r"[\s-]+", phrase.lower()):
+        if not word or word == "and":
+            continue
+        if word == "hundred":
+            if not current:
+                return None
+            current *= 100
+            seen = True
+            continue
+        value = _NUMBER_WORDS.get(word)
+        if value is None:
+            return None
+        seen = True
+        # "twenty seven" accumulates; "one hundred twelve" already multiplied.
+        if value >= 20 and current and current % 100 == 0:
+            total += current
+            current = value
+        else:
+            current += value
+    return (total + current) if seen else None
+
+
+def stated_total_sample(text: str) -> Optional[int]:
+    """The total sample size the document states in prose, if it states one."""
+    candidates = []
+    for match in _TOTAL_SAMPLE_RE.finditer(text or ""):
+        raw = next((g for g in match.groups() if g), None)
+        if not raw:
+            continue
+        try:
+            candidates.append(int(raw.replace(",", "")))
+        except ValueError:
+            continue
+    for match in _TOTAL_WORD_RE.finditer(text or ""):
+        value = _words_to_int(match.group(1))
+        if value:
+            candidates.append(value)
+    if not candidates:
+        return None
+    # A paper may state its total more than once. Where the statements
+    # disagree, the largest is the most generous reading and so the one least
+    # likely to raise a false discrepancy.
+    return max(candidates)
+
+
+def _reported_sample_sizes(text: str) -> List[int]:
+    """Every N value labelled as such, from table rows or prose."""
+    found: List[int] = []
+    for line in (text or "").splitlines():
+        for match in _N_LABEL_RE.finditer(line):
+            for token in line[match.end():].split():
+                token = token.strip("()[]{}.,;:")
+                if not _BIG_INT_RE.match(token):
+                    break
+                try:
+                    found.append(int(token.replace(",", "")))
+                except ValueError:
+                    break
+    return found
+
+
+def sample_size_warning(text: str, table_blocks: List[Tuple[int, str]]) -> str:
+    """A warning when a reported N exceeds the stated total sample."""
+    total = stated_total_sample(text)
+    if not total:
+        return ""
+    reported: List[int] = list(_reported_sample_sizes(text))
+    for _, block_text in table_blocks or []:
+        reported.extend(_reported_sample_sizes(block_text))
+    exceeding = sorted({n for n in reported if n > total})
+    if not exceeding:
+        return ""
+    shown = ", ".join(f"{n:,}" for n in exceeding[:6])
+    if len(exceeding) > 6:
+        shown += ", ..."
+    return (
+        f"WARNING: the document states a total sample of {total:,}, but "
+        f"{len(exceeding)} reported sample size(s) exceed it ({shown}; largest "
+        f"exceeds the total by {max(exceeding) - total:,}). Either the stated "
+        "total refers to a subset, a different sampling frame was used for "
+        "those analyses, or there is a reporting error. This is arithmetic, not "
+        "an inference: state it as a directly supported concern and ask the "
+        "authors to reconcile the figures."
+    )
+
+
+_CONCERN_RE = re.compile(r"^\s*[-*]?\s*\**\s*Concern:?\**\s*:?\s*(.+)$", re.I)
+_SEVERITY_RE = re.compile(r"^\s*[-*]?\s*\**\s*Severity:?\**\s*:?\s*(\w+)", re.I)
+_EVIDENCE_RE = re.compile(r"^\s*[-*]?\s*\**\s*Evidence:?\**\s*:?\s*(.+)$", re.I)
+_CHECK_RE = re.compile(r"^\s*[-*]?\s*\**\s*Check:?\**\s*:?\s*(.+)$", re.I)
+_HEADING_RE = re.compile(r"^#{1,3}\s*(.+?)\s*$")
+# Verdicts a journal reviewer would not write. The prompt asks for the
+# consequence instead; this catches the cases where it does not comply.
+_OVERCLAIM_RE = re.compile(
+    r"\b(fundamental(?:ly)?\s+(?:error|flawed?)|fatal(?:ly)?\s+flaw(?:ed)?|"
+    r"renders?\s+(?:\w+\s+){1,4}(?:invalid|meaningless|worthless|unusable)|"
+    r"completely\s+undermines?|entirely\s+invalid|scientifically\s+worthless)\b",
+    re.I,
+)
+
+
+def _report_sections(report_text: str) -> Dict[str, List[str]]:
+    """The report split into its headed sections, in order."""
+    sections: Dict[str, List[str]] = {}
+    current = ""
+    for line in (report_text or "").splitlines():
+        heading = _HEADING_RE.match(line)
+        if heading:
+            current = heading.group(1).strip().lower()
+            sections.setdefault(current, [])
+            continue
+        if current:
+            sections[current].append(line)
+    return sections
+
+
+def _concern_groups(lines: List[str]) -> List[Tuple[int, int]]:
+    """Line ranges, one per concern, from the first Concern: line to the next."""
+    starts = [i for i, line in enumerate(lines) if _CONCERN_RE.match(line)]
+    groups = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(lines)
+        groups.append((start, end))
+    return groups
+
+
+def concern_confidence(group_text: str, source_text: str) -> Tuple[str, str]:
+    """
+    Confidence in one concern, computed rather than asked for.
+
+    A model's own confidence statement is a token prediction, not a
+    measurement: the run that inverted this paper's medication finding
+    asserted it without hedging, and three runs cited the pipeline's own
+    summary while sounding certain. What the reader actually wants to know --
+    does this rest on the manuscript or on something softer -- is already
+    decidable from the checks the pipeline performs.
+    """
+    if _SELF_CITATION_RE.search(group_text):
+        return ("Low", "the evidence cites this pipeline's own summary rather "
+                       "than the manuscript")
+    haystack = _normalise_for_match(source_text)
+    haystack_punct = _strip_punctuation(haystack)
+    haystack_nospace = re.sub(r"\s+", "", haystack_punct)
+    quotes = [q.strip() for q in _quoted_spans(group_text)
+              if len(q.strip().split()) >= 4]
+    # Every quotation must hold, not merely one of them. A concern pairing a
+    # genuine quotation with an invented one previously read High on the
+    # strength of the first: this paper's effect-size concern quoted "just over
+    # half a point per bout", which is in the abstract, alongside a fabricated
+    # second quotation, and was reported as High.
+    unverified = [q for q in quotes
+                  if _missing_fragment(q, haystack, haystack_punct,
+                                       haystack_nospace) is not None]
+    if unverified and len(unverified) < len(quotes):
+        return ("Low", "one quotation was located in the manuscript and "
+                       "another could not be")
+    if unverified:
+        return ("Low", "the quoted evidence could not be located in the "
+                       "extracted manuscript")
+    if quotes:
+        return ("High", "every quotation was located in the manuscript")
+    source_numbers = set(
+        re.findall(r"\d+\.\d+", _normalise_numeric_artefacts(source_text))
+    )
+    cited = re.findall(r"(?<![\d.])\d+\.\d+(?!\d)", group_text)
+    if cited and any(n in source_numbers for n in cited):
+        return ("High", "the cited values were located in the extracted tables")
+    return ("Moderate", "the concern is an inference; no verbatim quotation or "
+                        "table value supports it directly")
+
+
+def annotate_concern_confidence(report_text: str, source_text: str) -> str:
+    """Append a computed Confidence line to each directly supported concern."""
+    lines = (report_text or "").splitlines()
+    bounds = None
+    for index, line in enumerate(lines):
+        heading = _HEADING_RE.match(line)
+        if not heading:
+            continue
+        name = heading.group(1).strip().lower()
+        if name.startswith("directly supported concerns"):
+            bounds = [index + 1, len(lines)]
+        elif bounds and bounds[1] == len(lines):
+            bounds[1] = index
+            break
+    if not bounds:
+        return report_text
+    start, stop = bounds
+    body = lines[start:stop]
+    if any("Confidence:" in line for line in body):
+        return report_text
+    out: List[str] = []
+    groups = _concern_groups(body)
+    if not groups:
+        return report_text
+    covered = groups[0][0]
+    out.extend(body[:covered])
+    for begin, end in groups:
+        chunk = body[begin:end]
+        level, reason = concern_confidence("\n".join(chunk), source_text)
+        while chunk and not chunk[-1].strip():
+            chunk.pop()
+        chunk.append(f"* Confidence: {level} — {reason}.")
+        chunk.append("")
+        out.extend(chunk)
+    return "\n".join(lines[:start] + out + lines[stop:])
+
+
+_PRIORITY_BY_SEVERITY = {
+    "critical": ("Critical", 0),
+    "substantive": ("High", 1),
+    "editorial": ("Low", 3),
+}
+
+
+def format_action_list(report_text: str) -> str:
+    """
+    A priority table assembled from the report's own severity labels.
+
+    Rendered from the concerns already written rather than generated again:
+    an earlier template asked for the same material twice and produced two
+    headings over one list of items. The wording here is the concern's own, so
+    the table cannot drift from the body it summarises.
+    """
+    sections = _report_sections(report_text)
+    rows: List[Tuple[int, str, str]] = []
+
+    concerns = sections.get("directly supported concerns", [])
+    for begin, end in _concern_groups(concerns):
+        chunk = concerns[begin:end]
+        title = _CONCERN_RE.match(chunk[0]).group(1).strip().rstrip("*").strip()
+        severity = ""
+        for line in chunk:
+            found = _SEVERITY_RE.match(line)
+            if found:
+                severity = found.group(1).lower()
+                break
+        label, order = _PRIORITY_BY_SEVERITY.get(severity, ("High", 2))
+        rows.append((order, label, title))
+
+    for line in sections.get("verification prompts", []):
+        found = _CHECK_RE.match(line)
+        if found:
+            rows.append((2, "Medium", found.group(1).strip().rstrip("*").strip()))
+
+    if not rows:
+        return ""
+    rows.sort(key=lambda row: row[0])
+    out = ["\n\n# Prioritised actions", "",
+           "Assembled from the severity labels above; the wording is each "
+           "item's own. Verification prompts are listed as Medium because they "
+           "are questions to settle, not established faults.", "",
+           "| Priority | Item |", "| --- | --- |"]
+    for _, label, title in rows:
+        title = re.sub(r"\s+", " ", title).replace("|", "/")
+        if len(title) > 150:
+            title = title[:147].rstrip() + "..."
+        out.append(f"| {label} | {title} |")
+    return "\n".join(out) + "\n"
+
+
+def overclaim_problems(report_text: str) -> List[str]:
+    """Verdict phrasing the register rule asks the model to avoid."""
+    problems = []
+    for match in _OVERCLAIM_RE.finditer(report_text or ""):
+        problems.append(
+            f"Verdict phrasing rather than a stated consequence: "
+            f"\"{match.group(0)}\". A journal review would say what follows "
+            f"from the problem instead."
+        )
+    return list(dict.fromkeys(problems))
+
+
+def format_consistency_check(text: str,
+                             table_blocks: List[Tuple[int, str]]) -> str:
+    """A report section for deterministic findings, appended after synthesis."""
+    warning = sample_size_warning(text, table_blocks)
+    if not warning:
+        return ""
+    return (
+        "\n\n# Data consistency check\n\n"
+        "Computed directly from the extracted text, independently of the "
+        "model's reading.\n\n"
+        f"* {warning[len('WARNING: '):]}\n"
+    )
+
+
 MAX_PROMPT_TABLE_ROWS = 45
 MAX_PROMPT_TABLE_CHARS = 9000
 
 
 _SELF_CITATION_RE = re.compile(
     r"\b(?:the\s+)?(?:file\s+|evidence\s+|chunk\s+)?"
-    r"(?:summary|summaries|manifest|notes|extraction)\s+"
+    r"(?:summary|summaries|synopsis|synopses|overview|manifest|notes|"
+    r"extraction|appendix)\s+"
     r"(?:states|notes|says|indicates|confirms|flags|raises|reports|shows|suggests|highlights)\b",
     re.I,
 )
@@ -3166,8 +3522,24 @@ def _quoted_spans(text: str) -> List[str]:
     return spans
 
 
+def _normalise_numeric_artefacts(text: str) -> str:
+    """
+    Repair decimal separators that PDF extraction mangles.
+
+    Several publishers set the decimal point in a font whose glyph extracts as
+    "$" or a middle dot, so 0.795 arrives as "0$795" and, where the digits are
+    split, as "0 $795". The citation check compared the report's numbers
+    against the raw extraction and therefore reported every correct decimal in
+    such a paper as absent: one Elsevier paper contained 314 of them. Fold the
+    separators back before any comparison. Only a separator between two digits
+    is touched, so an index name such as WHT$5R is left alone.
+    """
+    return re.sub(r"(?<=\d)[ \t]*[$\u00b7\u2219\u00b7][ \t]*(?=\d)", ".", text)
+
+
 def _normalise_for_match(text: str) -> str:
     """Fold the differences that stop a true quotation matching its source."""
+    text = _normalise_numeric_artefacts(text)
     text = unicodedata.normalize("NFKC", text)
     text = text.replace("\u2019", "'").replace("\u2018", "'")
     text = text.replace("\u201c", '"').replace("\u201d", '"')
@@ -3179,6 +3551,42 @@ def _normalise_for_match(text: str) -> str:
 
 def _strip_punctuation(text: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^0-9a-z ]+", " ", text)).strip()
+
+
+_ELLIPSIS_RE = re.compile(r"\s*(?:\.\s?\.\s?\.|\u2026)\s*")
+
+
+def _fragment_located(fragment: str, hay: str, hay_punct: str,
+                      hay_nospace: str) -> bool:
+    """One contiguous fragment, tried at three levels of tolerance."""
+    needle = _normalise_for_match(fragment)
+    if not needle:
+        return True
+    if needle in hay:
+        return True
+    stripped = _strip_punctuation(needle)
+    if stripped and stripped in hay_punct:
+        return True
+    return bool(stripped) and re.sub(r"\s+", "", stripped) in hay_nospace
+
+
+def _missing_fragment(quoted: str, hay: str, hay_punct: str,
+                      hay_nospace: str) -> Optional[str]:
+    """
+    The first part of a quotation that is not in the source, or None.
+
+    A quotation may legitimately elide with "...". Requiring the whole span to
+    be contiguous reported such a quotation as absent even when both halves
+    were faithful, and -- worse -- said nothing about which half was invented.
+    Each fragment is checked separately, and the one that fails is named.
+    """
+    fragments = [f.strip() for f in _ELLIPSIS_RE.split(quoted) if f.strip()]
+    for fragment in fragments:
+        if len(fragment.split()) < 3 and len(fragments) > 1:
+            continue  # too short to locate meaningfully on its own
+        if not _fragment_located(fragment, hay, hay_punct, hay_nospace):
+            return fragment
+    return None
 
 
 def verify_report_citations(report_text: str, source_text: str) -> List[str]:
@@ -3193,6 +3601,10 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
     """
     problems: List[str] = []
     haystack = _normalise_for_match(source_text)
+    # Precomputed once: these were rebuilt per quotation, which is O(n*m) over
+    # a whole manuscript. Behaviour is unchanged.
+    haystack_punct = _strip_punctuation(haystack)
+    haystack_nospace = re.sub(r"\s+", "", haystack_punct)
 
     for match in _SELF_CITATION_RE.finditer(report_text):
         line = report_text[: match.start()].split("\n")[-1] + match.group(0)
@@ -3205,24 +3617,43 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
         quoted = quoted.strip()
         if len(quoted.split()) < 4:
             continue
-        needle = _normalise_for_match(quoted)
-        if not needle or needle in haystack:
+        # Tolerances live in _missing_fragment: punctuation, spacing (extraction
+        # splits "strati fied" and fuses "i tw a sW C"), and elision with "...".
+        missing = _missing_fragment(quoted, haystack, haystack_punct,
+                                    haystack_nospace)
+        if missing is None:
             continue
-        # Second chance ignoring punctuation entirely. A quotation that drops a
-        # bracket, as in "(ICCs)" rendered "ICCs", is still faithful in
-        # substance; the check is for invented content, not for typography.
-        if _strip_punctuation(needle) in _strip_punctuation(haystack):
-            continue
-        problems.append(
-            f"Quotation not found in the manuscript: \"{quoted[:110]}\""
-        )
+        if missing.strip() != quoted.strip():
+            problems.append(
+                f"Quotation only partly found: \"{quoted[:80]}\" -- this part "
+                f"is not in the manuscript: \"{missing[:80]}\""
+            )
+        else:
+            problems.append(
+                f"Quotation not found in the manuscript: \"{quoted[:110]}\""
+            )
 
     # Numbers are quoted as readily as words and fabricated more easily: a
     # value invented from a badly extracted cell reads as authoritative and is
     # the kind of thing that gets sent to an author.
-    source_numbers = set(re.findall(r"\d+\.\d+", source_text))
+    source_digits = re.findall(r"\d+\.\d+", _normalise_numeric_artefacts(source_text))
+    source_numbers = set(source_digits)
+    # A report that rounds an extracted value is not fabricating it. Saying
+    # "approximately 0.13" of a table's 0.134, or calling 0.221 - 0.211 a
+    # difference of 0.01, was reported as three absent numbers on the cycling
+    # paper; every one of them was a faithful rounding. Accept a report number
+    # when some source value rounds to it at the precision the report used.
+    source_values = []
+    for token in source_digits:
+        try:
+            source_values.append(float(token))
+        except ValueError:
+            continue
     for number in dict.fromkeys(re.findall(r"(?<![\d.])\d+\.\d+(?!\d)", report_text)):
         if number in source_numbers:
+            continue
+        places = len(number.split(".")[1])
+        if any(f"{value:.{places}f}" == number for value in source_values):
             continue
         problems.append(
             f"Number {number} does not appear in the manuscript. If it is a "
@@ -3240,6 +3671,62 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
     return unique
 
 
+def mark_unverified_quotations(report_text: str, source_text: str) -> str:
+    """
+    Remove quotation marks from spans that are not in the manuscript.
+
+    The false claim in these reports is one of provenance, not content: the
+    wording is the model's, but the marks assert it is the paper's. Removing
+    them leaves an ordinary paraphrase, which is a legitimate thing for a
+    reviewer to write, and adds nothing that was not already there.
+
+    Substituting the nearest verbatim sentence was the alternative and is
+    worse: it introduces a claim rather than withdrawing one, and a wrongly
+    chosen sentence passes the citation check precisely because it did come
+    from the source. A visible problem would become an invisible one.
+
+    No corroboration gate is applied. Content-word overlap against the source
+    was measured on a report where nine of nine quotations failed: an invented
+    control scored 0.12 and a verbatim span 1.00, but the nine real spans ran
+    from 0.17 to 0.57 with no gap between paraphrase and invention. The tag is
+    therefore neutral about which it is, and the Citation check keeps the full
+    record either way.
+    """
+    if not report_text:
+        return report_text
+    haystack = _normalise_for_match(source_text)
+    haystack_punct = _strip_punctuation(haystack)
+    haystack_nospace = re.sub(r"\s+", "", haystack_punct)
+
+    # Line by line, so an Evidence line carrying two unverified spans is tagged
+    # once at its end rather than interrupted mid-sentence twice. Quoted spans
+    # never cross a line break, so pairing within a line is equivalent to
+    # pairing across the report and is not thrown off by a stray mark
+    # elsewhere.
+    lines = report_text.split("\n")
+    changed = False
+    for number, line in enumerate(lines):
+        positions = [m.start() for m in _QUOTE_CHAR_RE.finditer(line)]
+        drop = []
+        for index in range(0, len(positions) - 1, 2):
+            open_at, close_at = positions[index], positions[index + 1]
+            content = line[open_at + 1:close_at].strip()
+            if not (12 <= len(content) <= 400) or len(content.split()) < 4:
+                continue
+            if _missing_fragment(content, haystack, haystack_punct,
+                                 haystack_nospace) is None:
+                continue
+            drop.extend((open_at, close_at))
+        if not drop:
+            continue
+        kept = [char for position, char in enumerate(line)
+                if position not in set(drop)]
+        lines[number] = ("".join(kept).rstrip()
+                         + " *[not verbatim - see Citation check]*")
+        changed = True
+    return "\n".join(lines) if changed else report_text
+
+
 def format_citation_check(problems: List[str]) -> str:
     if not problems:
         return (
@@ -3250,10 +3737,11 @@ def format_citation_check(problems: List[str]) -> str:
     lines = [
         "\n\n# Citation check",
         "",
-        "Checked mechanically against the extracted manuscript text. Treat the "
-        "following with caution: a quotation that cannot be found may be a "
-        "paraphrase in quotation marks, and a citation of the pipeline's own "
-        "summary is not evidence from the paper.",
+        "Checked mechanically against the extracted manuscript text, and "
+        "against the report's own phrasing. Treat the following with caution: "
+        "a quotation that cannot be found may be a paraphrase in quotation "
+        "marks, and a citation of the pipeline's own summary is not evidence "
+        "from the paper.",
         "",
     ]
     for problem in problems:
@@ -3276,6 +3764,7 @@ def tables_for_prompt(table_blocks: List[Tuple[int, str]],
         note for note in (
             document_extraction_quality(source_text),
             missing_tables_warning(source_text, table_blocks),
+            sample_size_warning(source_text, table_blocks),
         ) if note
     ]
     if not table_blocks:
@@ -3444,7 +3933,13 @@ Strict evidence hierarchy:
 - "Extraction limits" are limitations of the extraction or summarisation, not manuscript faults.
 
 Required format:
-- Under "Directly supported concerns", each bullet must start with "Concern:" and include "Evidence:" and "Why it matters:".
+- Under "Major strengths", each bullet must start with "Strength:" and include "Evidence:". The same evidence rules below apply: quote the manuscript, a table cell or a numeric value, or state the specific feature without quotation marks.
+- Under "Directly supported concerns", each bullet must start with "Concern:" and include "Severity:", "Evidence:" and "Why it matters:".
+- "Severity:" must be exactly one of Critical, Substantive or Editorial:
+  - Critical: if correct, the paper's stated conclusions would have to change.
+  - Substantive: weakens, qualifies or limits a claim without overturning the conclusions.
+  - Editorial: an inconsistency, typographical slip or reporting error with no bearing on the conclusions.
+- Most papers contain no Critical issue. Do not promote a concern to Critical because the category exists; an empty category is the correct output when nothing warrants it.
 - Under "Verification prompts", each bullet must start with "Check:" and include "Reason:".
 - Under "Extraction limits", each bullet must start with "Limit:".
 - Do not include concerns that cannot be linked to specific evidence in the supplied material.
@@ -3454,6 +3949,10 @@ Evidence must come from the manuscript:
 - A quotation must reproduce the source exactly, character for character. If you cannot reproduce the wording exactly, describe it in your own words WITHOUT quotation marks. Never place quotation marks around a paraphrase, a reconstruction, or a plausible-sounding phrase: an invented quotation in a review is worse than no quotation.
 - Never cite this pipeline's own intermediate output as evidence. Phrases such as "the file summary notes", "the evidence summary flags", "the manifest indicates" are NOT evidence: they describe a summary of the paper, not the paper. If the only support for a concern is such a phrase, the concern belongs under "Verification prompts", not here.
 - If you cannot produce a verbatim quotation or a specific number for a concern, move it to "Verification prompts" or drop it.
+
+Register:
+- Describe a problem by its consequence, not with a verdict. Do not write "fundamental error", "fatal flaw", "invalid", "meaningless", "worthless" or "completely undermines". Write what follows from it: "may introduce optimistic bias because ...", "makes the reported comparison difficult to interpret because ...".
+- Where the manuscript itself acknowledges a limitation you are raising, say so in the same bullet. A concern that ignores the authors' own discussion of it reads as though the discussion was not consulted.
 
 Claims must not outrun the evidence:
 - Do not assert in the synopsis or in a concern anything you are simultaneously asking to be checked under "Verification prompts". If you are unsure whether a feature exists (an interaction term, a covariate, a correction), say so once, in "Verification prompts" only.
@@ -4996,9 +5495,18 @@ def main() -> int:
         citation_source = "\n".join(per_file_source_text.values()) + "\n" + "\n".join(
             block for tables in per_file_tables.values() for _, block in tables
         )
-        final_report += format_citation_check(
-            verify_report_citations(final_report, citation_source)
+        final_report = annotate_concern_confidence(final_report, citation_source)
+        report_problems = (verify_report_citations(final_report, citation_source)
+                           + overclaim_problems(final_report))
+        # Order matters: both checks above read the quotation marks, so the
+        # marks may only be removed once they have run.
+        final_report = mark_unverified_quotations(final_report, citation_source)
+        final_report += format_action_list(final_report)
+        final_report += format_consistency_check(
+            "\n".join(per_file_source_text.values()),
+            [t for tables in per_file_tables.values() for t in tables],
         )
+        final_report += format_citation_check(report_problems)
 
     except Exception as e:
         final_report = (
