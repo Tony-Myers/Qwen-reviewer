@@ -2702,8 +2702,17 @@ def apply_chat_template_compat(tokenizer, user_text: str) -> str:
             add_generation_prompt=True,
         )
 
-def make_default_sampler():
-    return make_sampler(TEMPERATURE, top_p=TOP_P, top_k=TOP_K)
+def make_default_sampler(temperature: float = None):
+    """The standard sampler, or a warmer one for a repeat synthesis pass."""
+    return make_sampler(TEMPERATURE if temperature is None else temperature,
+                        top_p=TOP_P, top_k=TOP_K)
+
+
+# A repeat pass at the same low temperature mostly repeats itself, which makes
+# the union worth nothing. Later passes are sampled warmer so they explore a
+# different part of the space; the first pass stays at TEMPERATURE and remains
+# the base report.
+REPEAT_PASS_TEMPERATURE = float(os.environ.get("REPEAT_PASS_TEMPERATURE", "0.7"))
 
 
 def clean_model_output(text: str) -> str:
@@ -2876,25 +2885,38 @@ Material:
 # report now carries the fingerprint of the code that produced it, and says so
 # when the file on disk has moved on.
 
-def _fingerprint_of(path) -> str:
-    try:
-        return hashlib.sha1(Path(path).read_bytes()).hexdigest()[:8]
-    except Exception:
-        return "unknown"
+def _fingerprint_of(*paths) -> str:
+    """
+    A short hash over the files that decide what a review looks like.
+
+    This covered review_pipeline.py alone, so a change confined to server.py --
+    where the synthesis loop, the validation order and the report header all
+    live -- left the stamp unchanged, and the header then claimed a version the
+    running code no longer matched. The service script already fingerprints
+    both files; this now agrees with it.
+    """
+    digest = hashlib.sha1()
+    for path in paths:
+        try:
+            digest.update(Path(path).read_bytes())
+        except Exception:
+            return "unknown"
+    return digest.hexdigest()[:8]
 
 
 PIPELINE_PATH = Path(__file__).resolve()
-PIPELINE_VERSION = _fingerprint_of(PIPELINE_PATH)
+SERVER_PATH = PIPELINE_PATH.parent / "server.py"
+PIPELINE_VERSION = _fingerprint_of(PIPELINE_PATH, SERVER_PATH)
 
 
 def stale_module_warning() -> str:
     """A warning when the running code is older than the file on disk."""
-    current = _fingerprint_of(PIPELINE_PATH)
+    current = _fingerprint_of(PIPELINE_PATH, SERVER_PATH)
     if current in ("unknown", PIPELINE_VERSION):
         return ""
     return (
-        f"WARNING: this review was produced by review_pipeline.py version "
-        f"{PIPELINE_VERSION}, but the file on disk is now version {current}. "
+        f"WARNING: this review was produced by pipeline version "
+        f"{PIPELINE_VERSION}, but the code on disk is now version {current}. "
         f"The server was started before that change, so recent edits are NOT "
         f"in effect here. Restart it with ./scripts/qwen_service.sh restart "
         f"and run the review again."
@@ -3327,6 +3349,212 @@ def _concern_groups(lines: List[str]) -> List[Tuple[int, int]]:
     return groups
 
 
+_EVIDENCE_PREFIX_RE = re.compile(
+    r"^\s*(?:the\s+)?(?:file\s+|evidence\s+|chunk\s+)?"
+    r"(?:summary|summaries|synopsis|synopses|overview|manifest|notes|extraction|appendix)\s+"
+    r"(?:states|notes|says|indicates|confirms|flags|raises|reports|shows|suggests|"
+    r"highlights|identifies|lists|mentions)\s*:?\s*",
+    re.I,
+)
+
+
+def _content_tokens(text: str) -> set:
+    """Content words, folded for plurals so "season" matches "seasons"."""
+    tokens = set()
+    for word in _strip_punctuation(_normalise_for_match(text)).split():
+        if len(word) <= 2:
+            continue
+        if len(word) > 4 and word.endswith("ies"):
+            word = word[:-3] + "y"
+        elif len(word) > 4 and word.endswith("es") and not word.endswith("ses"):
+            word = word[:-2]
+        elif len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+            word = word[:-1]
+        tokens.add(word)
+    return tokens
+
+
+def evidence_echoes_concern(group_text: str) -> bool:
+    """
+    True when a concern's Evidence line merely restates the concern.
+
+    Asked for an Evidence line it cannot source, the model has begun filling
+    the slot with the concern's own sentence, prefixed with "The file synopsis
+    states:". That is not weak evidence, it is no evidence, and it needs no
+    comparison against the manuscript to detect.
+    """
+    lines = group_text.splitlines()
+    concern = ""
+    evidence = ""
+    for line in lines:
+        found = _CONCERN_RE.match(line)
+        if found and not concern:
+            concern = found.group(1)
+            continue
+        found = _EVIDENCE_RE.match(line)
+        if found and not evidence:
+            evidence = _EVIDENCE_PREFIX_RE.sub("", found.group(1).strip())
+    if not concern or not evidence:
+        return False
+    concern_tokens = _content_tokens(concern)
+    evidence_tokens = _content_tokens(evidence)
+    if len(evidence_tokens) < 5 or not concern_tokens:
+        return False
+    contained = len(evidence_tokens & concern_tokens) / len(evidence_tokens)
+    return contained >= 0.8
+
+
+def evidence_echo_problems(report_text: str) -> List[str]:
+    """Report-level findings for concerns whose evidence restates them."""
+    sections = _report_sections(report_text)
+    concerns = sections.get("directly supported concerns", [])
+    problems = []
+    for begin, end in _concern_groups(concerns):
+        chunk = concerns[begin:end]
+        if not evidence_echoes_concern("\n".join(chunk)):
+            continue
+        title = _CONCERN_RE.match(chunk[0]).group(1).strip().rstrip("*").strip()
+        problems.append(
+            f"The Evidence line restates the concern rather than citing the "
+            f"manuscript, so the concern is unsupported: \"{title[:100]}\""
+        )
+    return problems
+
+
+# Findings rotate between runs. The same paper, the same code and the same
+# model, two and a half hours apart, produced six defensible concerns across two
+# runs with no overlap at all -- and the second run lost a verified inconsistency
+# the first had found. A single pass gives roughly half of what the model can
+# see, and which half is arbitrary. Running the synthesis more than once and
+# taking the union recovers the rest.
+REVIEW_PASSES = max(1, int(os.environ.get("REVIEW_PASSES", "1") or 1))
+
+_MERGEABLE_SECTIONS = (
+    ("directly supported concerns", _CONCERN_RE),
+    ("verification prompts", _CHECK_RE),
+)
+
+
+def _item_groups(lines: List[str], marker: re.Pattern) -> List[Tuple[int, int]]:
+    starts = [i for i, line in enumerate(lines) if marker.match(line)]
+    return [(start, starts[i + 1] if i + 1 < len(starts) else len(lines))
+            for i, start in enumerate(starts)]
+
+
+# Measured on a run where three validated passes produced two concerns that
+# were plainly the same finding in different words -- the narrow null interval
+# for the Bayes Factors -- and both reached the report and the action table.
+# Across that run's items the duplicate pair scored 0.56 and the closest
+# genuinely distinct pair 0.39, so the threshold sits between them rather than
+# at a round number chosen in advance.
+SAME_ITEM_OVERLAP = 0.45
+
+
+def _same_item(first: str, second: str) -> bool:
+    """Two items are the same finding when their wording largely coincides."""
+    left, right = _content_tokens(first), _content_tokens(second)
+    if not left or not right:
+        return False
+    overlap = len(left & right) / min(len(left), len(right))
+    return overlap >= SAME_ITEM_OVERLAP
+
+
+def merge_reports(reports: List[str], stats: Optional[dict] = None) -> str:
+    """
+    Union the concerns and checks of several synthesis passes.
+
+    The first pass is the base report and keeps its synopsis, strengths and
+    closing sections: merging prose would produce a document no pass actually
+    wrote. Only the two list sections where rotation was observed are unioned,
+    and an item is added only when no item already present says the same thing.
+    Additions are marked so the reader can see the report is a union.
+
+    Sameness is lexical, so two passes raising one question in wholly different
+    words ("included season or year as a covariate" against "account for the
+    lockdown and non-lockdown seasons") will still both survive. That remains
+    the safe direction to fail: a duplicated question costs the reader a few
+    seconds where a swallowed finding costs the review. The threshold is set
+    from measured overlaps rather than chosen in advance -- see
+    SAME_ITEM_OVERLAP.
+    """
+    reports = [r for r in reports if r and r.strip()]
+    if stats is not None:
+        stats.setdefault("passes", len(reports))
+        stats.setdefault("added", 0)
+    if len(reports) < 2:
+        return reports[0] if reports else ""
+
+    base_lines = reports[0].splitlines()
+    for name, marker in _MERGEABLE_SECTIONS:
+        bounds = None
+        for index, line in enumerate(base_lines):
+            heading = _HEADING_RE.match(line)
+            if not heading:
+                continue
+            if heading.group(1).strip().lower().startswith(name):
+                bounds = [index + 1, len(base_lines)]
+            elif bounds and bounds[1] == len(base_lines):
+                bounds[1] = index
+                break
+        if not bounds:
+            continue
+        start, stop = bounds
+        body = base_lines[start:stop]
+        existing = ["\n".join(body[b:e]) for b, e in _item_groups(body, marker)]
+        additions: List[str] = []
+        for other in reports[1:]:
+            other_body = _report_sections(other).get(name, [])
+            for begin, end in _item_groups(other_body, marker):
+                chunk = other_body[begin:end]
+                title = marker.match(chunk[0]).group(1)
+                if any(_same_item(title, marker.match(e.splitlines()[0]).group(1))
+                       for e in existing if marker.match(e.splitlines()[0])):
+                    continue
+                if any(_same_item(title, marker.match(a.splitlines()[0]).group(1))
+                       for a in additions if marker.match(a.splitlines()[0])):
+                    continue
+                text = "\n".join(line for line in chunk if line.strip())
+                additions.append(text + "\n* Found only in a later pass.")
+                if stats is not None:
+                    stats["added"] = stats.get("added", 0) + 1
+        if additions:
+            body = [line for line in body if line.strip()]
+            body.append("")
+            body.extend("\n".join(additions).splitlines())
+            body.append("")
+            base_lines = base_lines[:start] + body + base_lines[stop:]
+    return "\n".join(base_lines)
+
+
+def count_report_items(report_text: str) -> Tuple[int, int]:
+    """Concerns and verification prompts currently in a report."""
+    sections = _report_sections(report_text)
+    concerns = sections.get("directly supported concerns", [])
+    checks = sections.get("verification prompts", [])
+    return (len(_concern_groups(concerns)),
+            len(_item_groups(checks, _CHECK_RE)))
+
+
+def report_reliability_banner(report_text: str) -> str:
+    """
+    A single line at the top when nothing in the report rests on the paper.
+
+    The per-concern confidence lines are accurate but easy to miss: a reader
+    has to find and tally them. When not one concern reaches High, that is a
+    fact about the whole report and belongs where it will be seen first.
+    """
+    levels = re.findall(r"^\s*[-*]?\s*\**\s*Confidence:?\**\s*:?\s*(\w+)",
+                        report_text or "", re.M | re.I)
+    if not levels or any(level.lower() == "high" for level in levels):
+        return ""
+    return (
+        "> **No concern in this report is supported by evidence located in the "
+        "manuscript.** Every concern below was computed as moderate or low "
+        "confidence. Treat these as leads to check against the paper, not as "
+        "findings.\n\n"
+    )
+
+
 def concern_confidence(group_text: str, source_text: str) -> Tuple[str, str]:
     """
     Confidence in one concern, computed rather than asked for.
@@ -3338,6 +3566,9 @@ def concern_confidence(group_text: str, source_text: str) -> Tuple[str, str]:
     does this rest on the manuscript or on something softer -- is already
     decidable from the checks the pipeline performs.
     """
+    if evidence_echoes_concern(group_text):
+        return ("Low", "the evidence line restates the concern rather than "
+                       "citing the manuscript")
     if _SELF_CITATION_RE.search(group_text):
         return ("Low", "the evidence cites this pipeline's own summary rather "
                        "than the manuscript")
@@ -3867,6 +4098,7 @@ def synthesize_report(
     file_summaries: List[Tuple[str, str]],
     all_manifests: Optional[List[EvidenceManifest]] = None,
     tables_text: str = "",
+    temperature: float = None,
 ) -> str:
     """
     Create one integrated internal critical-appraisal memo.
@@ -4029,7 +4261,7 @@ File summaries:
 """.strip()
 
     prompt = apply_chat_template_compat(tokenizer, user_text)
-    sampler = make_default_sampler()
+    sampler = make_default_sampler(temperature)
     out = generate(
         model,
         tokenizer,
@@ -5497,10 +5729,12 @@ def main() -> int:
         )
         final_report = annotate_concern_confidence(final_report, citation_source)
         report_problems = (verify_report_citations(final_report, citation_source)
+                           + evidence_echo_problems(final_report)
                            + overclaim_problems(final_report))
         # Order matters: both checks above read the quotation marks, so the
         # marks may only be removed once they have run.
         final_report = mark_unverified_quotations(final_report, citation_source)
+        final_report = report_reliability_banner(final_report) + final_report
         final_report += format_action_list(final_report)
         final_report += format_consistency_check(
             "\n".join(per_file_source_text.values()),

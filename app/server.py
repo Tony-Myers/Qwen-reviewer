@@ -605,27 +605,67 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         file_summaries = [(file_path.name, file_summary)]
         all_manifests = [manifest]
 
-        # Final synthesis
-        _add_progress(job_id, "Synthesising final report...")
-        with model_lock:
-            final_report = rp.synthesize_report(
-                model, tokenizer, file_summaries,
-                all_manifests=all_manifests,
-                tables_text=tables_text,
-            )
+        # Final synthesis. Findings rotate between passes, so REVIEW_PASSES>1
+        # runs the synthesis repeatedly and unions the concerns and checks.
+        #
+        # Each pass is validated on its own BEFORE the merge. Validating the
+        # merged report instead cost the whole exercise: on one run the merge
+        # contributed four items and validation removed four, a net gain of
+        # nothing for three times the generation. Validation was written to
+        # check a single coherent report against the evidence, so it is given
+        # exactly that, and the union is taken of reports it has already
+        # cleaned. Nothing is then dropped for having arrived late.
+        passes = rp.REVIEW_PASSES
+        drafts = []
+        kept_total = [0, 0]
+        raw_total = [0, 0]
+        all_corrections = []
+        for attempt in range(passes):
+            label = f" (pass {attempt + 1} of {passes})" if passes > 1 else ""
+            _add_progress(job_id, f"Synthesising final report{label}...")
+            # The first pass stays at the standard low temperature and becomes
+            # the base report; later passes are sampled warmer, or they would
+            # largely repeat it and the union would add nothing.
+            temperature = None if attempt == 0 else rp.REPEAT_PASS_TEMPERATURE
+            print(f"[synthesis] pass {attempt + 1} of {passes} "
+                  f"(temperature={temperature or rp.TEMPERATURE})", flush=True)
+            with model_lock:
+                draft = rp.synthesize_report(
+                    model, tokenizer, file_summaries,
+                    all_manifests=all_manifests,
+                    tables_text=tables_text,
+                    temperature=temperature,
+                )
 
-        # Programmatic post-checks
-        all_corrections = rp.programmatic_post_checks(final_report, manifest)
-        if all_corrections:
-            _add_progress(job_id, f"Applying {len(all_corrections)} programmatic correction(s)...")
+            corrections = rp.programmatic_post_checks(draft, manifest)
+            all_corrections.extend(corrections)
+            _add_progress(job_id, f"Validating report against evidence{label}...")
+            before = rp.count_report_items(draft)
+            with model_lock:
+                draft = rp.validate_report_against_evidence(
+                    model, tokenizer, draft, file_summaries,
+                    programmatic_corrections=corrections if corrections else None,
+                )
+            after = rp.count_report_items(draft)
+            for index in (0, 1):
+                raw_total[index] += before[index]
+                kept_total[index] += after[index]
+            print(f"[validation] pass {attempt + 1}: concerns {before[0]} -> {after[0]}, "
+                  f"checks {before[1]} -> {after[1]}", flush=True)
+            drafts.append(draft)
 
-        # LLM validation
-        _add_progress(job_id, "Validating report against evidence...")
-        with model_lock:
-            final_report = rp.validate_report_against_evidence(
-                model, tokenizer, final_report, file_summaries,
-                programmatic_corrections=all_corrections if all_corrections else None,
-            )
+        merge_stats = {}
+        final_report = rp.merge_reports(drafts, stats=merge_stats)
+        synthesis_note = (
+            f"{merge_stats.get('passes', 1)} pass(es), each validated before merging; "
+            f"validation kept {kept_total[0]}/{raw_total[0]} concerns and "
+            f"{kept_total[1]}/{raw_total[1]} checks across passes; "
+            f"{merge_stats.get('added', 0)} item(s) added to the base by later passes"
+        )
+        print(f"[synthesis] {synthesis_note}", flush=True)
+        if passes > 1:
+            _add_progress(job_id, f"Merged {passes} validated passes "
+                                  f"({merge_stats.get('added', 0)} item(s) added).")
 
         # Post-processing passes
         _add_progress(job_id, "Post-processing...")
@@ -643,9 +683,11 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         citation_source = text + "\n" + "\n".join(b for _, b in table_blocks)
         final_report = rp.annotate_concern_confidence(final_report, citation_source)
         report_problems = (rp.verify_report_citations(final_report, citation_source)
+                           + rp.evidence_echo_problems(final_report)
                            + rp.overclaim_problems(final_report))
         # Both checks above read the quotation marks; strip only afterwards.
         final_report = rp.mark_unverified_quotations(final_report, citation_source)
+        final_report = rp.report_reliability_banner(final_report) + final_report
         final_report += rp.format_action_list(final_report)
         final_report += rp.format_consistency_check(text, table_blocks)
         final_report += rp.format_citation_check(report_problems)
@@ -656,7 +698,11 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             f"# Local peer-review report\n\n"
             f"Generated: {datetime.now().isoformat(timespec='seconds')}\n"
             f"Model: {rp.model_display_name(MODEL_NAME)}\n"
-            f"Pipeline: {rp.PIPELINE_VERSION}\n\n"
+            f"Pipeline: {rp.PIPELINE_VERSION}\n"
+            # Recorded so a run is never ambiguous about whether the extra
+            # passes actually happened, and what they contributed.
+            + (f"Synthesis: {synthesis_note}\n" if passes > 1 else "")
+            + f"\n"
             f"Input files:\n- {file_path.name}\n\n"
             f"Evidence summary:\n"
             f"- **{file_path.name}**: method={mc.value}, "

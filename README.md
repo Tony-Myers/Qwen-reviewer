@@ -142,6 +142,39 @@ tests/                  run any of these directly with .venv/bin/python;
 backups/                timestamped copies taken before significant edits
 ```
 
+## Multiple synthesis passes
+
+Findings rotate between runs: the same paper, the same code and the same model
+can produce quite different sets of concerns, and a single pass tends to give
+about half of what the model can see.
+
+    REVIEW_PASSES=3 ./scripts/qwen_service.sh restart
+
+runs the final synthesis that many times and unions the concerns and
+verification prompts, marking anything found only in a later pass. Each pass is
+a full generation, so a review takes roughly that multiple of the time. The
+default is 1.
+
+The first pass uses the normal low temperature and is the base report; later
+passes are sampled at `REPEAT_PASS_TEMPERATURE` (0.7 by default), because a
+repeat at the same temperature largely reproduces the first and the union then
+adds nothing. When more than one pass runs, the report header records what
+happened, for example:
+
+    Synthesis: 3 pass(es), each validated before merging; validation kept
+    9/14 concerns and 8/12 checks across passes; 4 item(s) added to the base
+    by later passes
+
+Each pass is validated on its own before the merge. Validating the merged
+report instead nullified the exercise: on one run the merge contributed four
+items and validation removed four, a net gain of nothing for three times the
+generation. Validation checks a single coherent report against the evidence, so
+it is given exactly that, and the union is taken of reports it has already
+cleaned.
+
+This costs one validation call per pass. The header and the app-server log
+record how much validation removed in each pass and how much the merge added.
+
 `inputs/`, `reports/` and `reviews/` are excluded from version control: they
 hold manuscripts and generated reviews.
 

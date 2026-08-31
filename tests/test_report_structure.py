@@ -114,6 +114,21 @@ for label, bad in (("empty", ""),
 ok("no table when nothing to list", rp.format_action_list("# Overall synopsis\n* x\n") == "")
 ok("clean report yields no overclaims", rp.overclaim_problems("A measured statement.") == [])
 
+print("\n[the version stamp covers every file that shapes a review]")
+import hashlib
+_app = Path(rp.__file__).resolve().parent
+_expected = hashlib.sha1(
+    (_app / "review_pipeline.py").read_bytes() + (_app / "server.py").read_bytes()
+).hexdigest()[:8]
+ok("the stamp hashes review_pipeline.py and server.py together",
+   rp.PIPELINE_VERSION == _expected, f"{rp.PIPELINE_VERSION} vs {_expected}")
+ok("a server-only edit would change the stamp",
+   rp._fingerprint_of(_app / "review_pipeline.py") != rp.PIPELINE_VERSION)
+ok("the stale check uses the same inputs", rp.stale_module_warning() == "",
+   rp.stale_module_warning()[:80])
+ok("a missing file is reported, not guessed",
+   rp._fingerprint_of(_app / "no_such_file.py") == "unknown")
+
 print()
 print(f"{F} FAILURE(S)" if F else "All structural checks passed.")
 sys.exit(1 if F else 0)
