@@ -41,6 +41,7 @@ from pypdf import PdfReader
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from llm_backend import (  # noqa: E402
+    available_context,
     BackendError,
     current_backend,
     generate,
@@ -140,12 +141,39 @@ FILE_SYNTHESIS_MAX_TOKENS = 1200
 # Raised from 1600 when strengths gained an Evidence line and concerns a
 # Severity line. Confidence and the action list are computed after
 # generation and cost nothing here.
-SYNTHESIS_MAX_TOKENS = 2000
+SYNTHESIS_MAX_TOKENS = int(os.environ.get("QWEN_SYNTHESIS_MAX_TOKENS", "2000"))
 VALIDATION_MAX_TOKENS = 1800
 
-TEMPERATURE = 0.2
-TOP_P = 0.8
-TOP_K = 20
+# Sampling. Overridable from the environment so a configuration can be compared
+# against another without editing the file -- see tests/sampler_sweep.py.
+#
+# Unsloth publish 0.7 / 0.80 / 20 for Qwen3.8 in non-thinking mode. top_p and
+# top_k already agree; the temperature is deliberately lower for a factual task,
+# and REPEAT_PASS_TEMPERATURE below restores their value for the extra passes
+# that exist to find what a cautious pass misses.
+#
+# repetition_penalty is sent explicitly at 1.0. This is NOT a quality change:
+# llama-server's /props reports 1.0 as its own default, so this sends the value
+# already in force. It is here so the setting is stated rather than inherited,
+# and cannot change under us when llama.cpp changes a default.
+#
+# It is worth recording why, because the reasoning was wrong before it was
+# right. A penalty above 1.0 would discourage reproducing tokens, which is the
+# opposite of what verbatim quotation needs, and the pipeline's habit of
+# paraphrasing instead of quoting made that an appealing explanation. A sweep
+# over four papers appeared to confirm it -- until /props showed the default was
+# already 1.0 and the comparison had been an A/A test all along. The paraphrasing
+# is not a sampler artefact.
+#
+# presence_penalty stays unset (server default 0.0). Unsloth suggest 1.5 for
+# chat, where repeating yourself is the failure; here the failure is the
+# opposite, and a presence penalty pushes against quoting the source.
+TEMPERATURE = float(os.environ.get("QWEN_TEMPERATURE", "0.2"))
+TOP_P = float(os.environ.get("QWEN_TOP_P", "0.8"))
+TOP_K = int(os.environ.get("QWEN_TOP_K", "20"))
+REPETITION_PENALTY = float(os.environ.get("QWEN_REPETITION_PENALTY", "1.0"))
+PRESENCE_PENALTY = (float(os.environ["QWEN_PRESENCE_PENALTY"])
+                    if os.environ.get("QWEN_PRESENCE_PENALTY") else None)
 
 MAX_TABLE_ROWS = 80
 MAX_TABLE_COLS = 14
@@ -1313,9 +1341,15 @@ def structure_evidence(
         ))
 
     # --- Manifest flags from full text ---
+    # A manuscript typeset in Word renders its formulae as Mathematical
+    # Alphanumeric Symbols and numbers them "(1)" on the same line, with no
+    # literal word "equation" anywhere. One submission with numbered display
+    # equations and a full appendix of model specification was reported as
+    # having none.
     manifest.has_equations = bool(re.search(
         r"(?:equation\s+\d|eq\.\s*\d|~\s*N\(|Score.*=.*β|model\s+equation)", text_lower
-    ))
+    ) or re.search(r"[\U0001D400-\U0001D7FF]", text or "")
+       or re.search(r"(?m)^.{0,120}[=∼~].{0,60}\(\d{1,2}\)\s*$", text or ""))
     manifest.has_model_spec = bool(re.search(
         r"(?:model\s+equation|regression\s+model|cross.?classif|fitted\s+model|model\s+specification"
         r"|\bancova\b|\bmancova\b|\banova\b|\bmanova\b|\bgamlss\b"
@@ -2705,7 +2739,9 @@ def apply_chat_template_compat(tokenizer, user_text: str) -> str:
 def make_default_sampler(temperature: float = None):
     """The standard sampler, or a warmer one for a repeat synthesis pass."""
     return make_sampler(TEMPERATURE if temperature is None else temperature,
-                        top_p=TOP_P, top_k=TOP_K)
+                        top_p=TOP_P, top_k=TOP_K,
+                        repetition_penalty=REPETITION_PENALTY,
+                        presence_penalty=PRESENCE_PENALTY)
 
 
 # A repeat pass at the same low temperature mostly repeats itself, which makes
@@ -3705,18 +3741,100 @@ def overclaim_problems(report_text: str) -> List[str]:
     return list(dict.fromkeys(problems))
 
 
+# Word writes these into a PDF when a cross-reference cannot be resolved. An
+# unpublished manuscript submitted with them is telling every reader that its
+# table and figure references are broken -- 21 of them in one submission this
+# pipeline reviewed, and the review did not mention it once. It is the first
+# thing a human reviewer would raise and it needs no judgement to find.
+_SUBMISSION_ARTEFACT_RE = re.compile(
+    r"Error!\s*(?:Reference source not found|Bookmark not defined|"
+    r"No text of specified style|Unknown switch argument)"
+    r"|\?\?\?\s*(?:ref|cite)|\\ref\{|\\cite\{|\[CITATION\]|\bTODO\b|\bTBD\b"
+    r"|\bXXX\b|\blorem ipsum\b",
+    re.I,
+)
+
+
+def submission_integrity_warning(text: str) -> str:
+    """A warning when the document carries unresolved references or placeholders."""
+    hits = [m.group(0).strip() for m in _SUBMISSION_ARTEFACT_RE.finditer(text or "")]
+    if not hits:
+        return ""
+    counts: Dict[str, int] = {}
+    for hit in hits:
+        key = re.sub(r"\s+", " ", hit)
+        counts[key] = counts.get(key, 0) + 1
+    shown = "; ".join(f"\"{k}\" x{v}" if v > 1 else f"\"{k}\""
+                      for k, v in sorted(counts.items(), key=lambda kv: -kv[1])[:4])
+    # A bare total misleads when the artefacts cluster. One submission held 21,
+    # but 13 of them sat on a single appendix-listing page and a reader working
+    # through the body could only find 7 -- which makes the tool look wrong when
+    # it is not. Say where they are.
+    pages: Dict[str, int] = {}
+    current = "?"
+    for line in (text or "").splitlines():
+        page = re.match(r"\s*\[Page (\d+)\]", line)
+        if page:
+            current = page.group(1)
+        found = len(_SUBMISSION_ARTEFACT_RE.findall(line))
+        if found:
+            pages[current] = pages.get(current, 0) + found
+    where = ""
+    if pages and "?" not in pages:
+        where = (" — " + ", ".join(f"page {k}: {v}" for k, v in
+                                   sorted(pages.items(), key=lambda kv: int(kv[0]))))
+    return (
+        f"WARNING: the document contains {len(hits)} unresolved reference(s) or "
+        f"placeholder(s) ({shown}){where}. These are artefacts of the authoring "
+        "tool, not of this extraction: the submitted file itself does not "
+        "resolve them, so the reader cannot tell which table or figure is "
+        "meant. Raise this as an editorial concern."
+    )
+
+
+# Measured over the sixteen-paper reference set: the totals ran 0 to 10 display
+# items with a median of 4, and the highest single counts were 6 tables and 7
+# figures. The thresholds sit clear of those maxima, so an ordinary article
+# never trips them. A manuscript declaring 17 tables and 24 figures does.
+MAX_USUAL_TABLES = 8
+MAX_USUAL_FIGURES = 10
+MAX_USUAL_DISPLAY_ITEMS = 12
+
+_FIGURE_CAPTION_RE = re.compile(r"(?mi)^[ \t]*(?:\d+\s+)?fig(?:ure)?\.?\s*(\d+)\s*[.:]")
+
+
+def display_item_warning(text: str) -> str:
+    """A warning when a manuscript declares an unusual number of tables and figures."""
+    tables = _table_numbers(text)
+    figures = set(_FIGURE_CAPTION_RE.findall(text or ""))
+    total = len(tables) + len(figures)
+    if (len(tables) <= MAX_USUAL_TABLES and len(figures) <= MAX_USUAL_FIGURES
+            and total <= MAX_USUAL_DISPLAY_ITEMS):
+        return ""
+    return (
+        f"WARNING: the document declares {len(tables)} numbered table(s) and "
+        f"{len(figures)} numbered figure(s), {total} display items in total. "
+        "That is well above what a research article of this kind normally "
+        "carries, and journals commonly cap them. Consider whether some belong "
+        "in supplementary material, and note that a reader cannot hold this "
+        "many in view at once. Raise it as an editorial concern."
+    )
+
+
 def format_consistency_check(text: str,
                              table_blocks: List[Tuple[int, str]]) -> str:
     """A report section for deterministic findings, appended after synthesis."""
-    warning = sample_size_warning(text, table_blocks)
-    if not warning:
+    findings = [w for w in (sample_size_warning(text, table_blocks),
+                            submission_integrity_warning(text),
+                            display_item_warning(text)) if w]
+    if not findings:
         return ""
-    return (
-        "\n\n# Data consistency check\n\n"
-        "Computed directly from the extracted text, independently of the "
-        "model's reading.\n\n"
-        f"* {warning[len('WARNING: '):]}\n"
-    )
+    lines = ["\n\n# Data consistency check", "",
+             "Computed directly from the extracted text, independently of the "
+             "model's reading.", ""]
+    for warning in findings:
+        lines.append(f"* {warning[len('WARNING: '):]}")
+    return "\n".join(lines) + "\n"
 
 
 MAX_PROMPT_TABLE_ROWS = 45
@@ -4025,10 +4143,72 @@ def tables_for_prompt(table_blocks: List[Tuple[int, str]],
     return "\n\n".join(parts)
 
 
+# Chunk notes were concatenated into the file-level prompt without limit. A
+# 127-page submission -- a 22-page article bound with 105 pages of
+# supplementary tables, 73% of the document by characters -- produced a 45,904
+# token prompt against a 32,768 token server, and the review died with a raw
+# traceback partway through. Budget the prompt against the window the server
+# actually has, and say what was left out.
+PROMPT_CHARS_PER_TOKEN = 3.2      # deliberately pessimistic for mixed prose
+GENERATION_HEADROOM_TOKENS = 3000  # room for the answer plus template overhead
+
+
+def prompt_char_budget(reserve_tokens: int = 0) -> int:
+    """Characters a prompt may use before the server would refuse it."""
+    try:
+        context = available_context()
+    except Exception:
+        context = 32768
+    usable = context - GENERATION_HEADROOM_TOKENS - max(0, reserve_tokens)
+    return max(4000, int(usable * PROMPT_CHARS_PER_TOKEN))
+
+
+def fit_to_budget(text: str, budget: int, unit: str = "section") -> Tuple[str, str]:
+    """
+    Trim text to a character budget on a boundary, and report what went.
+
+    Returns the kept text and a note naming the loss, empty when nothing was
+    dropped. Trimming from the end keeps the article body, which comes first,
+    and sheds the supplementary material, which does not.
+    """
+    if not text or len(text) <= budget:
+        return text, ""
+    parts = re.split(r"(?=\n#+ )|(?=\n\[Page \d+\])", text)
+    kept: List[str] = []
+    used = 0
+    for part in parts:
+        if used + len(part) > budget:
+            break
+        kept.append(part)
+        used += len(part)
+    if not kept:                      # no usable boundary; cut bluntly
+        kept = [text[:budget]]
+        used = budget
+    dropped = len(text) - used
+    note = (
+        f"WARNING: the document is too long for the model's context window. "
+        f"{dropped:,} of {len(text):,} characters of {unit} notes "
+        f"({dropped / len(text):.0%}) were omitted from this synthesis, taken "
+        "from the end of the document. In a submission that bundles "
+        "supplementary material after the article, the omitted part is "
+        "normally that appendix -- but confirm it, and treat anything absent "
+        "from this review as unexamined rather than unreported."
+    )
+    return "".join(kept), note
+
+
 def synthesize_file_review(model, tokenizer, file_name: str, combined_chunk_review: str,
                            method_expectations: str = "", manifest_summary: str = "",
                            tables_text: str = "") -> str:
+    budget = prompt_char_budget(reserve_tokens=FILE_SYNTHESIS_MAX_TOKENS)
+    budget -= len(tables_text) + len(method_expectations) + len(manifest_summary) + 4000
+    combined_chunk_review, overflow_note = fit_to_budget(
+        combined_chunk_review, max(4000, budget), "chunk"
+    )
     context_block = ""
+    if overflow_note:
+        print(f"[context] {overflow_note}", flush=True)
+        context_block += f"\n{overflow_note}\n"
     if method_expectations:
         context_block += f"\n{method_expectations}\n"
     if manifest_summary:

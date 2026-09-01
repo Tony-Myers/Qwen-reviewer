@@ -211,6 +211,7 @@ class Sampler:
     top_k: int = 20
     min_p: float = 0.0
     repetition_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
     extra: Dict[str, Any] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
@@ -219,7 +220,9 @@ class Sampler:
 
 
 def make_sampler(temp: float = 0.2, top_p: float = 0.8, top_k: int = 20,
-                 min_p: float = 0.0, **kwargs: Any) -> Sampler:
+                 min_p: float = 0.0, repetition_penalty: Optional[float] = None,
+                 presence_penalty: Optional[float] = None,
+                 **kwargs: Any) -> Sampler:
     """
     Signature-compatible replacement for ``mlx_lm.sample_utils.make_sampler``.
 
@@ -231,6 +234,10 @@ def make_sampler(temp: float = 0.2, top_p: float = 0.8, top_k: int = 20,
         top_p=float(top_p),
         top_k=int(top_k),
         min_p=float(min_p),
+        repetition_penalty=(None if repetition_penalty is None
+                            else float(repetition_penalty)),
+        presence_penalty=(None if presence_penalty is None
+                          else float(presence_penalty)),
         extra=dict(kwargs),
     )
 
@@ -353,6 +360,7 @@ class LlamaServerModel:
     """Handle for a llama.cpp ``llama-server`` reachable over HTTP."""
 
     def __init__(self, model_path: str, base_url: Optional[str] = None) -> None:
+        self._context_size: Optional[int] = None
         self.model_path = model_path
         self.base_url = (base_url or os.environ.get("LLAMA_SERVER_URL")
                          or DEFAULT_LLAMA_SERVER_URL).rstrip("/")
@@ -375,6 +383,17 @@ class LlamaServerModel:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", "replace")[:2000]
+            if "exceed_context_size" in body or "exceeds the available context" in body:
+                raise BackendError(
+                    "The prompt is larger than the context window llama-server "
+                    "was started with.\n"
+                    f"Server said: {body.strip()[:220]}\n"
+                    "Either restart with a larger context "
+                    "(LLAMA_SERVER_CTX=65536 ./scripts/qwen_service.sh restart) "
+                    "or review a shorter document. A submission that bundles a "
+                    "long supplementary appendix with the article is the usual "
+                    "cause."
+                ) from exc
             raise BackendError(
                 f"llama-server returned HTTP {exc.code} for {path}: {body}"
             ) from exc
@@ -409,6 +428,33 @@ class LlamaServerModel:
 
     def is_up(self, timeout: float = 3.0) -> bool:
         return self.probe(timeout) == "ready"
+
+    def context_size(self, timeout: float = 3.0) -> Optional[int]:
+        """
+        The context window the server was actually started with.
+
+        A 127-page submission -- a 22-page article bound together with 105
+        pages of supplementary tables -- built a 45,904-token prompt against a
+        32,768-token server and the review died with a raw traceback. The
+        pipeline could not budget its prompts because it never knew the limit.
+        Ask the server once and remember the answer.
+        """
+        if self._context_size is not None:
+            return self._context_size or None
+        found = None
+        try:
+            with urllib.request.urlopen(f"{self.base_url}/props", timeout=timeout) as response:
+                props = json.loads(response.read().decode("utf-8", "replace"))
+            for candidate in (props.get("n_ctx"),
+                              (props.get("default_generation_settings") or {}).get("n_ctx"),
+                              (props.get("default_generation_settings") or {}).get("n_ctx_train")):
+                if isinstance(candidate, int) and candidate > 0:
+                    found = candidate
+                    break
+        except Exception:
+            found = None
+        self._context_size = found or 0
+        return found
 
     def wait_until_up(self, timeout: Optional[float] = None,
                       interval: float = 2.0, announce: bool = False) -> bool:
@@ -478,8 +524,12 @@ class LlamaServerModel:
         }
         if sampler.min_p:
             payload["min_p"] = sampler.min_p
-        if sampler.repetition_penalty:
+        # Sent only when explicitly set, so an unset value keeps llama-server's
+        # own default rather than silently imposing one of ours.
+        if sampler.repetition_penalty is not None:
             payload["repeat_penalty"] = sampler.repetition_penalty
+        if sampler.presence_penalty is not None:
+            payload["presence_penalty"] = sampler.presence_penalty
 
         if self.supports_template_kwargs:
             template_kwargs: Dict[str, Any] = {"enable_thinking": bool(enable_thinking)}
@@ -501,6 +551,22 @@ class LlamaServerModel:
                 raise
 
         return _extract_chat_text(response)
+
+
+def available_context(default: int = 32768) -> int:
+    """
+    The running server's context window, or a stated default.
+
+    Falls back to LLAMA_SERVER_CTX and then to the given default, so a pipeline
+    that cannot reach the server still budgets against something sane rather
+    than assuming it has unlimited room.
+    """
+    model = _LAST_LOADED_MODEL
+    if isinstance(model, LlamaServerModel):
+        found = model.context_size()
+        if found:
+            return found
+    return _env_int("LLAMA_SERVER_CTX", default)
 
 
 def _extract_chat_text(response: Dict[str, Any]) -> str:
@@ -593,6 +659,12 @@ def _resolve_model_path(model_id: str) -> str:
     )
 
 
+# The handle most recently returned by load(), so available_context() can ask
+# the running server how much room it has without every caller threading a
+# model object through to reach it.
+_LAST_LOADED_MODEL: Any = None
+
+
 def load(model_id: str, *args: Any, **kwargs: Any):
     """
     Signature-compatible replacement for ``mlx_lm.load``.
@@ -600,7 +672,7 @@ def load(model_id: str, *args: Any, **kwargs: Any):
     Returns ``(model, tokenizer)``. For the GGUF backends the "model" is a
     backend handle and the "tokenizer" is a :class:`GGUFTokenizer`.
     """
-    global _ACTIVE_BACKEND
+    global _ACTIVE_BACKEND, _LAST_LOADED_MODEL
 
     backend = resolve_backend(model_id)
 
@@ -616,6 +688,7 @@ def load(model_id: str, *args: Any, **kwargs: Any):
         return LlamaCppModel(model_path), GGUFTokenizer(model_path)
 
     handle = LlamaServerModel(model_path)
+    _LAST_LOADED_MODEL = handle
     state = handle.probe()
 
     if state == "loading":

@@ -175,6 +175,37 @@ cleaned.
 This costs one validation call per pass. The header and the app-server log
 record how much validation removed in each pass and how much the merge added.
 
+## Sampler settings
+
+Sampling is set in `app/review_pipeline.py` and overridable from the
+environment: `QWEN_TEMPERATURE` (0.2), `QWEN_TOP_P` (0.8), `QWEN_TOP_K` (20),
+`QWEN_REPETITION_PENALTY` and `QWEN_PRESENCE_PENALTY` (both unset, so
+llama-server's own defaults apply), and `QWEN_SYNTHESIS_MAX_TOKENS` (2000).
+
+`top_p` and `top_k` already match Unsloth's published non-thinking values. The
+temperature is deliberately lower for a factual task, with
+`REPEAT_PASS_TEMPERATURE` (0.7) restoring their value for the extra passes.
+`QWEN_REPETITION_PENALTY` is sent explicitly at 1.0, which is what
+llama-server already defaults to -- stated rather than inherited, so a
+llama.cpp upgrade cannot change it silently. `QWEN_PRESENCE_PENALTY` stays
+unset (server default 0.0).
+
+To compare configurations with measurement rather than argument:
+
+    .venv/bin/python tests/sampler_sweep.py inputs/a.pdf inputs/b.pdf
+
+It reviews each paper under each configuration and scores the reports on
+figures the pipeline already computes -- concerns reaching High confidence,
+self-citations, unverifiable quotations and numbers, echoed evidence. It needs
+llama-server running, and every configuration is a full review, so budget the
+time and close Unsloth first.
+
+`a-a-control` is a duplicate of `current` and is included by default. Its gap
+from `current` is this pipeline's noise at a fixed setting, and it is the only
+honest yardstick for any other row: measured over four papers, that noise was 3
+in `high`, 9 in `self` and 6 in `quot`, with one paper swinging from 2 to 8
+unverifiable quotations with nothing changed at all.
+
 `inputs/`, `reports/` and `reviews/` are excluded from version control: they
 hold manuscripts and generated reviews.
 
