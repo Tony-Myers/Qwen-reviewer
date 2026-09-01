@@ -3484,6 +3484,15 @@ def evidence_echo_problems(report_text: str) -> List[str]:
 # taking the union recovers the rest.
 REVIEW_PASSES = max(1, int(os.environ.get("REVIEW_PASSES", "1") or 1))
 
+# Passes repeat the synthesis, and in a thinking review the synthesis is the
+# stage that reasons. Three passes there is seven thinking generations before
+# any retries: one measured hybrid run took eighty minutes with three, so three
+# passes would be hours. Whether extra passes and reasoning add anything to each
+# other has never been tested -- they may well be two ways of buying the same
+# thing -- so a thinking review takes one pass unless this says otherwise, and
+# the expensive combination has to be asked for rather than arrived at.
+THINKING_PASSES = max(1, int(os.environ.get("QWEN_THINKING_PASSES", "1") or 1))
+
 _MERGEABLE_SECTIONS = (
     ("directly supported concerns", _CONCERN_RE),
     ("verification prompts", _CHECK_RE),

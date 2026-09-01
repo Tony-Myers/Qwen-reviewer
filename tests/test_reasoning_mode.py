@@ -290,6 +290,25 @@ ok("the counters are reset per review",
    "otherwise the header reports the previous review")
 
 ok("the hybrid is accepted", '"synthesis", "hybrid", "2"' in server_src)
+# Passes repeat the synthesis, which is the stage that reasons: three passes of
+# a thinking synthesis is seven thinking generations before retries. One
+# measured hybrid run took eighty minutes with a single pass.
+ok("a thinking review drops to one pass by default",
+   'passes > rp.THINKING_PASSES' in server_src
+   and 'passes = rp.THINKING_PASSES' in server_src)
+ok("the reduction is announced while it runs",
+   "_add_progress(job_id, passes_note" in server_src)
+ok("and recorded in the header afterwards",
+   'passes_note' in server_src and 'check += f"; {passes_note}"' in server_src)
+ok("an instruct review keeps its passes",
+   'if review_jobs.get(job_id, {}).get("thinking") and passes > rp.THINKING_PASSES'
+   in server_src)
+ok("the reduction is overridable",
+   "QWEN_THINKING_PASSES" in (ROOT / "app" / "review_pipeline.py").read_text())
+
+import review_pipeline as rp3  # noqa: E402
+ok("one thinking pass by default", rp3.THINKING_PASSES == 1,
+   str(rp3.THINKING_PASSES))
 ok("the chunk loop can step back into instruct",
    "with model_lock, _chunk_reasoning(job_id):" in server_src,
    "otherwise the hybrid is just a thinking run")

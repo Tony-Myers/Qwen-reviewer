@@ -558,7 +558,8 @@ def _build_appendix_text(
     return "\n".join(lines)
 
 
-def _reasoning_header_lines(scope: str = "review") -> str:
+def _reasoning_header_lines(scope: str = "review",
+                            passes_note: str = "") -> str:
     """
     Two header lines: the mode that was requested, and what the model did.
 
@@ -595,6 +596,8 @@ def _reasoning_header_lines(scope: str = "review") -> str:
     if stats["template_kwargs_dropped"]:
         check += ("; the server rejected chat_template_kwargs, so the request "
                   "never reached the chat template")
+    if passes_note:
+        check += f"; {passes_note}"
 
     return f"Reasoning: {requested}\nReasoning check: {check}\n"
 
@@ -701,6 +704,13 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         # exactly that, and the union is taken of reports it has already
         # cleaned. Nothing is then dropped for having arrived late.
         passes = rp.REVIEW_PASSES
+        passes_note = ""
+        if review_jobs.get(job_id, {}).get("thinking") and passes > rp.THINKING_PASSES:
+            passes_note = (f"passes reduced from {passes} to {rp.THINKING_PASSES} "
+                           f"because reasoning repeats with every pass "
+                           f"(QWEN_THINKING_PASSES to override)")
+            _add_progress(job_id, passes_note[0].upper() + passes_note[1:])
+            passes = rp.THINKING_PASSES
         drafts = []
         kept_total = [0, 0]
         raw_total = [0, 0]
@@ -809,7 +819,8 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             # Recorded so reviews accumulated over real use can be grouped by
             # mode afterwards; without it the comparison is unrecoverable.
             + _reasoning_header_lines(
-                review_jobs.get(job_id, {}).get("thinking_scope", "review"))
+                review_jobs.get(job_id, {}).get("thinking_scope", "review"),
+                passes_note)
             # Recorded so a run is never ambiguous about whether the extra
             # passes actually happened, and what they contributed.
             + (f"Synthesis: {synthesis_note}\n" if passes > 1 else "")

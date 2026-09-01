@@ -273,6 +273,16 @@ never the faulty stage. Reports from it are grouped as `thinking-synth` in the
 tally, separately from full thinking runs, because pooling the two would hide
 whichever of them helps.
 
+Passes and reasoning do not stack. `REVIEW_PASSES` repeats the synthesis, and
+in a thinking review the synthesis is the stage that reasons, so three passes
+means seven thinking generations before any retries -- hours, on the one run
+measured. A thinking or hybrid review therefore takes a single pass whatever
+`REVIEW_PASSES` says, and the reduction is announced in the progress log and
+recorded in the `Reasoning check:` line. Set `QWEN_THINKING_PASSES` to ask for
+more, which is worth doing only to test whether extra passes and reasoning add
+anything to each other -- they may be two ways of buying the same thing, and
+that has never been measured.
+
 Before spending an hour on a thinking review, spend twenty seconds asking the
 server whether the flag does anything at all:
 
