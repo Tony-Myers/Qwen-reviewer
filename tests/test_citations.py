@@ -99,6 +99,21 @@ dirty = rp.format_citation_check(probs)
 check("problem report lists them", dirty.count("*") > len(probs))
 check("section is headed", "# Citation check" in clean and "# Citation check" in dirty)
 
+print("\n[7] a clean check must not flatter an empty one")
+# A thinking-mode review quoted the manuscript nowhere -- every evidence line
+# was a paraphrase -- and the citation check congratulated it on having no
+# unverifiable quotations. Nothing to check is not the same as all checks passed.
+none_quoted = rp.format_citation_check(
+    [], "Evidence: the manuscript reports a simulation study.")
+check("a report with no quotations is called out",
+      "quotes the manuscript nowhere" in none_quoted, none_quoted)
+some_quoted = rp.format_citation_check(
+    [], 'Evidence: The text states, "a real quotation" (Page 5).')
+check("a report with verified quotations still reads as clean",
+      "Every quotation in this report was located" in some_quoted, some_quoted)
+check("the single-argument call still works",
+      "Every quotation in this report was located" in rp.format_citation_check([]))
+
 print()
 if fails: print(f"{len(fails)} FAILURE(S): {fails}"); sys.exit(1)
 print("All citation-check tests passed.")

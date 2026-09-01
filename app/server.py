@@ -375,7 +375,7 @@ async def chat_completions(request: dict):
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
-                enable_thinking=False,
+                enable_thinking=llm_backend.thinking_enabled(),
             )
         except TypeError:
             prompt = tokenizer.apply_chat_template(
@@ -432,15 +432,24 @@ async def start_review(
 
     # "" leaves the process default alone; "1"/"0" force one mode for this
     # review only, so the two can be alternated over real use and compared.
+    # "synthesis" is the hybrid: the eleven chunk notes, which are most of the
+    # time and were never the weak stage, run in instruct, and only the
+    # synthesis and validation think.
+    choice = str(thinking).strip().lower()
     want_thinking = None
-    if str(thinking).strip() in ("1", "true", "on", "yes"):
+    thinking_scope = "review"
+    if choice in ("1", "true", "on", "yes"):
         want_thinking = True
-    elif str(thinking).strip() in ("0", "false", "off", "no"):
+    elif choice in ("0", "false", "off", "no"):
         want_thinking = False
+    elif choice in ("synthesis", "hybrid", "2"):
+        want_thinking = True
+        thinking_scope = "synthesis"
 
     review_jobs[job_id] = {
         "status": "running",
         "thinking": want_thinking,
+        "thinking_scope": thinking_scope,
         "progress": [],
         "report": None,
         "appendix": None,
@@ -549,6 +558,47 @@ def _build_appendix_text(
     return "\n".join(lines)
 
 
+def _reasoning_header_lines(scope: str = "review") -> str:
+    """
+    Two header lines: the mode that was requested, and what the model did.
+
+    They can disagree. A server that rejects chat_template_kwargs, or a chat
+    template that emits an empty <think></think> pair, produces a review headed
+    "thinking" with no reasoning in it. Recording only the request makes that
+    undetectable after the fact -- the same failure the pass count already had,
+    fixed the same way, by counting rather than asserting.
+    """
+    requested = "thinking" if llm_backend.thinking_enabled() else "instruct"
+    if requested == "thinking" and scope == "synthesis":
+        requested = "thinking (synthesis and validation only)"
+    stats = llm_backend.reasoning_stats()
+    seen, total, chars = (stats["with_reasoning"], stats["generations"],
+                          stats["chars"])
+
+    if chars > 0:
+        check = (f"reasoning emitted in {seen} of {total} generations "
+                 f"({chars:,} characters)")
+        if requested == "instruct":
+            check += "; not requested, and removed from the report"
+    elif requested.startswith("thinking"):
+        check = (f"no reasoning emitted in any of {total} generations, so this "
+                 f"run behaved as instruct")
+    else:
+        check = f"no reasoning emitted, as expected ({total} generations)"
+
+    if stats.get("retries"):
+        check += (f"; {stats['retries']} generation(s) were retried at a larger "
+                  f"budget because the reasoning overran")
+    if stats.get("fallbacks"):
+        check += (f"; {stats['fallbacks']} were finished in instruct mode after "
+                  f"the reasoning would not fit at all")
+    if stats["template_kwargs_dropped"]:
+        check += ("; the server rejected chat_template_kwargs, so the request "
+                  "never reached the chat template")
+
+    return f"Reasoning: {requested}\nReasoning check: {check}\n"
+
+
 def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
     """Run the full review pipeline (called in background thread)."""
     ensure_model()
@@ -557,8 +607,23 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
     # synthesis, the passes, validation -- runs in the same mode. Restored on
     # the way out even if the review fails.
     want_thinking = review_jobs.get(job_id, {}).get("thinking")
+    # Counters are per review, so the header reports this run and not the last.
+    llm_backend.reset_reasoning_stats()
     with llm_backend.thinking(want_thinking):
         _run_review_inner(job_id, file_path, domain, tmp_dir)
+
+
+def _chunk_reasoning(job_id: str):
+    """
+    The mode the chunk notes run in.
+
+    In the hybrid the outer setting is thinking, and the chunk loop steps back
+    into instruct for the duration: the notes are eleven of the fourteen
+    generations and most of the two hours, and they were never the stage that
+    sourced its evidence badly.
+    """
+    scope = review_jobs.get(job_id, {}).get("thinking_scope", "review")
+    return llm_backend.thinking(False if scope == "synthesis" else None)
 
 
 def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
@@ -600,7 +665,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         for i, chunk_text in enumerate(chunks, start=1):
             _add_progress(job_id, f"Reviewing chunk {i}/{len(chunks)}...")
             chunk = rp.DocChunk(source_name=file_path.name, chunk_id=i, text=chunk_text)
-            with model_lock:
+            with model_lock, _chunk_reasoning(job_id):
                 reviewed = rp.review_chunk(
                     model, tokenizer, chunk,
                     method_expectations=method_expectations,
@@ -692,6 +757,28 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         all_text = "\n\n".join(t for _, t in file_summaries)
         all_tables = [tbl for _, tbl in table_blocks]
 
+        # A safety net independent of cause. Every stage below handles an empty
+        # string without complaint, so a review with nothing in it assembles
+        # into a tidy report: a header, and a citation check reporting -- quite
+        # accurately -- that it found no unverifiable quotations. One did. An
+        # empty review is a failure and should arrive as one.
+        if not final_report.strip():
+            raise ValueError(
+                "The model returned nothing for this paper, so there is no "
+                "review to write. The app-server log holds the generations."
+            )
+
+        # Half a report is still valid markdown, and reads as though it were
+        # meant to end where it does. It should arrive as a failure instead.
+        cut_short = rp.report_looks_truncated(final_report)
+        if cut_short:
+            raise ValueError(
+                f"The synthesis is incomplete: {cut_short}. In thinking mode "
+                f"this usually means the reasoning took the generation budget; "
+                f"raise QWEN_THINKING_EXTRA_TOKENS or QWEN_SYNTHESIS_MAX_TOKENS "
+                f"and run it again, or choose Instruct."
+            )
+
         final_report = rp.correct_review_contradictions(final_report, all_text, all_tables)
         final_report = rp.correct_direction_of_effect_summaries(final_report, all_text, all_tables)
         final_report = rp.apply_method_sensitive_critique_rules(final_report, all_manifests)
@@ -710,7 +797,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         final_report = rp.report_reliability_banner(final_report) + final_report
         final_report += rp.format_action_list(final_report)
         final_report += rp.format_consistency_check(text, table_blocks)
-        final_report += rp.format_citation_check(report_problems)
+        final_report += rp.format_citation_check(report_problems, final_report)
 
         # Add header
         from datetime import datetime
@@ -721,7 +808,8 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             f"Pipeline: {rp.PIPELINE_VERSION}\n"
             # Recorded so reviews accumulated over real use can be grouped by
             # mode afterwards; without it the comparison is unrecoverable.
-            + f"Reasoning: {'thinking' if llm_backend.thinking_enabled() else 'instruct'}\n"
+            + _reasoning_header_lines(
+                review_jobs.get(job_id, {}).get("thinking_scope", "review"))
             # Recorded so a run is never ambiguous about whether the extra
             # passes actually happened, and what they contributed.
             + (f"Synthesis: {synthesis_note}\n" if passes > 1 else "")

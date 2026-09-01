@@ -36,7 +36,7 @@ print("chain completed, no exception")
 print("length:", len(final_report), "chars")
 print("confidence lines:", final_report.count("* Confidence:"))
 print("not-verbatim tags:", final_report.count("*[not verbatim"))
-print("action table:", "# Prioritised actions" in final_report)
+print("action table:", "# Items by evidence" in final_report)
 print("citation section:", "# Citation check" in final_report)
 print("problems listed:", len(report_problems))
 print("stray quotes left in body:",
@@ -51,7 +51,7 @@ def check(label, cond, detail=""):
 check("chain produced a report", len(final_report) > 1000)
 check("every concern got a confidence line", final_report.count("* Confidence:") == 3)
 check("unverified spans were tagged", final_report.count("*[not verbatim") >= 1)
-check("the action table rendered", "# Prioritised actions" in final_report)
+check("the action table rendered", "# Items by evidence" in final_report)
 check("the citation section rendered", "# Citation check" in final_report)
 check("the checks ran BEFORE stripping (problems were still found)",
       len(report_problems) >= 5, str(len(report_problems)))
@@ -60,7 +60,10 @@ check("verdict phrasing was caught",
 check("a verified quotation kept its marks",
       '"just over half a point per bout,"' in final_report,
       "the verified span should still be in quotation marks")
-check("Editorial severity maps to Low priority", "| Low |" in final_report)
+check("the item table is ordered by evidence, not by a self-awarded grade",
+      "| Verified |" in final_report or "| Inferred |" in final_report
+      or "| Unverified |" in final_report,
+      "no evidence column rendered")
 
 print()
 if fails:

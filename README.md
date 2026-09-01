@@ -27,6 +27,25 @@ No manuscript text leaves the machine.
    negative-constraint enforcement).
 6. **Output** — a markdown review report plus an evidence appendix.
 
+## What the report grades, and what it does not
+
+Every concern carries a computed `Confidence:` line and the report ends with an
+`Items by evidence` table ordered by it. Both come from the citation check,
+which looks for each quotation in the extracted manuscript text: Verified means
+every quotation was located, Inferred means the concern is reasoning rather than
+quotation, Unverified means a quotation could not be found or the evidence cited
+this pipeline's own summary. When no concern reaches Verified, a banner says so
+at the top of the report.
+
+The synthesis used to award each concern a severity of Critical, Substantive or
+Editorial, and the table was ordered by it. That has been removed. Across the
+reports we measured it used one of the three values for 82% of concerns, never
+reached for Critical or Editorial at all, and on the one occasion it did
+discriminate it placed its best-supported concern below its weakest. It was also
+the only self-assessed grade left in a report otherwise built on deterministic
+checks. How much a concern matters is the reviewer's judgement; what the report
+can establish mechanically is whether the concern rests on the paper.
+
 ## Model backends
 
 The pipeline was originally written against `mlx_lm`. It now reaches the LLM
@@ -186,6 +205,84 @@ has never been tested. The browser now offers the choice per review -- server
 default, instruct, or thinking -- and the report header records which was used:
 
     Reasoning: instruct
+    Reasoning check: no reasoning emitted, as expected (16 generations)
+
+The second line matters more than the first. Asking for thinking and getting it
+are different things, and three paths fail silently: llama-server can reject
+`chat_template_kwargs`, in which case the request is retried without it; a chat
+template can emit an empty `<think></think>` pair; and a server running
+`--reasoning-format deepseek` returns reasoning in its own field rather than
+inline. Each produces a report headed `thinking` containing no reasoning at
+all. So the reasoning the model actually emitted is counted, and the header
+says what happened rather than what was asked for:
+
+    Reasoning: thinking
+    Reasoning check: reasoning emitted in 14 of 16 generations (52,122 characters)
+
+    Reasoning: thinking
+    Reasoning check: no reasoning emitted in any of 16 generations, so this run
+    behaved as instruct
+
+A report of the second kind is grouped as `thinking-unproven` by the tally
+below, and kept out of the thinking column: it is an instruct run in all but
+the label, and counting it as thinking would corrupt the comparison.
+
+Reasoning is generated inside `max_tokens`, not alongside it, and the
+chunk-note cap of 900 tokens is already reached on most calls in instruct mode.
+A thinking run therefore gets `QWEN_THINKING_EXTRA_TOKENS` (8000) added to every
+generation, and the prompt budget gives the same room back so the request
+cannot overrun the context window. Without it the two modes would be compared at
+different answer lengths, with thinking the shorter of the two for a reason that
+has nothing to do with its merits.
+
+The 8,000 is measured, not guessed, and it took three attempts to measure. At
+1,200 and again at 4,000 every generation filled its whole budget with reasoning
+and returned no answer, and the first of those assembled into a report
+containing nothing but a header. Run without a cap, the reasoning on the same
+chunk ended by itself after about 3,200 tokens and a full answer followed -- but
+the run truncated at 4,000 had already exceeded 5,000 tokens on that same chunk,
+so the spread between runs is at least 1.6 times and the upper end is unknown.
+`tests/probe_thinking_chunk.py` measures it on any paper; set the allowance from
+that rather than from argument.
+
+No fixed allowance is right for every prompt: on this paper the reasoning ended
+by itself at 3,200 tokens on chunk 1 and overran 8,900 on chunk 4. So the
+allowance is only a starting point. A generation that spends its whole budget
+reasoning and returns nothing is retried with the budget doubled, up to what the
+context window leaves once the prompt is in it, and finally in instruct mode so
+that one difficult chunk cannot end the review. Retries and fallbacks are
+counted and named in the `Reasoning check:` line -- a review that repaired
+itself should say so, and a review with several fallbacks in it is not really a
+thinking review.
+
+Two further guards. A generation that returns an empty answer after emitting
+reasoning raises rather than returning the empty string. An empty review is
+refused outright rather than written out.
+
+Budget the time as well: reasoning at 3,000 to 5,000 tokens across fourteen
+generations is 40,000 to 70,000 extra tokens at about 22 tokens per second, so
+a thinking review takes roughly half an hour to an hour longer than the same
+paper in instruct mode.
+
+A third option, `thinking: synthesis only`, is the hybrid. The eleven chunk
+notes run in instruct and only the file synthesis, the report synthesis and the
+validation think. Those three stages are where the pipeline's known weakness
+lives -- evidence sourced from this pipeline's own summary rather than the
+manuscript -- while the chunk notes are most of the wall-clock time and were
+never the faulty stage. Reports from it are grouped as `thinking-synth` in the
+tally, separately from full thinking runs, because pooling the two would hide
+whichever of them helps.
+
+Before spending an hour on a thinking review, spend twenty seconds asking the
+server whether the flag does anything at all:
+
+    .venv/bin/python tests/probe_thinking.py
+
+It reports whether the chat template baked into the GGUF has an
+`enable_thinking` branch, then sends one short request each way and prints how
+much reasoning came back. A template with no such branch accepts
+`chat_template_kwargs` and ignores it, which is the quietest failure of the
+three.
 
 Alternate them over real reviews, then tally what you have:
 

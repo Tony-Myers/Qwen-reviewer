@@ -35,6 +35,8 @@ _sweep = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_sweep)
 
 MODE_RE = re.compile(r"^Reasoning:\s*(\w+)", re.M)
+MODE_LINE_RE = re.compile(r"^Reasoning:\s*(.+)$", re.M)
+CHECK_RE = re.compile(r"^Reasoning check:\s*(.+)$", re.M)
 PASSES_RE = re.compile(r"^Synthesis:\s*(\d+)\s*pass", re.M)
 PIPELINE_RE = re.compile(r"^Pipeline:\s*(\w+)", re.M)
 
@@ -48,7 +50,22 @@ def group_of(report: str, by: str) -> str:
         return found.group(1) if found else "unknown"
     found = MODE_RE.search(report)
     # Reports written before the mode was recorded cannot be assigned to one.
-    return found.group(1) if found else "unrecorded"
+    if not found:
+        return "unrecorded"
+    mode = found.group(1)
+    # The hybrid thinks only in the synthesis and validation. Pooling it with
+    # full thinking runs would hide whichever of the two actually helps.
+    line = MODE_LINE_RE.search(report)
+    if mode == "thinking" and line and "synthesis" in line.group(1):
+        return "thinking-synth"
+    # A run can request thinking and get none: the server may reject
+    # chat_template_kwargs, or the template may emit an empty <think></think>
+    # pair. Counting those as thinking would quietly corrupt the very
+    # comparison this tool exists to make, so they are kept apart.
+    check = CHECK_RE.search(report)
+    if mode == "thinking" and check and "no reasoning emitted" in check.group(1):
+        return "thinking-unproven"
+    return mode
 
 
 def main() -> int:
@@ -79,7 +96,7 @@ def main() -> int:
         groups.setdefault(group_of(text, args.by), []).append(_sweep.score(text))
 
     print(f"{len(reports)} report(s), grouped by {args.by}\n")
-    header = (f"{'group':14s} {'n':>3} {'high':>12} {'self':>12} {'quot':>12} "
+    header = (f"{'group':18s} {'n':>3} {'high':>12} {'self':>12} {'quot':>12} "
               f"{'echo':>10} {'banner':>7}")
     print(header)
     print("-" * len(header))
@@ -93,7 +110,7 @@ def main() -> int:
     for name in sorted(groups):
         rows = groups[name]
         banners = sum(r["banner"] for r in rows)
-        print(f"{name:14s} {len(rows):>3} "
+        print(f"{name:18s} {len(rows):>3} "
               f"{cell([r['high'] for r in rows]):>12} "
               f"{cell([r['self-cite'] for r in rows]):>12} "
               f"{cell([r['bad-quote'] for r in rows]):>12} "
@@ -107,6 +124,10 @@ def main() -> int:
         print(f"\nFewer than 10 reviews in: {', '.join(small)}. An A/A test on "
               "this pipeline varied by 3 in 'high', 9 in 'self' and 6 in 'quot' "
               "over four papers, so treat these as provisional.")
+    if "thinking-unproven" in groups:
+        print(f"\n{len(groups['thinking-unproven'])} report(s) asked for thinking "
+              "mode but no reasoning was emitted; they are held apart because "
+              "they are instruct runs in all but the label.")
     if "unrecorded" in groups:
         print(f"\n{len(groups['unrecorded'])} report(s) predate the Reasoning "
               "header and cannot be assigned to a mode.")

@@ -49,6 +49,8 @@ from llm_backend import (  # noqa: E402
     make_sampler,
     set_backend,
     strip_reasoning,
+    thinking_enabled,
+    thinking_token_allowance,
 )
 
 
@@ -138,9 +140,8 @@ def model_display_name(name: str = None) -> str:
 MAX_SECTION_CHARS = 7000
 SECTION_MAX_TOKENS = 900
 FILE_SYNTHESIS_MAX_TOKENS = 1200
-# Raised from 1600 when strengths gained an Evidence line and concerns a
-# Severity line. Confidence and the action list are computed after
-# generation and cost nothing here.
+# Raised from 1600 when strengths gained an Evidence line. Confidence and the
+# item table are computed after generation and cost nothing here.
 SYNTHESIS_MAX_TOKENS = int(os.environ.get("QWEN_SYNTHESIS_MAX_TOKENS", "2000"))
 VALIDATION_MAX_TOKENS = 1800
 
@@ -2716,6 +2717,13 @@ def apply_chat_template_compat(tokenizer, user_text: str) -> str:
     """
     Apply chat template in a model-agnostic way.
     Works for Qwen and non-Qwen models (e.g., Ouro).
+
+    ``enable_thinking`` was hard-coded to False here, which silently outranked
+    the per-review reasoning choice: every prompt in the pipeline was built
+    with thinking off, whatever the browser asked for, so the mode was
+    recorded in the header and never applied. It now follows the resolved
+    setting, which is still False unless a review or the environment asks
+    otherwise.
     """
     messages = [{"role": "user", "content": user_text}]
 
@@ -2727,7 +2735,7 @@ def apply_chat_template_compat(tokenizer, user_text: str) -> str:
             messages,
             tokenize=False,
             add_generation_prompt=True,
-            enable_thinking=False,
+            enable_thinking=thinking_enabled(),
         )
     except TypeError:
         return tokenizer.apply_chat_template(
@@ -2793,7 +2801,7 @@ Generality rule:
 - Apply the same standards across frequentist, Bayesian, predictive, and causal analyses.
 - Do not assume a method-specific problem unless the extracted material supports it.
 
-Severity ladder:
+Claim-strength ladder:
 - Prefer "could be clarified" over "is wrong" unless the text directly supports the stronger claim.
 - Prefer "reported briefly" or "not fully detailed" over "unreported" when something is mentioned but not elaborated.
 - Prefer "interpretation may need clarification" over "data entry artefact" unless there is direct evidence of corruption.
@@ -2928,8 +2936,10 @@ def _fingerprint_of(*paths) -> str:
     This covered review_pipeline.py alone, so a change confined to server.py --
     where the synthesis loop, the validation order and the report header all
     live -- left the stamp unchanged, and the header then claimed a version the
-    running code no longer matched. The service script already fingerprints
-    both files; this now agrees with it.
+    running code no longer matched. llm_backend.py was the same gap one step
+    further out: it decides the sampler, the thinking mode and the reasoning
+    accounting. The service script fingerprints all three files; this now
+    agrees with it.
     """
     digest = hashlib.sha1()
     for path in paths:
@@ -2942,12 +2952,13 @@ def _fingerprint_of(*paths) -> str:
 
 PIPELINE_PATH = Path(__file__).resolve()
 SERVER_PATH = PIPELINE_PATH.parent / "server.py"
-PIPELINE_VERSION = _fingerprint_of(PIPELINE_PATH, SERVER_PATH)
+BACKEND_PATH = PIPELINE_PATH.parent / "llm_backend.py"
+PIPELINE_VERSION = _fingerprint_of(PIPELINE_PATH, SERVER_PATH, BACKEND_PATH)
 
 
 def stale_module_warning() -> str:
     """A warning when the running code is older than the file on disk."""
-    current = _fingerprint_of(PIPELINE_PATH, SERVER_PATH)
+    current = _fingerprint_of(PIPELINE_PATH, SERVER_PATH, BACKEND_PATH)
     if current in ("unknown", PIPELINE_VERSION):
         return ""
     return (
@@ -3349,6 +3360,14 @@ _CONCERN_RE = re.compile(r"^\s*[-*]?\s*\**\s*Concern:?\**\s*:?\s*(.+)$", re.I)
 _SEVERITY_RE = re.compile(r"^\s*[-*]?\s*\**\s*Severity:?\**\s*:?\s*(\w+)", re.I)
 _EVIDENCE_RE = re.compile(r"^\s*[-*]?\s*\**\s*Evidence:?\**\s*:?\s*(.+)$", re.I)
 _CHECK_RE = re.compile(r"^\s*[-*]?\s*\**\s*Check:?\**\s*:?\s*(.+)$", re.I)
+# The synthesis usually puts each field on its own line, but not always: a
+# thinking-mode run wrote "Concern: X. Severity: Substantive. Evidence: ..."
+# on one line, and the action table then carried the whole paragraph as the
+# item and defaulted every row to High because no line began with Severity.
+# These find the fields wherever on the line they fall.
+_INLINE_FIELD_RE = re.compile(
+    r"\s*(?:Severity|Evidence|Why it matters|Confidence|Reason)\s*\**\s*:", re.I)
+_ANY_SEVERITY_RE = re.compile(r"Severity\s*\**\s*:\s*\**\s*(\w+)", re.I)
 _HEADING_RE = re.compile(r"^#{1,3}\s*(.+?)\s*$")
 # Verdicts a journal reviewer would not write. The prompt asks for the
 # consequence instead; this catches the cases where it does not comply.
@@ -3676,11 +3695,19 @@ def annotate_concern_confidence(report_text: str, source_text: str) -> str:
     return "\n".join(lines[:start] + out + lines[stop:])
 
 
-_PRIORITY_BY_SEVERITY = {
-    "critical": ("Critical", 0),
-    "substantive": ("High", 1),
-    "editorial": ("Low", 3),
+# Concerns were once ordered by a severity label the synthesis wrote for
+# itself. Across the reports we measured it used one of its three permitted
+# values for 82% of concerns, and on the single occasion it did discriminate it
+# placed its best-supported concern below its weakest. It was the only
+# self-assessed grade left in a report otherwise built on computed checks, so it
+# is gone. What remains is where each item's evidence actually stands, which the
+# citation check establishes mechanically.
+_EVIDENCE_RANK = {
+    "high": ("Verified", 0),
+    "moderate": ("Inferred", 1),
+    "low": ("Unverified", 2),
 }
+_CONFIDENCE_RE = re.compile(r"^\s*[-*]?\s*\**\s*Confidence:?\**\s*:?\s*(\w+)", re.I)
 
 
 def format_action_list(report_text: str) -> str:
@@ -3699,28 +3726,45 @@ def format_action_list(report_text: str) -> str:
     for begin, end in _concern_groups(concerns):
         chunk = concerns[begin:end]
         title = _CONCERN_RE.match(chunk[0]).group(1).strip().rstrip("*").strip()
-        severity = ""
+        # Cut at the next field when the model ran them together on one line.
+        inline = _INLINE_FIELD_RE.search(title)
+        if inline:
+            title = title[:inline.start()].strip().rstrip(".").strip()
+        confidence = ""
         for line in chunk:
-            found = _SEVERITY_RE.match(line)
+            found = _CONFIDENCE_RE.match(line)
             if found:
-                severity = found.group(1).lower()
+                confidence = found.group(1).lower()
                 break
-        label, order = _PRIORITY_BY_SEVERITY.get(severity, ("High", 2))
+        label, order = _EVIDENCE_RANK.get(confidence, ("Unverified", 2))
         rows.append((order, label, title))
 
     for line in sections.get("verification prompts", []):
         found = _CHECK_RE.match(line)
         if found:
-            rows.append((2, "Medium", found.group(1).strip().rstrip("*").strip()))
+            check = found.group(1).strip().rstrip("*").strip()
+            inline = _INLINE_FIELD_RE.search(check)
+            if inline:
+                check = check[:inline.start()].strip().rstrip(".").strip()
+            # "Check: whether X" reads badly as a table row on its own.
+            reason = re.match(r"\s*Reason\s*\**\s*:", check, re.I)
+            if not reason and check[:1].islower():
+                check = check[:1].upper() + check[1:]
+            rows.append((3, "Question", check))
 
     if not rows:
         return ""
     rows.sort(key=lambda row: row[0])
-    out = ["\n\n# Prioritised actions", "",
-           "Assembled from the severity labels above; the wording is each "
-           "item's own. Verification prompts are listed as Medium because they "
-           "are questions to settle, not established faults.", "",
-           "| Priority | Item |", "| --- | --- |"]
+    out = ["\n\n# Items by evidence", "",
+           "Ordered by how far each item is anchored to the manuscript, which "
+           "the citation check establishes mechanically. Verified means every "
+           "quotation was located; Inferred means the concern is reasoning "
+           "rather than quotation; Unverified means a quotation could not be "
+           "found or the evidence cited this pipeline's own summary; Question "
+           "marks a check to settle rather than an established fault. The "
+           "wording is each item's own. How much each matters is your "
+           "judgement: this table does not rank importance.", "",
+           "| Evidence | Item |", "| --- | --- |"]
     for _, label, title in rows:
         title = re.sub(r"\s+", " ", title).replace("|", "/")
         if len(title) > 150:
@@ -4076,8 +4120,55 @@ def mark_unverified_quotations(report_text: str, source_text: str) -> str:
     return "\n".join(lines) if changed else report_text
 
 
-def format_citation_check(problems: List[str]) -> str:
+# The last heading the synthesis is asked to write. A report that does not
+# reach it stopped early, whatever else it contains.
+FINAL_REPORT_HEADING = "Overall confidence"
+
+
+def report_looks_truncated(report_text: str) -> str:
+    """
+    Say why a synthesis looks unfinished, or return an empty string.
+
+    A thinking-mode synthesis spent 9,800 of its 10,000 tokens reasoning and
+    stopped four words into a sentence. What arrived was two headings and half
+    a strength, formatted perfectly, with no concerns section at all -- and
+    every check downstream passed it, because half a report is still valid
+    markdown. Truncation has to be detected structurally as well as from the
+    server's own finish reason, since not every backend reports one.
+    """
+    if not report_text.strip():
+        return "the synthesis returned nothing"
+    if not re.search(rf"^#+\s*{FINAL_REPORT_HEADING}", report_text, re.M | re.I):
+        return (f"it never reached its final '{FINAL_REPORT_HEADING}' heading, "
+                f"so the synthesis stopped partway through")
+    tail = [line for line in report_text.strip().splitlines() if line.strip()]
+    last = tail[-1].strip() if tail else ""
+    if last and not last.startswith(("#", "|", ">")) and last[-1] not in ".!?:)\"'":
+        return f"its last line breaks off mid-sentence: {last[-60:]!r}"
+    return ""
+
+
+def format_citation_check(problems: List[str], report_text: str = "") -> str:
+    """
+    The citation check, or an honest account of why there was nothing to check.
+
+    A clean check used to read the same whether every quotation had been
+    verified or the report contained none at all. One thinking-mode review
+    quoted nothing whatsoever -- every line of evidence was a paraphrase -- and
+    the report congratulated itself on having no unverifiable quotations. That
+    is the reverse of the truth: a report with no quotations has nothing
+    anchored to the manuscript at all.
+    """
     if not problems:
+        quoted = len(_quoted_spans(report_text)) if report_text else None
+        if quoted == 0:
+            return (
+                "\n\n# Citation check\n\n"
+                "* **This report quotes the manuscript nowhere.** There were no "
+                "quotations to check, which is not the same as every quotation "
+                "being verified: no statement in this report is anchored to the "
+                "paper's own words.\n"
+            )
         return (
             "\n\n# Citation check\n\n"
             "* Every quotation in this report was located in the extracted "
@@ -4159,7 +4250,15 @@ def prompt_char_budget(reserve_tokens: int = 0) -> int:
         context = available_context()
     except Exception:
         context = 32768
-    usable = context - GENERATION_HEADROOM_TOKENS - max(0, reserve_tokens)
+    # A thinking run generates reasoning inside the same window, so the prompt
+    # must give that room back or the extra allowance would push the request
+    # past the context the server has.
+    try:
+        thinking_reserve = thinking_token_allowance()
+    except Exception:
+        thinking_reserve = 0
+    usable = (context - GENERATION_HEADROOM_TOKENS - thinking_reserve
+              - max(0, reserve_tokens))
     return max(4000, int(usable * PROMPT_CHARS_PER_TOKEN))
 
 
@@ -4346,12 +4445,8 @@ Strict evidence hierarchy:
 
 Required format:
 - Under "Major strengths", each bullet must start with "Strength:" and include "Evidence:". The same evidence rules below apply: quote the manuscript, a table cell or a numeric value, or state the specific feature without quotation marks.
-- Under "Directly supported concerns", each bullet must start with "Concern:" and include "Severity:", "Evidence:" and "Why it matters:".
-- "Severity:" must be exactly one of Critical, Substantive or Editorial:
-  - Critical: if correct, the paper's stated conclusions would have to change.
-  - Substantive: weakens, qualifies or limits a claim without overturning the conclusions.
-  - Editorial: an inconsistency, typographical slip or reporting error with no bearing on the conclusions.
-- Most papers contain no Critical issue. Do not promote a concern to Critical because the category exists; an empty category is the correct output when nothing warrants it.
+- Under "Directly supported concerns", each bullet must start with "Concern:" and include "Evidence:" and "Why it matters:".
+- Do not rank or grade your own concerns. State each one and its evidence; how much each matters is the reviewer's judgement, not yours.
 - Under "Verification prompts", each bullet must start with "Check:" and include "Reason:".
 - Under "Extraction limits", each bullet must start with "Limit:".
 - Do not include concerns that cannot be linked to specific evidence in the supplied material.
@@ -5523,7 +5618,7 @@ def _build_chat_prompt(
             messages,
             tokenize=False,
             add_generation_prompt=True,
-            enable_thinking=False,
+            enable_thinking=thinking_enabled(),
         )
     except TypeError:
         return tokenizer.apply_chat_template(

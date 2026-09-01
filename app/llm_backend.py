@@ -84,6 +84,12 @@ __all__ = [
     "current_backend",
     "resolve_backend",
     "strip_reasoning",
+    "thinking",
+    "thinking_enabled",
+    "reasoning_stats",
+    "reset_reasoning_stats",
+    "last_reasoning",
+    "thinking_token_allowance",
     "is_gguf_model",
     "BackendError",
     "Sampler",
@@ -172,9 +178,246 @@ def current_backend() -> Optional[str]:
     return _ACTIVE_BACKEND
 
 
-_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
-_DANGLING_THINK_OPEN_RE = re.compile(r"^\s*<think>.*?(?=\n\n|\Z)", re.DOTALL | re.IGNORECASE)
+_THINK_BLOCK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
+_DANGLING_THINK_OPEN_RE = re.compile(r"^\s*<think>(.*?)(?=\n\n|\Z)", re.DOTALL | re.IGNORECASE)
 _STRAY_THINK_TAG_RE = re.compile(r"</?think>", re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------
+# Reasoning accounting
+# ---------------------------------------------------------------------------
+# Asking for thinking mode and getting it are two different things, and the
+# report header used to record only the request. Three paths fail silently:
+# the server can reject ``chat_template_kwargs`` and the request is retried
+# without it; a chat template can emit an empty ``<think></think>`` pair; and a
+# server running ``--reasoning-format deepseek`` returns the reasoning in its
+# own field, where a check for ``<think>`` in the content sees nothing. All
+# three produce a report headed "thinking" that contains no reasoning at all.
+#
+# So count what the model actually emitted. Only the *inner* text of a span is
+# counted, which is why an empty pair registers as nothing. Generation is
+# serialised under the app server's model lock, so plain module state suffices.
+_REASONING_GENERATIONS = 0
+_REASONING_WITH_SPANS = 0
+_REASONING_CHARS = 0
+_REASONING_PENDING = 0
+_TEMPLATE_KWARGS_DROPPED = False
+# The most recent reasoning span, kept so it can be looked at. The pipeline
+# discards reasoning by design -- it must never reach a report -- but a run
+# whose reasoning fills the whole budget cannot be diagnosed without reading
+# it. Bounded, and overwritten by every generation.
+_LAST_REASONING = ""
+_LAST_REASONING_LIMIT = 200_000
+# How often recovery was needed. A fixed allowance cannot be right for every
+# prompt -- three guesses, three failures -- so a generation whose reasoning
+# overruns is retried with a larger budget, and finally in instruct mode. Both
+# are recorded, because a review that quietly repaired itself is still a review
+# whose thinking did not fit.
+_REASONING_RETRIES = 0
+_THINKING_FALLBACKS = 0
+# Why the server stopped generating: "stop" for a finished answer, "length"
+# when the budget ran out. An answer cut off mid-sentence is as much a budget
+# failure as no answer at all, and looks far more convincing in a report.
+_LAST_FINISH_REASON = ""
+
+
+def reset_reasoning_stats() -> None:
+    """Zero the reasoning counters. Called once at the start of a review."""
+    global _REASONING_GENERATIONS, _REASONING_WITH_SPANS
+    global _REASONING_CHARS, _REASONING_PENDING, _TEMPLATE_KWARGS_DROPPED
+    global _LAST_REASONING, _REASONING_RETRIES, _THINKING_FALLBACKS
+    global _LAST_FINISH_REASON
+    _REASONING_GENERATIONS = 0
+    _REASONING_WITH_SPANS = 0
+    _REASONING_CHARS = 0
+    _REASONING_PENDING = 0
+    _TEMPLATE_KWARGS_DROPPED = False
+    _LAST_REASONING = ""
+    _REASONING_RETRIES = 0
+    _THINKING_FALLBACKS = 0
+    _LAST_FINISH_REASON = ""
+
+
+def reasoning_stats() -> Dict[str, Any]:
+    """
+    What the model actually emitted since the last reset.
+
+    ``generations``    completed generate() calls
+    ``with_reasoning`` how many of those carried a non-empty reasoning span
+    ``chars``          total characters of reasoning, tags excluded
+    ``template_kwargs_dropped``
+                       True if the server rejected ``chat_template_kwargs``, in
+                       which case ``enable_thinking`` never reached the template
+    """
+    return {
+        "generations": _REASONING_GENERATIONS,
+        "with_reasoning": _REASONING_WITH_SPANS,
+        "chars": _REASONING_CHARS,
+        "template_kwargs_dropped": _TEMPLATE_KWARGS_DROPPED,
+        "retries": _REASONING_RETRIES,
+        "fallbacks": _THINKING_FALLBACKS,
+    }
+
+
+def _note_reasoning_chars(count: int, text: str = "") -> None:
+    """Record reasoning seen within the generation currently in flight."""
+    global _REASONING_CHARS, _REASONING_PENDING, _LAST_REASONING
+    if count > 0:
+        _REASONING_CHARS += count
+        _REASONING_PENDING += count
+        if text:
+            _LAST_REASONING = text[:_LAST_REASONING_LIMIT]
+
+
+def last_reasoning() -> str:
+    """The reasoning from the most recent generation that emitted any."""
+    return _LAST_REASONING
+
+
+def _note_reasoning_retry() -> None:
+    global _REASONING_RETRIES
+    _REASONING_RETRIES += 1
+
+
+def _note_thinking_fallback() -> None:
+    global _THINKING_FALLBACKS
+    _THINKING_FALLBACKS += 1
+
+
+def _note_template_kwargs_dropped() -> None:
+    global _TEMPLATE_KWARGS_DROPPED
+    _TEMPLATE_KWARGS_DROPPED = True
+
+
+def _close_generation() -> int:
+    """
+    End of one generation: fold whatever reasoning it carried into totals.
+
+    Returns the reasoning characters this generation carried, so the caller can
+    tell an empty answer that follows reasoning from an empty answer that does
+    not. The first is a budget that ran out mid-thought; the second is a model
+    that had nothing to say.
+    """
+    global _REASONING_GENERATIONS, _REASONING_WITH_SPANS, _REASONING_PENDING
+    _REASONING_GENERATIONS += 1
+    carried = _REASONING_PENDING
+    if carried > 0:
+        _REASONING_WITH_SPANS += 1
+    _REASONING_PENDING = 0
+    return carried
+
+
+# review_pipeline budgets prompts with the same figure; keep them in step.
+_CHARS_PER_TOKEN = 3.2
+
+
+def _generation_ceiling(messages: List[Dict[str, Any]]) -> int:
+    """
+    The largest generation budget this prompt can be given.
+
+    Whatever is left of the server's context once the prompt is in it, less a
+    small margin. Asking for more than this is refused by the server, so it is
+    the point at which retrying stops being worth anything.
+    """
+    try:
+        context = available_context()
+    except Exception:                                       # noqa: BLE001
+        context = 32768
+    chars = sum(len(str(m.get("content", ""))) for m in messages)
+    prompt_tokens = int(chars / _CHARS_PER_TOKEN)
+    return max(4000, context - prompt_tokens - 512)
+
+
+def _one_generation(model: Any, messages: List[Dict[str, Any]], budget: int,
+                    sampler: Optional["Sampler"],
+                    enable_thinking: bool) -> Tuple[str, int, bool]:
+    """
+    One server call.
+
+    Returns the cleaned text, its reasoning characters, and whether the server
+    stopped because the budget ran out rather than because the answer was
+    finished.
+    """
+    text = model.complete(messages=messages, max_tokens=int(budget),
+                          sampler=sampler, enable_thinking=enable_thinking)
+    truncated = _LAST_FINISH_REASON == "length"
+    text = strip_reasoning(text)
+    return text, _close_generation(), truncated
+
+
+def _generate_with_recovery(model: Any, messages: List[Dict[str, Any]],
+                            max_tokens: int, sampler: Optional["Sampler"],
+                            enable_thinking: bool) -> str:
+    """
+    Generate, and recover when the reasoning will not fit in its budget.
+
+    How long a thinking span runs is not knowable in advance. On one paper it
+    ended by itself at 3,200 tokens on the first chunk and overran 8,900 on the
+    fourth. Three fixed allowances were tried and all three produced a review
+    that stopped partway through, so this stops guessing: a generation that
+    spends its whole budget reasoning and returns nothing is retried with the
+    budget doubled, up to what the context window allows, and finally in
+    instruct mode so the review completes rather than dying on one chunk. Both
+    the retries and the fallbacks are counted and reported in the header --
+    a review that repaired itself should say so.
+    """
+    if not enable_thinking:
+        # Instruct answers have always been allowed to hit their cap -- the
+        # chunk-note limit of 900 is reached on most calls -- so nothing here
+        # changes for them.
+        text, reasoned, _ = _one_generation(model, messages, max_tokens,
+                                            sampler, False)
+        _reject_if_reasoning_ate_the_answer(text, reasoned, max_tokens)
+        return text
+
+    budget = max_tokens + THINKING_EXTRA_TOKENS
+    ceiling = _generation_ceiling(messages)
+    while True:
+        text, reasoned, truncated = _one_generation(model, messages, budget,
+                                                    sampler, True)
+        # An answer cut off mid-sentence is the same failure as no answer:
+        # the reasoning took the budget. One review's synthesis spent 9,800 of
+        # its 10,000 tokens thinking and stopped four words into a heading,
+        # which produced a report that looked deliberate and ended halfway.
+        if not reasoned or (text.strip() and not truncated):
+            return text
+        if budget >= ceiling:
+            break
+        _note_reasoning_retry()
+        budget = min(budget * 2, ceiling)
+
+    # Even the whole remaining context was not enough. One generation in
+    # instruct mode is a smaller loss than an abandoned review.
+    _note_thinking_fallback()
+    text, reasoned, _ = _one_generation(model, messages, max_tokens, sampler, False)
+    _reject_if_reasoning_ate_the_answer(text, reasoned, max_tokens)
+    return text
+
+
+def _reject_if_reasoning_ate_the_answer(text: str, reasoning_chars: int,
+                                        max_tokens: int) -> None:
+    """
+    Fail loudly when a generation spent its whole budget thinking.
+
+    Reasoning is charged against max_tokens. If the budget runs out mid-thought
+    the server returns reasoning and no content, and every downstream stage
+    handles the empty string without complaint: empty chunk notes make an empty
+    synthesis, which makes a report with nothing in it but a header and a
+    citation check reporting -- accurately -- that it found no unverifiable
+    quotations. That happened, and the report looked tidy. An exception here
+    turns a silent empty review into a message that says what to change.
+    """
+    if reasoning_chars <= 0 or text.strip():
+        return
+    raise BackendError(
+        f"The model spent its entire {max_tokens}-token budget on reasoning "
+        f"({reasoning_chars:,} characters) and returned no answer.\n"
+        f"Raise the thinking allowance and run it again:\n"
+        f"  QWEN_THINKING_EXTRA_TOKENS={THINKING_EXTRA_TOKENS * 2} "
+        f"./scripts/qwen_service.sh restart\n"
+        f"Or choose Instruct in the reasoning dropdown, which needs no "
+        f"allowance at all."
+    )
 
 
 def strip_reasoning(text: str) -> str:
@@ -184,13 +427,21 @@ def strip_reasoning(text: str) -> str:
     Thinking is disabled by default (the chat template then emits an empty
     ``<think></think>`` pair), but this is applied unconditionally so that a
     server or template that leaks reasoning cannot contaminate a review.
+
+    The removed characters are counted, so a finished run can say whether
+    reasoning actually happened rather than only whether it was asked for.
     """
     if not text:
         return text
+    spans = [m.group(1).strip() for m in _THINK_BLOCK_RE.finditer(text)]
     text = _THINK_BLOCK_RE.sub("", text)
     if "<think>" in text.lower():
         # An unterminated reasoning span: drop it up to the first blank line.
+        spans += [m.group(1).strip()
+                  for m in _DANGLING_THINK_OPEN_RE.finditer(text)]
         text = _DANGLING_THINK_OPEN_RE.sub("", text)
+    removed = sum(len(span) for span in spans)
+    _note_reasoning_chars(removed, "\n".join(span for span in spans if span))
     text = _STRAY_THINK_TAG_RE.sub("", text)
     return text.strip()
 
@@ -302,6 +553,31 @@ def _thinking_default() -> bool:
 def thinking_enabled() -> bool:
     """Whether generations will currently emit reasoning."""
     return _thinking_default()
+
+
+# Reasoning is generated inside max_tokens, not alongside it. The chunk-note
+# cap of 900 tokens is already reached on most calls in instruct mode, so in
+# thinking mode the reasoning would eat into the note itself and the two modes
+# would be compared at different answer lengths -- the thinking one shorter,
+# through no fault of the mode. Thinking generations therefore get an allowance
+# on top of whatever the call site asked for. Set to 0 to disable it.
+#
+# Three measurements on the same paper, all on chunk 1 or its equivalent:
+#   allowance 1,200 -> 8,965 characters, truncated at the cap, no answer
+#   allowance 4,000 -> 22,757 characters, truncated at the cap, no answer
+#   no cap (24,000) -> 14,465 characters of reasoning, then a 4,991-character
+#                      answer; the reasoning ended on its own
+# So the reasoning does terminate, at roughly 3,200 tokens when left alone --
+# but the truncated run had already produced more than 5,000 tokens on the same
+# chunk, so the spread between runs is at least 1.6x and the upper end is not
+# yet known. 8,000 covers the longest observed with headroom for that spread.
+# tests/probe_thinking_chunk.py measures it again on any paper.
+THINKING_EXTRA_TOKENS = int(os.environ.get("QWEN_THINKING_EXTRA_TOKENS", "8000"))
+
+
+def thinking_token_allowance() -> int:
+    """Extra generation budget for a thinking run; 0 when thinking is off."""
+    return THINKING_EXTRA_TOKENS if _thinking_default() else 0
 
 
 @contextlib.contextmanager
@@ -573,6 +849,9 @@ class LlamaServerModel:
         except BackendError as exc:
             # Older llama-server builds reject chat_template_kwargs with a 400.
             if self.supports_template_kwargs and "HTTP 400" in str(exc):
+                # Recorded, because after this retry enable_thinking has no
+                # effect at all and nothing else would show it.
+                _note_template_kwargs_dropped()
                 self.supports_template_kwargs = False
                 payload.pop("chat_template_kwargs", None)
                 response = self._post_json("/v1/chat/completions", payload)
@@ -599,10 +878,18 @@ def available_context(default: int = 32768) -> int:
 
 
 def _extract_chat_text(response: Dict[str, Any]) -> str:
+    global _LAST_FINISH_REASON
     choices = response.get("choices") or []
     if not choices:
         raise BackendError(f"llama-server returned no choices: {response!r}"[:500])
+    _LAST_FINISH_REASON = str(choices[0].get("finish_reason") or "")
     message = choices[0].get("message") or {}
+    # llama-server run with --reasoning-format deepseek (its current default)
+    # returns the reasoning span in this field rather than inline, so counting
+    # only <think> spans in the content would under-report it as zero.
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning.strip():
+        _note_reasoning_chars(len(reasoning.strip()), reasoning.strip())
     content = message.get("content")
     if content is None:
         content = choices[0].get("text", "")
@@ -763,13 +1050,10 @@ def generate(model: Any, tokenizer: Any, prompt: Any = None,
             resolved_sampler = sampler
         else:
             resolved_sampler = None  # an mlx sampler is meaningless here
-        text = model.complete(
-            messages=messages,
-            max_tokens=max_tokens,
-            sampler=resolved_sampler,
-            enable_thinking=enable_thinking,
-        )
-        return strip_reasoning(text)
+        # The allowance follows the flag resolved for this prompt, not the
+        # process default, so a mixed run cannot borrow the wrong budget.
+        return _generate_with_recovery(model, messages, int(max_tokens),
+                                       resolved_sampler, enable_thinking)
 
     from mlx_lm import generate as _mlx_generate  # noqa: WPS433
     text = _mlx_generate(
@@ -780,4 +1064,6 @@ def generate(model: Any, tokenizer: Any, prompt: Any = None,
         verbose=verbose,
         **kwargs,
     )
-    return strip_reasoning(text)
+    text = strip_reasoning(text)
+    _reject_if_reasoning_ate_the_answer(text, _close_generation(), max_tokens)
+    return text
