@@ -112,6 +112,14 @@ def main() -> int:
     if not wired:
         print("           chat_template_kwargs will be accepted and ignored: "
               "the template has no branch to switch.")
+    # Whether the effort lever exists at all on this GGUF. If the template does
+    # not mention it, setting LLAMA_REASONING_EFFORT changes nothing.
+    if "reasoning_effort" in template:
+        print("[template] mentions reasoning_effort, so LLAMA_REASONING_EFFORT "
+              "has something to act on")
+    else:
+        print("[template] does NOT mention reasoning_effort: setting "
+              "LLAMA_REASONING_EFFORT will have no effect on this model")
     for key in ("reasoning_format", "reasoning_budget"):
         if key in props:
             print(f"[server]   {key} = {props[key]!r}")

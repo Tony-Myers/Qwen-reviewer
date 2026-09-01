@@ -141,7 +141,7 @@ repo ids and absolute `.gguf` paths still work.
 | `LLAMA_SERVER_NGL` | `99` | GPU layers to offload |
 | `LLAMA_REQUEST_TIMEOUT` | `1800` | Per-request timeout, seconds |
 | `LLAMA_ENABLE_THINKING` | off | `1` to let the model emit reasoning |
-| `LLAMA_REASONING_EFFORT` | `xhigh` | `low`, `medium` or `xhigh`, only when thinking is on |
+| `LLAMA_REASONING_EFFORT` | `medium` | `low`, `medium`, `high` or `xhigh`, only when thinking is on. `template` sends nothing, leaving the chat template's own default |
 
 ## Layout
 
@@ -282,6 +282,30 @@ recorded in the `Reasoning check:` line. Set `QWEN_THINKING_PASSES` to ask for
 more, which is worth doing only to test whether extra passes and reasoning add
 anything to each other -- they may be two ways of buying the same thing, and
 that has never been measured.
+
+**Reasoning effort.** `reasoning_effort` was never sent until now, so every
+thinking run used whatever the chat template defaults to. One measurement on
+chunk 1 of the same paper, everything else equal:
+
+| effort | reasoning | answer |
+| --- | --- | --- |
+| template default | 14,465 characters | 4,991 characters |
+| `medium` | 7,616 characters | 6,641 characters |
+
+Half the reasoning and a third more answer. A full hybrid review then repeated
+it: 26,349 characters of reasoning per thinking generation against 51,270 at
+the template default, one retry instead of four, and the strongest report the
+pipeline has produced on that paper.
+
+`medium` is therefore the default for thinking runs. `--effort low|high|xhigh`
+changes it, `--effort template` sends nothing and restores the behaviour of
+every run before this was measured, and the header records which effort produced
+a report. `tests/probe_thinking.py` says whether the chat template has a
+`reasoning_effort` branch to act on at all -- on a model whose template does
+not, the setting changes nothing.
+
+Two runs on one paper is not proof. It is cheaper, it is no worse on every
+measure taken, and it is one flag to undo.
 
 Before spending an hour on a thinking review, spend twenty seconds asking the
 server whether the flag does anything at all:

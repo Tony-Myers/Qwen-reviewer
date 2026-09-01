@@ -63,6 +63,8 @@ def main() -> int:
 
     print(f"{len(chunks)} chunks; measuring chunk {args.chunk}")
     print(f"Method: {manifest.method_class.value}")
+    effort = llm_backend.reasoning_effort()
+    print(f"Reasoning effort: {effort or 'unset (the template default)'}")
 
     model, tokenizer = llm_backend.load(rp.MODEL_NAME)
     chunk = rp.DocChunk(source_name=args.paper.name, chunk_id=args.chunk,

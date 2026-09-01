@@ -8,7 +8,7 @@
 #
 # Usage:
 #   ./scripts/qwen_service.sh start [--no-wait] [--no-open] [--model ALIAS]
-#                                    [--passes N]
+#                                    [--passes N] [--effort low|medium|high|xhigh]
 #   ./scripts/qwen_service.sh stop
 #   ./scripts/qwen_service.sh restart
 #   ./scripts/qwen_service.sh status
@@ -50,6 +50,10 @@ LLAMA_CTX="${LLAMA_SERVER_CTX:-32768}"
 # is linear in generation time, and quality is worth more than time here.
 # Override for a quick triage pass with --passes 1.
 REVIEW_PASSES="${REVIEW_PASSES:-3}"
+# Passed through explicitly and logged, like the pass count: an inherited
+# variable that silently fails to reach the app server is exactly the kind of
+# thing that cost a day here. Empty leaves the chat template's own default.
+LLAMA_REASONING_EFFORT="${LLAMA_REASONING_EFFORT:-}"
 LLAMA_NGL="${LLAMA_SERVER_NGL:-99}"
 
 HF_HUB="${HF_HUB_CACHE:-$HOME/.cache/huggingface/hub}"
@@ -398,12 +402,13 @@ start_app() {
     return 1
   fi
 
-  log_line "Starting the app server on port $APP_PORT ($REVIEW_PASSES synthesis pass(es))..."
+  log_line "Starting the app server on port $APP_PORT ($REVIEW_PASSES synthesis pass(es), reasoning effort: ${LLAMA_REASONING_EFFORT:-medium (default)})..."
   cd "$PROJECT_DIR" || return 1
 
   QWEN_LLM_BACKEND="$([[ "$MODEL" == *.gguf ]] && echo llama-server || echo mlx)" \
   LLAMA_SERVER_URL="http://$LLAMA_HOST:$LLAMA_PORT" \
   REVIEW_PASSES="$REVIEW_PASSES" \
+  LLAMA_REASONING_EFFORT="$LLAMA_REASONING_EFFORT" \
   nohup "$VENV_PYTHON" "$APP_PY" \
     --model "$MODEL" \
     --host "$APP_HOST" \
@@ -675,6 +680,7 @@ while [[ $# -gt 0 ]]; do
     --llama-port) LLAMA_PORT="$2"; shift 2 ;;
     --model)   MODEL="$2"; shift 2 ;;
     --passes)  REVIEW_PASSES="$2"; shift 2 ;;
+    --effort)  LLAMA_REASONING_EFFORT="$2"; shift 2 ;;
     llama|app|service) LOG_TARGET="$1"; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac

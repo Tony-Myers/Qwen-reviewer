@@ -58,7 +58,9 @@ Relevant environment variables
 ``LLAMA_REQUEST_TIMEOUT``   per-request timeout in seconds (1800)
 ``LLAMA_READY_TIMEOUT``     how long to wait for a loading model (900)
 ``LLAMA_ENABLE_THINKING``   "1" to let the model emit reasoning (default off)
-``LLAMA_REASONING_EFFORT``  low | medium | xhigh, only when thinking is on
+``LLAMA_REASONING_EFFORT``  low | medium | high | xhigh, only when thinking is
+                            on. Unset sends nothing, leaving the chat template's
+                            own default in force.
 """
 
 from __future__ import annotations
@@ -89,6 +91,8 @@ __all__ = [
     "reasoning_stats",
     "reset_reasoning_stats",
     "last_reasoning",
+    "reasoning_effort",
+    "DEFAULT_REASONING_EFFORT",
     "thinking_token_allowance",
     "is_gguf_model",
     "BackendError",
@@ -575,6 +579,46 @@ def thinking_enabled() -> bool:
 THINKING_EXTRA_TOKENS = int(os.environ.get("QWEN_THINKING_EXTRA_TOKENS", "8000"))
 
 
+# "high" was missing from the accepted set, so anyone who set it got silence and
+# the template's default -- exactly the kind of quiet mismatch this pipeline has
+# spent a day removing. An unrecognised value now says so once rather than
+# vanishing.
+VALID_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+
+# Nothing was sent at all until this was measured, so every thinking run used
+# whatever the chat template defaults to. On one chunk of one paper, everything
+# else equal, medium halved the reasoning (14,465 characters to 7,616) and the
+# answer grew by a third; on a full hybrid review it halved the reasoning per
+# generation and cut the retries from four to one. One paper is not proof, but
+# it is cheaper and no worse, and "template" restores the old behaviour.
+DEFAULT_REASONING_EFFORT = os.environ.get(
+    "QWEN_DEFAULT_REASONING_EFFORT", "medium").strip().lower()
+_EFFORT_WARNED = False
+
+
+def reasoning_effort() -> str:
+    """
+    The reasoning effort to request, or "" to leave the template's own default.
+
+    Unset means DEFAULT_REASONING_EFFORT. Setting LLAMA_REASONING_EFFORT to
+    "template" sends nothing, which is what every run before today did.
+    """
+    global _EFFORT_WARNED
+    value = os.environ.get("LLAMA_REASONING_EFFORT", "").strip().lower()
+    if not value:
+        value = DEFAULT_REASONING_EFFORT
+    if value in ("template", "default", "none"):
+        return ""
+    if value in VALID_REASONING_EFFORTS:
+        return value
+    if not _EFFORT_WARNED:
+        _EFFORT_WARNED = True
+        print(f"[llm_backend] LLAMA_REASONING_EFFORT={value!r} is not one of "
+              f"{', '.join(VALID_REASONING_EFFORTS)}; ignoring it and leaving "
+              f"the chat template's own default in force.", flush=True)
+    return ""
+
+
 def thinking_token_allowance() -> int:
     """Extra generation budget for a thinking run; 0 when thinking is off."""
     return THINKING_EXTRA_TOKENS if _thinking_default() else 0
@@ -839,8 +883,8 @@ class LlamaServerModel:
         if self.supports_template_kwargs:
             template_kwargs: Dict[str, Any] = {"enable_thinking": bool(enable_thinking)}
             if enable_thinking:
-                effort = os.environ.get("LLAMA_REASONING_EFFORT", "").strip().lower()
-                if effort in {"low", "medium", "xhigh"}:
+                effort = reasoning_effort()
+                if effort:
                     template_kwargs["reasoning_effort"] = effort
             payload["chat_template_kwargs"] = template_kwargs
 

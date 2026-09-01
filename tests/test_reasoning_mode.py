@@ -114,6 +114,38 @@ ok("a rejected chat_template_kwargs is recorded, not just swallowed",
 # Reasoning is generated inside max_tokens. The chunk-note cap of 900 is
 # already reached on most calls in instruct mode, so without an allowance a
 # thinking run answers at a shorter length than the mode it is compared with.
+import os as _os  # noqa: E402
+_saved_effort = _os.environ.get("LLAMA_REASONING_EFFORT")
+try:
+    for _value in ("low", "medium", "high", "xhigh"):
+        _os.environ["LLAMA_REASONING_EFFORT"] = _value
+        ok(f"{_value} is accepted", llm_backend.reasoning_effort() == _value)
+    # "high" was missing from the accepted set, so setting it produced silence
+    # and the template default -- the same quiet mismatch as everything else
+    # fixed today.
+    _os.environ["LLAMA_REASONING_EFFORT"] = "HIGH"
+    ok("case does not matter", llm_backend.reasoning_effort() == "high")
+    _os.environ["LLAMA_REASONING_EFFORT"] = "very-high"
+    ok("an unrecognised value is ignored", llm_backend.reasoning_effort() == "")
+    _os.environ.pop("LLAMA_REASONING_EFFORT")
+    # Nothing was sent at all until it was measured. Medium halved the reasoning
+    # per generation on a full hybrid review and cut the retries from four to
+    # one, so it is the default; "template" restores the old behaviour.
+    ok("unset now means medium", llm_backend.reasoning_effort() == "medium",
+       llm_backend.reasoning_effort())
+    _os.environ["LLAMA_REASONING_EFFORT"] = "template"
+    ok("template sends nothing, as every run before today did",
+       llm_backend.reasoning_effort() == "")
+finally:
+    if _saved_effort is None:
+        _os.environ.pop("LLAMA_REASONING_EFFORT", None)
+    else:
+        _os.environ["LLAMA_REASONING_EFFORT"] = _saved_effort
+_server_src = (ROOT / "app" / "server.py").read_text()
+ok("the header says which effort was in force",
+   "reasoning effort was requested as" in _server_src
+   and "the chat template's" in _server_src)
+
 ok("instruct gets no allowance", llm_backend.thinking_token_allowance() == 0)
 with llm_backend.thinking(True):
     ok("thinking gets one", llm_backend.thinking_token_allowance() > 0,

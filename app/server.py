@@ -596,6 +596,12 @@ def _reasoning_header_lines(scope: str = "review",
     if stats["template_kwargs_dropped"]:
         check += ("; the server rejected chat_template_kwargs, so the request "
                   "never reached the chat template")
+    effort = llm_backend.reasoning_effort()
+    if effort and requested.startswith("thinking"):
+        check += f"; reasoning effort was requested as {effort}"
+    elif requested.startswith("thinking"):
+        check += "; no reasoning effort was sent, so the chat template's own " \
+                 "default was in force"
     if passes_note:
         check += f"; {passes_note}"
 
