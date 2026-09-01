@@ -63,6 +63,7 @@ Relevant environment variables
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -284,8 +285,36 @@ class ChatPrompt(str):
         return obj
 
 
+# Per-run override of the thinking default, so a single review can be run one
+# way while the process default stays the other. Generation is serialised under
+# the app server's model lock, so a process-wide switch held for the duration of
+# one review is safe; the context manager restores it even on failure, which a
+# bare setter would not.
+_THINKING_OVERRIDE: Optional[bool] = None
+
+
 def _thinking_default() -> bool:
+    if _THINKING_OVERRIDE is not None:
+        return _THINKING_OVERRIDE
     return _env_flag("LLAMA_ENABLE_THINKING", False)
+
+
+def thinking_enabled() -> bool:
+    """Whether generations will currently emit reasoning."""
+    return _thinking_default()
+
+
+@contextlib.contextmanager
+def thinking(enabled: Optional[bool]):
+    """Run a block with thinking forced on or off. None leaves it alone."""
+    global _THINKING_OVERRIDE
+    previous = _THINKING_OVERRIDE
+    if enabled is not None:
+        _THINKING_OVERRIDE = bool(enabled)
+    try:
+        yield
+    finally:
+        _THINKING_OVERRIDE = previous
 
 
 def _plain_text_preview(messages: List[Dict[str, Any]]) -> str:

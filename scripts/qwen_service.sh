@@ -8,6 +8,7 @@
 #
 # Usage:
 #   ./scripts/qwen_service.sh start [--no-wait] [--no-open] [--model ALIAS]
+#                                    [--passes N]
 #   ./scripts/qwen_service.sh stop
 #   ./scripts/qwen_service.sh restart
 #   ./scripts/qwen_service.sh status
@@ -43,6 +44,12 @@ LLAMA_BIN="${LLAMA_SERVER_BIN:-llama-server}"
 LLAMA_HOST="${LLAMA_SERVER_HOST:-127.0.0.1}"
 LLAMA_PORT="${LLAMA_SERVER_PORT:-8081}"
 LLAMA_CTX="${LLAMA_SERVER_CTX:-32768}"
+# Synthesis passes. Findings rotate between passes, so one pass finds roughly
+# half of what the model can see; three passes, each validated before merging,
+# kept 7/9 concerns and added five items on the run that settled this. The cost
+# is linear in generation time, and quality is worth more than time here.
+# Override for a quick triage pass with --passes 1.
+REVIEW_PASSES="${REVIEW_PASSES:-3}"
 LLAMA_NGL="${LLAMA_SERVER_NGL:-99}"
 
 HF_HUB="${HF_HUB_CACHE:-$HOME/.cache/huggingface/hub}"
@@ -391,11 +398,12 @@ start_app() {
     return 1
   fi
 
-  log_line "Starting the app server on port $APP_PORT..."
+  log_line "Starting the app server on port $APP_PORT ($REVIEW_PASSES synthesis pass(es))..."
   cd "$PROJECT_DIR" || return 1
 
   QWEN_LLM_BACKEND="$([[ "$MODEL" == *.gguf ]] && echo llama-server || echo mlx)" \
   LLAMA_SERVER_URL="http://$LLAMA_HOST:$LLAMA_PORT" \
+  REVIEW_PASSES="$REVIEW_PASSES" \
   nohup "$VENV_PYTHON" "$APP_PY" \
     --model "$MODEL" \
     --host "$APP_HOST" \
@@ -666,6 +674,7 @@ while [[ $# -gt 0 ]]; do
     --port)    APP_PORT="$2"; shift 2 ;;
     --llama-port) LLAMA_PORT="$2"; shift 2 ;;
     --model)   MODEL="$2"; shift 2 ;;
+    --passes)  REVIEW_PASSES="$2"; shift 2 ;;
     llama|app|service) LOG_TARGET="$1"; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac

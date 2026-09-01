@@ -40,6 +40,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import review_pipeline as rp  # noqa: E402
+import llm_backend  # noqa: E402
 from llm_backend import (  # noqa: E402
     BackendError,
     current_backend,
@@ -420,6 +421,7 @@ async def chat_completions(request: dict):
 async def start_review(
     file: UploadFile = File(...),
     domain: str = Form("general"),
+    thinking: str = Form(""),
 ):
     # Save uploaded file to temp directory
     job_id = uuid.uuid4().hex[:12]
@@ -428,8 +430,17 @@ async def start_review(
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
+    # "" leaves the process default alone; "1"/"0" force one mode for this
+    # review only, so the two can be alternated over real use and compared.
+    want_thinking = None
+    if str(thinking).strip() in ("1", "true", "on", "yes"):
+        want_thinking = True
+    elif str(thinking).strip() in ("0", "false", "off", "no"):
+        want_thinking = False
+
     review_jobs[job_id] = {
         "status": "running",
+        "thinking": want_thinking,
         "progress": [],
         "report": None,
         "appendix": None,
@@ -542,6 +553,15 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
     """Run the full review pipeline (called in background thread)."""
     ensure_model()
 
+    # Held for the whole review, so every generation in it -- chunk notes, file
+    # synthesis, the passes, validation -- runs in the same mode. Restored on
+    # the way out even if the review fails.
+    want_thinking = review_jobs.get(job_id, {}).get("thinking")
+    with llm_backend.thinking(want_thinking):
+        _run_review_inner(job_id, file_path, domain, tmp_dir)
+
+
+def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
     try:
         _add_progress(job_id, f"Reading {file_path.name}...")
         text, table_blocks = rp.load_document(file_path)
@@ -699,6 +719,9 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             f"Generated: {datetime.now().isoformat(timespec='seconds')}\n"
             f"Model: {rp.model_display_name(MODEL_NAME)}\n"
             f"Pipeline: {rp.PIPELINE_VERSION}\n"
+            # Recorded so reviews accumulated over real use can be grouped by
+            # mode afterwards; without it the comparison is unrecoverable.
+            + f"Reasoning: {'thinking' if llm_backend.thinking_enabled() else 'instruct'}\n"
             # Recorded so a run is never ambiguous about whether the extra
             # passes actually happened, and what they contributed.
             + (f"Synthesis: {synthesis_note}\n" if passes > 1 else "")

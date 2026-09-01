@@ -38,6 +38,8 @@
   .compact-input, .model-select { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); outline: none; }
   .compact-input { width: 70px; }
   .model-select { width: min(280px, 42vw); }
+  .reasoning-choice { margin-left: 0.75rem; font-size: 0.78rem; color: var(--text-muted); }
+  .reasoning-choice select { font-size: 0.78rem; margin-left: 0.25rem; }
   .restart-note { min-width: 92px; max-width: 220px; font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--surface-alt); flex-shrink: 0; }
   .tab { padding: 9px 22px; font-size: 0.82rem; font-weight: 500; color: var(--text-muted); cursor: pointer; border: none; background: none; border-bottom: 2px solid transparent; font-family: 'DM Sans', sans-serif; transition: all 0.15s; }
@@ -141,7 +143,17 @@
         <p>PDF, DOCX, TXT, MD, CSV, or XLSX</p>
         <div class="file-name" id="fileName" style="display:none"></div>
       </div>
-      <div><button class="btn" id="reviewBtn" onclick="startReview()" disabled>Start review</button></div>
+      <div>
+        <button class="btn" id="reviewBtn" onclick="startReview()" disabled>Start review</button>
+        <label class="reasoning-choice" for="reasoningMode" title="Thinking mode lets the model reason before writing. Slower. Untested against instruct mode -- alternate them and compare.">
+          Reasoning:
+          <select id="reasoningMode">
+            <option value="">server default</option>
+            <option value="0">instruct</option>
+            <option value="1">thinking</option>
+          </select>
+        </label>
+      </div>
     </div>
     <div class="progress-area" id="progressArea">
       <div class="progress-bar-track"><div class="progress-bar-fill" id="progressBar"></div></div>
@@ -362,6 +374,9 @@ async function startReview() {
   const ra = document.getElementById('reportArea'); ra.innerHTML = '';
 
   const fd = new FormData(); fd.append('file', selectedFile); fd.append('domain', 'general');
+  // "" leaves the server's own default alone; "0"/"1" force one mode for this
+  // review only. The chosen mode is recorded in the report header.
+  fd.append('thinking', document.getElementById('reasoningMode').value);
   try {
     const r = await fetch(BASE + '/api/review', { method: 'POST', body: fd });
     if (!r.ok) { showErr('Upload failed: ' + r.status); btn.disabled = false; return; }

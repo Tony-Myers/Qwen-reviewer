@@ -148,12 +148,16 @@ Findings rotate between runs: the same paper, the same code and the same model
 can produce quite different sets of concerns, and a single pass tends to give
 about half of what the model can see.
 
-    REVIEW_PASSES=3 ./scripts/qwen_service.sh restart
+Three passes are the default. The service runs the final synthesis that many
+times and unions the concerns and verification prompts, marking anything found
+only in a later pass. Each pass is a full generation, so a review takes roughly
+three times as long. For a quick triage pass:
 
-runs the final synthesis that many times and unions the concerns and
-verification prompts, marking anything found only in a later pass. Each pass is
-a full generation, so a review takes roughly that multiple of the time. The
-default is 1.
+    ./scripts/qwen_service.sh restart --passes 1
+
+The setting is read when the app server starts, so it applies to every review
+until the next restart. The report header carries a `Synthesis:` line whenever
+more than one pass ran, so a report is never ambiguous about which it was.
 
 The first pass uses the normal low temperature and is the base report; later
 passes are sampled at `REPEAT_PASS_TEMPERATURE` (0.7 by default), because a
@@ -174,6 +178,24 @@ cleaned.
 
 This costs one validation call per pass. The header and the app-server log
 record how much validation removed in each pass and how much the merge added.
+
+## Reasoning mode
+
+Every generation so far has run in instruct (non-thinking) mode; thinking mode
+has never been tested. The browser now offers the choice per review -- server
+default, instruct, or thinking -- and the report header records which was used:
+
+    Reasoning: instruct
+
+Alternate them over real reviews, then tally what you have:
+
+    .venv/bin/python tests/report_tally.py reports/
+
+This trades control for cost. A sweep runs the same paper twice and takes an
+hour per comparison; this uses papers you had to review anyway and accumulates,
+at the price of the papers differing between groups. An A/A test on this
+pipeline varied by 3 in `high`, 9 in `self` and 6 in `quot` over four papers, so
+ten reviews per mode is a sensible minimum before reading anything into it.
 
 ## Sampler settings
 
