@@ -79,11 +79,37 @@ def render_page(pdf_path: Path, page_number: int, dpi: int) -> bytes:
         document.close()
 
 
+# A manuscript under review numbers its lines, and page-level extraction puts
+# those numbers at the start or the end of each line depending on the PDF. Left
+# in, they dominate the numeric comparison -- one page reported 59 numbers the
+# text layer had and the image did not, almost all of them line numbers.
+_LEADING_LINE_NUMBER_RE = re.compile(r"^[ \t]*\d{1,4}[ \t]+(?=\S)", re.M)
+
+
 def page_text(pdf_path: Path, page_number: int) -> str:
-    """What the pipeline's text layer sees on that page."""
+    """
+    What the text layer holds for that page, with line numbers removed.
+
+    The same cleaning the pipeline applies, plus the leading-number form that
+    per-page extraction produces, so the comparison is against the text a
+    review would actually see rather than against the typesetting.
+    """
     import pdfplumber
     with pdfplumber.open(str(pdf_path)) as pdf:
-        return pdf.pages[page_number - 1].extract_text() or ""
+        raw = pdf.pages[page_number - 1].extract_text() or ""
+    try:
+        import review_pipeline as rp
+        raw, _ = rp.strip_marginal_line_numbers(raw)
+    except Exception:                                       # noqa: BLE001
+        pass
+    # Only when they really are a numbering scheme: a run of lines that each
+    # begin with a small integer, climbing.
+    starts = [int(m.group(0).strip())
+              for m in re.finditer(r"^[ \t]*\d{1,4}[ \t]+(?=\S)", raw, re.M)]
+    climbing = sum(1 for a, b in zip(starts, starts[1:]) if 0 < b - a <= 4)
+    if len(starts) >= 8 and climbing >= len(starts) * 0.6:
+        raw = _LEADING_LINE_NUMBER_RE.sub("", raw)
+    return raw
 
 
 def find_page(pdf_path: Path, needle: str) -> int:
