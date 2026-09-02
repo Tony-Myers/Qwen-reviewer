@@ -165,19 +165,72 @@ _DESIGN_PRIORITY: List[DesignClass] = [
 MIN_SIGNALS = 2
 
 
+_SPACED_HYPHEN = re.compile(r"(\w)[ \t]+-[ \t]*(\w)|(\w)-[ \t]+(\w)")
+
+
+def normalise_extraction(text: str) -> str:
+    """
+    Lowercase, and close up hyphens that extraction has split.
+
+    PDF text layers routinely yield "within -subject", "meta -analysis" and
+    "p -value"; RJSP-2025-0796 has 154 of them. Without this the exclusion of
+    within-subject designs is invisible to a pattern written as within[- ]subject.
+    A dash with a space on both sides is left alone, since that is punctuation
+    rather than a broken word.
+    """
+    def join(m: "re.Match") -> str:
+        a, b, c, d = m.groups()
+        return f"{a}-{b}" if a else f"{c}-{d}"
+
+    return _SPACED_HYPHEN.sub(join, text.lower())
+
+
+_BACK_MATTER_WORD = re.compile(
+    r"\b(?:references|bibliography|acknowledgments?|acknowledgements?)\b"
+)
+
+# The same word standing alone on a line, optionally numbered or followed by a
+# page number, which is what a section heading looks like in extracted text.
+_BACK_MATTER_HEADING = re.compile(
+    r"^[ \t]*(?:\d+[.)]?[ \t]+)?"
+    r"(?:references|bibliography|acknowledgments?|acknowledgements?)"
+    r"[ \t]*:?[ \t]*\d{0,4}[ \t]*$",
+    re.M,
+)
+
+# The reference list of RJSP-2025-0796 starts at 49% of the extracted text.
+BACK_MATTER_MIN_POSITION = 0.30
+
+
 def strip_back_matter(text: str) -> str:
     """
     Drop references, bibliography and acknowledgements.
 
-    Same split as classify_method(), for the same reason: a paper that cites a
-    systematic review is not one, and the reference list is where most of those
-    citations live.
+    Splitting on the first occurrence of the bare word, which is what
+    classify_method() does, is wrong on any paper that uses the word in its
+    body. On RJSP-2025-0796 the methods say "all identified references were
+    imported into the online Rayyan application" at 15% of the document, so a
+    naive split discards the remaining 85% -- the eligibility criteria, the
+    exclusion criteria and the whole of the results. One paper in the
+    development corpus keeps only 7% of its text under that rule.
+
+    This looks instead for the word as a section heading, and only in the back
+    half of the document. Failing that, it takes the last bare occurrence in
+    the back half. Failing both it keeps everything, because keeping a
+    reference list is a smaller error than discarding a results section.
     """
-    return re.split(
-        r"\b(?:references|bibliography|acknowledgments?|acknowledgements?)\b",
-        text.lower(),
-        maxsplit=1,
-    )[0]
+    lowered = normalise_extraction(text)
+    floor = int(len(lowered) * BACK_MATTER_MIN_POSITION)
+
+    for match in _BACK_MATTER_HEADING.finditer(lowered):
+        if match.start() >= floor:
+            return lowered[:match.start()]
+
+    tail_hits = [m.start() for m in _BACK_MATTER_WORD.finditer(lowered) if m.start() >= floor]
+    if tail_hits:
+        return lowered[:tail_hits[-1]]
+
+    return lowered
 
 
 @dataclass
@@ -397,8 +450,12 @@ def _check_search_window(body: str) -> Optional[Finding]:
 
 def _check_inclusion_asymmetry(body: str) -> Optional[Finding]:
     inclusion = re.search(
+        # "included if they" and "to be included" are dropped deliberately: on
+        # RJSP-2025-0796 the only match was a rule for resolving overlapping
+        # meta-analyses, not an eligibility criterion, and a reviewer raised the
+        # absence of inclusion criteria that this match would have hidden.
         r"\binclusion criteri\w+|\beligibilit\w+ criteri\w+|\bwere eligible if\b"
-        r"|\bstudies were included if\b|\bincluded if they\b|\bto be included\b",
+        r"|\bstudies were included if\b|\b(?:articles|studies|papers) were included if\b",
         body,
     )
     exclusion = re.search(r"\bexclusion criteri\w+|\bwere excluded if\b|\bstudies were excluded\b", body)
@@ -457,21 +514,36 @@ def _simple_absence(key: str, label: str, pattern: str, searched: str,
 _check_heterogeneity = _simple_absence(
     "heterogeneity",
     "Heterogeneity assessment",
+    # The bare word "heterogeneity" is deliberately NOT enough. On
+    # RJSP-2025-0796 it appears once, in a sentence about variability in effect
+    # sizes, while the reviewers correctly raised the absence of any
+    # heterogeneity assessment. A generous pattern avoids false accusations at
+    # the cost of misses, and here the miss was the whole finding.
     r"\bi\s*[²³2]\b|\bi[- ]squared\b|\btau\s*[²2]\b|τ"
     r"|\bbetween[- ]stud(?:y|ies) (?:variance|standard deviation|heterogeneit\w+)\b"
-    r"|\bcochran'?s q\b|\bq[- ]statistic\b|\bheterogeneit\w+",
+    r"|\bcochran'?s q\b|\bq[- ]statistic\b"
+    r"|\bheterogeneit\w+\s+(?:was|were|is|are)\s+(?:assess|quantif|examin|evaluat|test|explor|comput|calculat)\w*"
+    r"|\b(?:assess|quantif|examin|evaluat|test|explor)\w*\s+(?:the\s+|statistical\s+|between[- ]study\s+)*heterogeneit\w+"
+    r"|\bheterogeneit\w+\s+(?:statistic|metric|index|analysis)\w*",
     'I2, I-squared, tau2, the Greek tau, "between-study variance", "between-study '
-    'standard deviation", Cochran\'s Q, Q-statistic, "heterogeneity"',
+    'standard deviation", Cochran\'s Q, Q-statistic, and heterogeneity paired with '
+    'an assessment verb. The bare word on its own does not count',
     "A Bayesian synthesis reporting a posterior for between-study standard deviation satisfies this.",
 )
 
 _check_publication_bias = _simple_absence(
     "publication_bias",
     "Publication-bias or small-study assessment",
-    r"\bfunnel plot\b|\begger'?s?\b|\bbegg'?s?\b|\btrim[- ]and[- ]fill\b|\bp[- ]curve\b"
-    r"|\bpublication bias\b|\bselection model\b|\bfail[- ]safe n\b|\bsmall[- ]study effect",
-    'funnel plot, Egger, Begg, trim-and-fill, p-curve, "publication bias", '
-    '"selection model", "fail-safe N", "small-study effects"',
+    # As with heterogeneity, the bare phrase is discussion vocabulary. On
+    # RJSP-2025-0796 "publication bias" appears in the introduction while no
+    # assessment of it exists, which is what a reviewer raised.
+    r"\bfunnel plots?\b|\begger'?s?\b|\bbegg'?s?\b|\btrim[- ]and[- ]fill\b|\bp[- ]curve\b"
+    r"|\bselection model\b|\bfail[- ]safe n\b|\bsmall[- ]study effect"
+    r"|\bpublication bias\s+(?:was|were|is|are)\s+(?:assess|test|examin|evaluat|explor|quantif|inspect)\w*"
+    r"|\b(?:assess|test|examin|evaluat|explor|quantif|inspect)\w*\s+(?:for\s+|the\s+)*publication bias",
+    'funnel plot, Egger, Begg, trim-and-fill, p-curve, "selection model", '
+    '"fail-safe N", "small-study effects", and publication bias paired with an '
+    'assessment verb. The bare phrase on its own does not count',
 )
 
 _check_risk_of_bias = _simple_absence(
@@ -488,10 +560,15 @@ _check_risk_of_bias = _simple_absence(
 _check_registration = _simple_absence(
     "registration",
     "Protocol registration",
-    r"\bprospero\b|\bosf\.io\b|\bopen science framework\b|\bpre[- ]?registr\w+"
-    r"|\bprotocol was registered\b|\bregistration number\b|\bregistered .{0,30}protocol\b",
-    'PROSPERO, osf.io, "Open Science Framework", "preregistered", '
-    '"protocol was registered", "registration number"',
+    # An OSF link is not a registered protocol. On RJSP-2025-0796 the only
+    # match was the data-availability statement, which is the section 4.4
+    # problem in miniature: stated sharing credited as something it is not.
+    r"\bprospero\b|\bpre[- ]?regist\w+|\bprotocol was registered\b"
+    r"|\bregistration number\b|\bregistered .{0,30}protocol\b"
+    r"|\bprotocol .{0,40}(?:osf|open science framework|regist\w+)",
+    'PROSPERO, "preregistered", "protocol was registered", "registration number", '
+    'and OSF or the Open Science Framework only where a protocol is named. A '
+    'data-availability link on its own does not count',
 )
 
 
@@ -635,7 +712,7 @@ def get_design_expectations(design: DesignClass) -> str:
 _SELF_REPORT_TERMS = re.compile(
     r"\bdata (?:are |is |were )?availab\w+|\bcode (?:is |are |was )?availab\w+"
     r"|\bavailability statement\b|\bosf\.io\b|\bopen science framework\b|\bgithub\b"
-    r"|\brepositor\w+|\bpre[- ]?registr\w+|\bprisma\b|\bconsort\b|\bstrobe\b"
+    r"|\brepositor\w+|\bpre[- ]?regist\w+|\bprisma\b|\bconsort\b|\bstrobe\b"
     r"|\breporting guideline\w*|\bethics approval\b|\bopenly available\b"
     r"|\bshared publicly\b|\bupon request\b",
     re.I,

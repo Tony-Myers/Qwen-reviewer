@@ -317,6 +317,62 @@ check("every rendered line states what was searched",
 check("section warns it is a keyword search", "keyword search, not a" in section)
 check("present findings are not rendered", "Databases named" not in section)
 
+# ---------------------------------------------------------------------------
+# 7. Regressions found on a real manuscript
+# ---------------------------------------------------------------------------
+
+print("\nRegressions from a real manuscript")
+
+# Every one of these was a wrong answer on RJSP-2025-0796 before it was fixed.
+
+REAL_SHAPED = (
+    "Methods\n"
+    "We searched PubMed for meta-analyses. All identified references were imported "
+    "into the online Rayyan application. Studies were screened by the author.\n"
+    + ("Filler sentence to push the body past the halfway point. " * 60) +
+    "\nArticles published in multidisciplinary digital publishing institute (mdpi) "
+    "journals were excluded at this stage. In the context of this study, within "
+    "-subject designs were excluded to ensure consistency. Multiple meta -analyses "
+    "were only included if they used different study samples.\n"
+    "This problem is exacerbated by publication bias, where significant findings "
+    "are preferably published. Effect sizes may show considerable heterogeneity.\n"
+    "All data relevant to the study are uploaded to OSF at https://osf.io/xxxxx/.\n"
+    "References\n"
+    "Abt, G. (2020). Power, precision and sample size. Journal of Sports Sciences.\n"
+    "Sutton, A. J. (2009). Publication bias. Handbook of Research Synthesis.\n"
+)
+
+body = de.strip_back_matter(REAL_SHAPED)
+check("a body sentence about references does not truncate the document",
+      "within-subject" in body, f"kept {len(body)} of {len(REAL_SHAPED)}")
+check("the reference list is still removed",
+      "handbook of research synthesis" not in body)
+check("split hyphens are closed up", "meta-analyses" in body and "meta -analyses" not in body)
+
+f = de.check_expected_elements(REAL_SHAPED, de.DesignClass.EVIDENCE_SYNTHESIS)
+absent, restricted = keys(f, "absent"), keys(f, "restriction")
+
+check("publisher exclusion found past the halfway point",
+      "publisher_exclusion" in restricted, sorted(restricted))
+check("a hyphen split by extraction does not hide a design exclusion",
+      "design_exclusion" in restricted, sorted(restricted))
+check("a rule about overlapping studies is not an inclusion criterion",
+      "inclusion_criteria" in absent, sorted(absent))
+check("publication bias in discussion is not an assessment of it",
+      "publication_bias" in absent, sorted(absent))
+check("heterogeneity as a word is not an assessment of it",
+      "heterogeneity" in absent, sorted(absent))
+check("an OSF data link is not a registered protocol",
+      "registration" in absent, sorted(absent))
+check("a single database is still reported", "databases" in restricted, sorted(restricted))
+
+check("preregistered is matched despite the missing stem",
+      "registration" not in keys(
+          de.check_expected_elements(
+              "We searched PubMed and Scopus. The protocol was preregistered.",
+              de.DesignClass.EVIDENCE_SYNTHESIS), "absent"))
+
+
 print()
 if failures:
     print(f"{len(failures)} failure(s): {failures}")
