@@ -207,6 +207,13 @@ class EvidenceBlock:
     model_method_class: Optional["MethodClass"] = None
 
 
+# Appended wherever this pipeline shows the model a shortened piece of the
+# manuscript. A preview is for orientation, not for quotation: the cut can land
+# mid-word, and a quotation taken from one cannot be verified against the paper
+# because the fragment is not in the paper.
+PREVIEW_TRUNCATION_MARKER = " [PREVIEW CUT SHORT - DO NOT QUOTE FROM HERE]"
+
+
 @dataclass
 class EvidenceManifest:
     """Summary of all structured evidence available for a single file."""
@@ -261,6 +268,14 @@ class EvidenceManifest:
     def model_block_summary(self) -> str:
         """
         Summarise model/result blocks and any model-level classifications found.
+
+        These are previews: a block is cut at 280 characters, and a cut can land
+        mid-word. One report quoted such a preview and produced
+        "finding the qualitative inte[rsion] (text truncated in extraction)" --
+        an honest quotation of a fragment that exists nowhere in the manuscript,
+        which the citation check then reported as an unverifiable quotation.
+        Truncated previews are now marked, so the model has somewhere to look
+        rather than something to quote.
         """
         lines = []
         for b in self.blocks:
@@ -270,7 +285,8 @@ class EvidenceManifest:
             method_label = b.model_method_class.value if b.model_method_class else "unclassified_model_block"
             page_text = f"Page {b.page}" if b.page is not None else "No page"
             preview = re.sub(r"\s+", " ", b.text.strip())
-            preview = preview[:280] + ("..." if len(preview) > 280 else "")
+            if len(preview) > 280:
+                preview = preview[:280] + PREVIEW_TRUNCATION_MARKER
 
             lines.append(f"- [{page_text}] {method_label}: {preview}")
 
@@ -4741,6 +4757,7 @@ Evidence must come from the manuscript:
 - A quotation must reproduce the source exactly, character for character. If you cannot reproduce the wording exactly, describe it in your own words WITHOUT quotation marks. Never place quotation marks around a paraphrase, a reconstruction, or a plausible-sounding phrase: an invented quotation in a review is worse than no quotation.
 - Never cite this pipeline's own intermediate output as evidence. Phrases such as "the file summary notes", "the evidence summary flags", "the manifest indicates" are NOT evidence: they describe a summary of the paper, not the paper. If the only support for a concern is such a phrase, the concern belongs under "Verification prompts", not here.
 - If you cannot produce a verbatim quotation or a specific number for a concern, move it to "Verification prompts" or drop it.
+- A passage marked [PREVIEW CUT SHORT - DO NOT QUOTE FROM HERE] is an orientation aid, not a source. It stops mid-sentence and often mid-word, so a quotation taken from one names a fragment that does not exist in the paper. Use it to find where to look; quote the manuscript text or a table instead.
 
 Register:
 - Describe a problem by its consequence, not with a verdict. Do not write "fundamental error", "fatal flaw", "invalid", "meaningless", "worthless" or "completely undermines". Write what follows from it: "may introduce optimistic bias because ...", "makes the reported comparison difficult to interpret because ...".

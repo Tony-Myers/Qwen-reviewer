@@ -235,6 +235,33 @@ try:
 finally:
     rp.VISION_TABLES = False
 
+print("\n[12] a shortened preview is not offered as something to quote")
+# One report quoted a manifest preview and produced "finding the qualitative
+# inte[rsion] (text truncated in extraction)" -- an honest quotation of a
+# fragment that exists nowhere in the paper, which the citation check then
+# reported against it. The model was reading a preview as a source.
+LONG_BLOCK = ("Bayesian mixed-effects logistic regression models were fitted "
+              "with brms and Stan. Prior knowledge for the fixed effect and "
+              "for the standard deviation of the random intercepts was set "
+              "using Student's t-distributions with 3 degrees of freedom. "
+              "Posterior predictive checks and leave-one-out cross-validation "
+              "were used throughout model selection. " * 2)
+long_summary = rp.structure_evidence("x.pdf", LONG_BLOCK, []).model_block_summary()
+check("the block was classified at all",
+      "No model/result blocks" not in long_summary, long_summary[:80])
+check("a cut preview says so", rp.PREVIEW_TRUNCATION_MARKER.strip() in long_summary,
+      long_summary[-120:])
+SHORT_BLOCK = ("Bayesian mixed-effects logistic regression was used with a "
+               "Student's t prior.")
+short_summary = rp.structure_evidence("y.pdf", SHORT_BLOCK, []).model_block_summary()
+check("a preview that was not cut is left unmarked",
+      rp.PREVIEW_TRUNCATION_MARKER not in short_summary, short_summary[:80])
+check("the ellipsis that invited quotation is gone",
+      not long_summary.rstrip().endswith("..."), long_summary[-60:])
+check("the prompt says what the marker means",
+      "DO NOT QUOTE FROM HERE] is an orientation aid"
+      in PIPELINE_SRC.read_text(encoding="utf-8"))
+
 print()
 if failures:
     print(f"{len(failures)} FAILURE(S): {failures}")
