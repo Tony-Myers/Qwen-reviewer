@@ -190,6 +190,51 @@ check("an ASCII p still works",
 check("folding does not alter the text itself",
       rp.fold_mathematical_letters("plain text") == "plain text")
 
+print("\n[11] damaged tables are recognised for re-reading from the page image")
+# Each signal comes from damage actually measured. A Kruskal-Wallis table kept
+# every number but scattered its headers onto orphan lines; a Bayesian results
+# table printed a cell as "s0"; a centroid table broke "Parabolic" into
+# "Paraboli" and "c". A clean table must be left alone: rendering a page and
+# asking a model to read it costs a minute each.
+DETACHED = ("[TABLE_START]\nSource: pdfplumber_text\nPage: 21\nLabel: Table 5\n"
+            "p-Value\nFreedom\nModel\n"
+            "K-Means\t3\t3.95\t0.27\n"
+            "Men's Hierarchical\t3\t4.86\t0.18\n"
+            "Freestyle Mixture\t3\t3.89\t0.27\n[TABLE_END]")
+MALFORMED = ("[TABLE_START]\nSource: pdfplumber_text\nPage: 8\n"
+             "WeeklyPoolVolume\t-0.02\t0.98\nTimeloss\t82%\ts0\n"
+             "4-weekRollingPool\t-0.00\t1.00\n[TABLE_END]")
+BROKEN_WORD = ("[TABLE_START]\nSource: pdfplumber_text\nPage: 18\n"
+               "1\tPositive\t0.103\t0.096\n3\tParaboli\t-0.123\t-0.039\nc\n"
+               "4\tAll-Out\t0.096\t-0.049\n[TABLE_END]")
+CLEAN_TABLE = ("[TABLE_START]\nSource: pdfplumber\nPage: 19\n"
+               "Men's 100m Freestyle\t138.489\nWomen's 100m Freestyle\t114.976\n"
+               "Men's 200m Freestyle\t242.013\n[TABLE_END]")
+check("detached headers are caught", "carry no numbers" in rp.table_looks_damaged(DETACHED))
+check("a malformed cell is caught", "s0" in rp.table_looks_damaged(MALFORMED))
+check("a word broken across lines is caught",
+      "broken across lines" in rp.table_looks_damaged(BROKEN_WORD))
+check("a clean table is left alone", rp.table_looks_damaged(CLEAN_TABLE) == "",
+      rp.table_looks_damaged(CLEAN_TABLE))
+check("vision is off unless asked for", rp.VISION_TABLES is False)
+
+blocks = [(21, DETACHED), (19, CLEAN_TABLE)]
+same, notes = rp.rescue_damaged_tables(ROOT / "nothing.pdf", blocks)
+check("nothing happens while the flag is off", same == blocks and notes == [])
+
+# Vision is an enhancement: when it cannot deliver, the review proceeds on the
+# text layer and the report says so rather than looking as though it never asked.
+rp.VISION_TABLES = True
+try:
+    out, notes = rp.rescue_damaged_tables(ROOT / "nothing.pdf", blocks)
+    check("a failed re-read leaves the tables untouched", out == blocks)
+    check("and is reported rather than silent",
+          bool(notes) and any(("could not be re-read" in n)
+                              or ("were not read" in n) for n in notes),
+          str(notes))
+finally:
+    rp.VISION_TABLES = False
+
 print()
 if failures:
     print(f"{len(failures)} FAILURE(S): {failures}")

@@ -2753,6 +2753,165 @@ def strip_marginal_line_numbers(text: str) -> Tuple[str, int]:
 LAST_EXTRACTION_NOTES: List[str] = []
 
 
+# ---------------------------------------------------------------------------
+# Reading damaged tables from the page image
+# ---------------------------------------------------------------------------
+# pdfplumber recovers the numbers in a table more often than it recovers the
+# shape. Two measured examples: a Kruskal-Wallis table kept every value but
+# scattered "p-Value" and "Freedom" onto orphan lines and split "Men's / 100m /
+# Freestyle" away from the rows it labels, so reports could only refer to "the
+# first men's block"; and a Bayesian results table broke "Parabolic" into
+# "Paraboli" and "c" on separate lines. A model with a vision encoder read both
+# pages correctly, invented nothing, and preserved a garbled cell ("s0") rather
+# than tidying it away -- which is the behaviour that makes it usable, because
+# the garbled cell turned out to be what the paper prints.
+#
+# The transcription is added BESIDE the text-layer block, never in place of it,
+# and labelled Source: vision. Two reasons. A reader can see which reading a
+# concern rests on; and because the transcription joins the source text, the
+# citation check verifies quotations against it like any other evidence. A
+# reading with nothing behind it is what this pipeline spends its time removing.
+VISION_TABLES = os.environ.get("QWEN_VISION_TABLES", "").strip().lower() in (
+    "1", "true", "yes", "on")
+VISION_DPI = int(os.environ.get("QWEN_VISION_DPI", "200"))
+MAX_VISION_PAGES = int(os.environ.get("QWEN_VISION_MAX_PAGES", "6"))
+
+VISION_TABLE_PROMPT = (
+    "Transcribe every table on this page exactly as printed. Preserve the "
+    "column headers, the row labels and every numeric cell, one row per line "
+    "with columns separated by ' | '. Repeat the row label on every row it "
+    "applies to. Do not summarise, do not interpret, and do not correct "
+    "anything that looks wrong: if a cell is malformed, transcribe it as it "
+    "appears. If there is no table on the page, say 'No table on this page' "
+    "and nothing else."
+)
+
+# A single letter or two stranded on its own line is a word broken by the
+# extractor. A line with no digit at all, inside a numeric table, is header or
+# label debris. A token like "s0" is a cell that lost or gained a character.
+_ORPHAN_FRAGMENT_RE = re.compile(r"^\s*[A-Za-z]{1,2}\s*$")
+_MIXED_TOKEN_RE = re.compile(r"(?<![\w.])(?:[A-Za-z]\d|\d[A-Za-z])(?![\w.])")
+
+
+def table_looks_damaged(block_text: str) -> str:
+    """
+    Why a table block looks structurally broken, or "" if it does not.
+
+    Deliberately conservative: each test comes from damage actually seen, and
+    a table that merely looks unusual is left alone. Rendering a page and
+    asking a model to read it costs a minute; doing it for every table would
+    cost more than it returns.
+    """
+    lines = [line for line in block_text.splitlines()
+             if line.strip() and not line.startswith(("[TABLE", "Source:", "Page:", "Label:"))]
+    if len(lines) < 3:
+        return ""
+    orphans = [line for line in lines if _ORPHAN_FRAGMENT_RE.match(line)]
+    if orphans:
+        return f"{len(orphans)} word(s) broken across lines"
+    mixed = _MIXED_TOKEN_RE.findall(block_text)
+    if mixed:
+        return f"malformed cell(s) such as {mixed[0]!r}"
+    digitless = [line for line in lines if not re.search(r"\d", line)]
+    if len(digitless) >= max(3, len(lines) * 0.3):
+        return (f"{len(digitless)} of {len(lines)} rows carry no numbers, so "
+                f"headers and labels are detached from their data")
+    return ""
+
+
+def _render_page_png(pdf_path: Path, page_number: int, dpi: int) -> bytes:
+    """One 1-based page as PNG bytes, or b"" if it cannot be rendered."""
+    try:
+        import io
+        import pypdfium2 as pdfium
+    except ImportError:
+        return b""
+    try:
+        document = pdfium.PdfDocument(str(pdf_path))
+        try:
+            if not 1 <= page_number <= len(document):
+                return b""
+            image = document[page_number - 1].render(scale=dpi / 72).to_pil()
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            return buffer.getvalue()
+        finally:
+            document.close()
+    except Exception:                                       # noqa: BLE001
+        return b""
+
+
+def _page_of_block(block_text: str) -> Optional[int]:
+    found = re.search(r"^Page:\s*(\d+)", block_text, re.M)
+    return int(found.group(1)) if found else None
+
+
+def rescue_damaged_tables(pdf_path: Path,
+                          table_blocks: List[Tuple[int, str]]
+                          ) -> Tuple[List[Tuple[int, str]], List[str]]:
+    """
+    Re-read structurally damaged tables from the page image.
+
+    Returns the table blocks with any transcriptions appended, and notes for
+    the report header. Never raises: vision is an enhancement, and a review
+    that fails for want of a picture is worse than one that never had it.
+    """
+    if not VISION_TABLES or not table_blocks:
+        return table_blocks, []
+    try:
+        from llm_backend import describe_image, vision_available
+        if not vision_available():
+            return table_blocks, ["table images were not read: no llama-server "
+                                  "backend in use"]
+    except Exception:                                       # noqa: BLE001
+        return table_blocks, []
+
+    wanted: Dict[int, str] = {}
+    for _page, block in table_blocks:
+        if "Source: vision" in block:
+            continue
+        reason = table_looks_damaged(block)
+        page_number = _page_of_block(block)
+        if reason and page_number and page_number not in wanted:
+            wanted[page_number] = reason
+    if not wanted:
+        return table_blocks, []
+
+    added: List[Tuple[int, str]] = []
+    notes: List[str] = []
+    for page_number in sorted(wanted)[:MAX_VISION_PAGES]:
+        png = _render_page_png(pdf_path, page_number, VISION_DPI)
+        if not png:
+            continue
+        transcription = describe_image(png, VISION_TABLE_PROMPT)
+        if not transcription or "no table on this page" in transcription.lower():
+            continue
+        added.append((page_number,
+                      "[TABLE_START]\n"
+                      f"Source: vision\nPage: {page_number}\n"
+                      "Note: read from the page image because the text layer "
+                      f"was damaged ({wanted[page_number]}). The text-layer "
+                      "version of this table is also present.\n"
+                      f"{transcription}\n[TABLE_END]"))
+    if added:
+        notes.append(
+            f"{len(added)} table(s) re-read from the page image because the "
+            f"text layer was damaged (page(s) "
+            f"{', '.join(str(p) for p, _ in added)}); both readings are in the "
+            f"evidence, labelled Source: vision"
+        )
+    else:
+        # Asked for and got nothing: almost always llama-server running without
+        # a projector. Said out loud, because a review that quietly fell back
+        # to the text layer looks identical to one that never asked.
+        notes.append(
+            f"{len(wanted)} damaged table(s) could not be re-read from the "
+            f"page image; the server may be running without --mmproj. The "
+            f"text-layer reading was used."
+        )
+    return table_blocks + added, notes
+
+
 def load_document(path: Path) -> Tuple[str, List[Tuple[int, str]]]:
     text, tables = _read_document(path)
     LAST_EXTRACTION_NOTES.clear()
@@ -2762,6 +2921,12 @@ def load_document(path: Path) -> Tuple[str, List[Tuple[int, str]]]:
             f"{removed} marginal line number(s) removed before analysis; the "
             f"manuscript is line numbered for review"
         )
+    if path.suffix.lower() == ".pdf":
+        try:
+            tables, notes = rescue_damaged_tables(path, tables)
+            LAST_EXTRACTION_NOTES.extend(notes)
+        except Exception:                                   # noqa: BLE001
+            pass
     return text, tables
 
 

@@ -65,6 +65,7 @@ Relevant environment variables
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import os
@@ -92,6 +93,8 @@ __all__ = [
     "reset_reasoning_stats",
     "last_reasoning",
     "reasoning_effort",
+    "describe_image",
+    "vision_available",
     "DEFAULT_REASONING_EFFORT",
     "thinking_token_allowance",
     "is_gguf_model",
@@ -903,6 +906,60 @@ class LlamaServerModel:
                 raise
 
         return _extract_chat_text(response)
+
+
+# ---------------------------------------------------------------------------
+# Vision
+# ---------------------------------------------------------------------------
+# A separate, deliberately simple path. Table extraction is this pipeline's
+# weakest link -- one results table lost its header row and its row labels,
+# another printed a Bayes Factor cell as "s0" -- and a model with a vision
+# encoder reads those pages correctly where the text layer cannot. This is an
+# enhancement, never a dependency: every failure here returns "" and the review
+# proceeds on the text layer alone, because a review that dies for want of a
+# picture is worse than one that never had it.
+
+def vision_available() -> bool:
+    """Whether a llama-server with a projector is reachable."""
+    model = _LAST_LOADED_MODEL
+    return isinstance(model, LlamaServerModel)
+
+
+def describe_image(png: bytes, prompt: str, max_tokens: int = 4000) -> str:
+    """
+    Ask the served model to read an image. Returns "" if it cannot.
+
+    Thinking is disabled: transcription needs none, and reasoning is generated
+    inside max_tokens rather than alongside it, so a thinking model asked for a
+    twelve-row table returns reasoning and no table.
+    """
+    model = _LAST_LOADED_MODEL
+    if not isinstance(model, LlamaServerModel):
+        return ""
+    data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    payload: Dict[str, Any] = {
+        "model": Path(model.model_path).name,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        }],
+        "max_tokens": int(max_tokens),
+        "temperature": 0.1,
+        "stream": False,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    try:
+        response = model._post_json("/v1/chat/completions", payload)
+    except Exception:                                       # noqa: BLE001
+        # No projector, an older build, a refused request: all the same to us.
+        return ""
+    try:
+        return _extract_chat_text(response).strip()
+    except Exception:                                       # noqa: BLE001
+        return ""
 
 
 def available_context(default: int = 32768) -> int:

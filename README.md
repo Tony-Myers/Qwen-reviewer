@@ -145,6 +145,47 @@ that deserved none — and a line number was read as a sample size. Published
 papers carry no line numbers, so a corpus of published papers will never show
 this.
 
+### Reading damaged tables from the page image
+
+Text extraction recovers the numbers in a table more often than it recovers the
+shape. Two measured examples: a results table kept every value but scattered
+its column headers onto orphan lines and split the row labels away from the
+rows they label; another broke "Parabolic" into "Paraboli" and "c" on separate
+lines. Reports could then only refer to "the first men's block" rather than
+naming the event.
+
+If your model has a vision encoder — a separate `mmproj` file beside the
+model — the pipeline can re-read those pages as images:
+
+```bash
+./scripts/qwen_service.sh restart --vision
+```
+
+That starts `llama-server` with `--mmproj` and `--image-min-tokens 1024`
+(upstream's minimum for placing things correctly on a page, which is exactly
+what reading a table cell depends on) and turns on `QWEN_VISION_TABLES` for the
+app server. Without a projector beside the model the flag warns and carries on
+without it.
+
+Only tables that look structurally damaged are re-read, and damage means one of
+three things actually observed: a word broken across lines, a malformed cell
+such as `s0`, or a third or more of the rows carrying no numbers at all so that
+headers and labels have come away from their data. A clean table is left alone,
+because rendering a page and asking a model to read it costs about a minute.
+
+**The transcription is added beside the text-layer version, never in place of
+it,** labelled `Source: vision` in the evidence appendix. Two reasons. A reader
+can see which reading a concern rests on. And because the transcription joins
+the source text, the citation check verifies quotations against it like any
+other evidence — a reading with nothing behind it is the thing this pipeline
+exists to remove.
+
+What was measured before this was built: on two damaged tables the
+transcription recovered the structure completely, invented no numbers at all,
+and preserved a garbled cell (`s0`) rather than tidying it away. That last
+point is what makes it usable — the garbled cell turned out to be what the
+paper prints. `tests/probe_vision.py` runs the same comparison on any page.
+
 ---
 
 ## Reading a report
@@ -215,6 +256,9 @@ anything the model said:
 | `LLAMA_REASONING_EFFORT` | `medium` | `low`, `medium`, `high`, `xhigh`; `template` sends nothing |
 | `REVIEW_PASSES` | 1 (the service sets 3) | Synthesis passes |
 | `QWEN_THINKING_PASSES` | 1 | Passes when thinking is on |
+| `QWEN_VISION_TABLES` | off | `1` to re-read damaged tables from the page image |
+| `QWEN_VISION_DPI` | `200` | Render resolution for those pages |
+| `QWEN_VISION_MAX_PAGES` | `6` | Most pages to re-read in one review |
 | `QWEN_THINKING_EXTRA_TOKENS` | 8000 | Generation budget added for reasoning |
 | `QWEN_TEMPERATURE` | 0.2 | Sampling temperature |
 | `QWEN_TOP_P` | 0.8 | Nucleus sampling |

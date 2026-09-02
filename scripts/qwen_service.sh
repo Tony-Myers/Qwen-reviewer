@@ -9,6 +9,7 @@
 # Usage:
 #   ./scripts/qwen_service.sh start [--no-wait] [--no-open] [--model ALIAS]
 #                                    [--passes N] [--effort low|medium|high|xhigh]
+#                                    [--vision]
 #   ./scripts/qwen_service.sh stop
 #   ./scripts/qwen_service.sh restart
 #   ./scripts/qwen_service.sh status
@@ -54,6 +55,10 @@ REVIEW_PASSES="${REVIEW_PASSES:-3}"
 # variable that silently fails to reach the app server is exactly the kind of
 # thing that cost a day here. Empty leaves the chat template's own default.
 LLAMA_REASONING_EFFORT="${LLAMA_REASONING_EFFORT:-}"
+# Vision: off unless asked for. It needs llama-server started with a projector,
+# so the flag has to be set here rather than per review -- the app server can
+# only use what the model server was given.
+QWEN_VISION_TABLES="${QWEN_VISION_TABLES:-0}"
 LLAMA_NGL="${LLAMA_SERVER_NGL:-99}"
 
 HF_HUB="${HF_HUB_CACHE:-$HOME/.cache/huggingface/hub}"
@@ -333,6 +338,24 @@ start_llama() {
     return 1
   fi
 
+  # Vision needs a projector alongside the model. Upstream warns that Qwen-VL
+  # models need at least 1024 image tokens to place things correctly on the
+  # page, which is exactly what reading a table cell depends on.
+  local -a vision_args=()
+  if [[ "$QWEN_VISION_TABLES" == "1" ]]; then
+    local mmproj
+    mmproj="$(ls "$(dirname "$MODEL")"/*mmproj*.gguf 2>/dev/null | head -1)"
+    if [[ -n "$mmproj" ]]; then
+      vision_args=(--mmproj "$mmproj" --image-min-tokens 1024)
+      log_line "Vision enabled: $(basename "$mmproj")"
+    else
+      log_line "WARNING: --vision was asked for but no mmproj file sits beside"
+      log_line "         $(basename "$MODEL"). Starting without it; tables will"
+      log_line "         be read from the text layer only."
+      QWEN_VISION_TABLES=0
+    fi
+  fi
+
   log_line "Starting llama-server on port $LLAMA_PORT ($(basename "$MODEL"))..."
   nohup "$LLAMA_BIN" \
     --model "$MODEL" \
@@ -341,6 +364,7 @@ start_llama() {
     --ctx-size "$LLAMA_CTX" \
     --n-gpu-layers "$LLAMA_NGL" \
     --jinja \
+    "${vision_args[@]}" \
     >> "$LLAMA_LOG" 2>&1 < /dev/null &
   echo $! > "$LLAMA_PID_FILE"
   log_line "llama-server pid $(cat "$LLAMA_PID_FILE"), log: $LLAMA_LOG"
@@ -402,13 +426,14 @@ start_app() {
     return 1
   fi
 
-  log_line "Starting the app server on port $APP_PORT ($REVIEW_PASSES synthesis pass(es), reasoning effort: ${LLAMA_REASONING_EFFORT:-medium (default)})..."
+  log_line "Starting the app server on port $APP_PORT ($REVIEW_PASSES synthesis pass(es), reasoning effort: ${LLAMA_REASONING_EFFORT:-medium (default)}, vision: $([[ "$QWEN_VISION_TABLES" == "1" ]] && echo on || echo off))..."
   cd "$PROJECT_DIR" || return 1
 
   QWEN_LLM_BACKEND="$([[ "$MODEL" == *.gguf ]] && echo llama-server || echo mlx)" \
   LLAMA_SERVER_URL="http://$LLAMA_HOST:$LLAMA_PORT" \
   REVIEW_PASSES="$REVIEW_PASSES" \
   LLAMA_REASONING_EFFORT="$LLAMA_REASONING_EFFORT" \
+  QWEN_VISION_TABLES="$QWEN_VISION_TABLES" \
   nohup "$VENV_PYTHON" "$APP_PY" \
     --model "$MODEL" \
     --host "$APP_HOST" \
@@ -681,6 +706,7 @@ while [[ $# -gt 0 ]]; do
     --model)   MODEL="$2"; shift 2 ;;
     --passes)  REVIEW_PASSES="$2"; shift 2 ;;
     --effort)  LLAMA_REASONING_EFFORT="$2"; shift 2 ;;
+    --vision)  QWEN_VISION_TABLES=1; shift ;;
     llama|app|service) LOG_TARGET="$1"; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
