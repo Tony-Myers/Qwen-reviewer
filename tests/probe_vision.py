@@ -121,8 +121,16 @@ def find_page(pdf_path: Path, needle: str) -> int:
     raise SystemExit(f"{needle!r} was not found in the text layer of {pdf_path.name}")
 
 
-def ask(base_url: str, png: bytes, max_tokens: int, timeout: int) -> str:
-    """One vision request. The payload is deliberately minimal."""
+def ask(base_url: str, png: bytes, max_tokens: int, timeout: int):
+    """
+    One vision request. Returns (content, reasoning characters, finish reason).
+
+    Thinking is turned off explicitly. Transcribing a table needs no reasoning,
+    and reasoning is generated inside max_tokens rather than alongside it: the
+    first attempt at a twelve-row table came back empty because the whole
+    budget went on thinking about it, which is precisely the failure this
+    project spent a day learning to recognise.
+    """
     data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
     payload = {
         "messages": [{
@@ -135,29 +143,47 @@ def ask(base_url: str, png: bytes, max_tokens: int, timeout: int) -> str:
         "max_tokens": int(max_tokens),
         "temperature": 0.1,
         "stream": False,
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     request = urllib.request.Request(
         base_url.rstrip("/") + "/v1/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
+    def post(request_payload):
+        req = urllib.request.Request(
+            base_url.rstrip("/") + "/v1/chat/completions",
+            data=json.dumps(request_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
+        body = post(payload)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:400]
-        raise SystemExit(
-            f"The server refused the image (HTTP {exc.code}):\n  {detail}\n\n"
-            "Almost always this means llama-server was started without a "
-            "projector. Restart it with --mmproj pointing at the model's\n"
-            "mmproj file, then run this again."
-        )
+        if exc.code == 400 and "chat_template_kwargs" in json.dumps(payload):
+            # An older build that will not take the flag; try without it.
+            payload.pop("chat_template_kwargs", None)
+            try:
+                body = post(payload)
+            except Exception as inner:                      # noqa: BLE001
+                raise SystemExit(f"The server refused the request: {inner}")
+        else:
+            raise SystemExit(
+                f"The server refused the image (HTTP {exc.code}):\n  {detail}\n\n"
+                "Almost always this means llama-server was started without a "
+                "projector. Restart it with --mmproj pointing at the model's\n"
+                "mmproj file, then run this again."
+            )
     except Exception as exc:                                # noqa: BLE001
         raise SystemExit(f"Could not reach {base_url}: {type(exc).__name__}: {exc}")
 
-    choices = body.get("choices") or [{}]
-    message = choices[0].get("message") or {}
-    return (message.get("content") or "").strip()
+    choice = (body.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    reasoning = (message.get("reasoning_content") or "").strip()
+    return ((message.get("content") or "").strip(), len(reasoning),
+            str(choice.get("finish_reason") or ""))
 
 
 def looks_blind(reply: str) -> bool:
@@ -178,7 +204,8 @@ def main() -> int:
     ap.add_argument("--url", default="http://127.0.0.1:8081")
     ap.add_argument("--dpi", type=int, default=200,
                     help="render resolution; higher is clearer and much larger")
-    ap.add_argument("--max-tokens", type=int, default=2000)
+    ap.add_argument("--max-tokens", type=int, default=4000,
+                    help="a full page of table needs more than it looks")
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--out", type=Path, default=ROOT / "logs" / "vision_sample.txt")
     args = ap.parse_args()
@@ -211,10 +238,26 @@ def main() -> int:
     print(f"image: {len(png) / 1024:.0f} KB; asking the model to transcribe "
           f"it (up to {args.max_tokens} tokens)...", flush=True)
 
-    reply = ask(args.url, png, args.max_tokens, args.timeout)
+    reply, reasoning_chars, finish = ask(args.url, png, args.max_tokens,
+                                         args.timeout)
     if not reply:
-        print("\nThe server returned nothing at all.")
+        if reasoning_chars:
+            print(f"\nThe model spent its whole {args.max_tokens}-token budget "
+                  f"reasoning ({reasoning_chars:,} characters) and returned no "
+                  f"transcription.\nRun it again with a larger "
+                  f"--max-tokens {args.max_tokens * 2}.")
+        elif finish == "length":
+            print(f"\nThe answer was cut off before any of it arrived "
+                  f"(finish_reason=length). Try --max-tokens "
+                  f"{args.max_tokens * 2}.")
+        else:
+            print("\nThe server returned nothing at all, and no reasoning "
+                  "either. Check the llama-server window for an error.")
         return 1
+    if finish == "length":
+        print("\nNOTE: the transcription was cut off at the token limit; "
+              f"re-run with --max-tokens {args.max_tokens * 2} before "
+              "judging completeness.")
     if looks_blind(reply):
         print("\nThe model answered as though no image arrived:\n  "
               + reply[:200])
