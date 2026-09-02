@@ -134,6 +134,62 @@ check("quantile subsetting guard", "Quantile regression does NOT split the sampl
 check("internal-consistency checks", "Internal-consistency checks" in srctext)
 check("no-claim-outrunning-evidence rule", "Claims must not outrun the evidence" in srctext)
 
+print("\n[9] marginal line numbers are removed before anything reads the text")
+# A manuscript under review carries line numbers down the margin, and the PDF
+# text layer puts them inside the sentences. On one submitted manuscript this
+# made three correct quotations fail the citation check, fired the reliability
+# banner, and fed line 129 to the model as a count of races.
+NUMBERED = ("competition (Pyne et al., 2004). Hence, the data set included 129 \n"
+            "finals, B-finals, C-finals, and semi-finals. Despite the findings 130 \n"
+            "of Pyne et al. (2004), semi-finals were included as the reported 131 \n"
+            "differences in times still indicated pacing of a calibre relevant 132 \n"
+            "for analysis and their inclusion improved the sample size. 134 \n"
+            "The number of clusters (K) 174 \n"
+            "was chosen based on the elbow heuristic (Chu et al., 2023) focusing 175 \n"
+            "on the S_Dbw index for all three clustering algorithms, finding the 176 \n"
+            "qualitative intersection of the three elbows to set the value of K. 177 \n") * 3
+cleaned, removed = rp.strip_marginal_line_numbers(NUMBERED)
+check("a numbered manuscript is recognised", removed >= 25, str(removed))
+check("the sentence is restored",
+      "Hence, the data set included\nfinals, B-finals" in cleaned, cleaned[:200])
+hay = rp._normalise_for_match(cleaned)
+punct = rp._strip_punctuation(hay)
+nospace = re.sub(r"\s+", "", punct)
+check("a quotation spanning a line break now verifies",
+      rp._missing_fragment("The number of clusters (K) was chosen based on the "
+                           "elbow heuristic", hay, punct, nospace) is None)
+
+# Stripping every trailing integer would eat real data: a table row ending in a
+# count is indistinguishable from a line number except by the sequence.
+TABLE = ("Table 1. Athlete demographics.\nVariable Male Female\nN 22 10\n"
+         "Age (y) 22 4 18 3\nTier 5-World Class 1 1\n"
+         "Tier 4-Elite/International 9 2\n") * 8
+untouched, removed_table = rp.strip_marginal_line_numbers(TABLE)
+check("table rows ending in a number are left alone",
+      removed_table == 0 and untouched == TABLE, str(removed_table))
+check("a short document is left alone",
+      rp.strip_marginal_line_numbers(
+          "".join("a line %d\n" % i for i in range(1, 10)))[1] == 0)
+check("numbering that restarts each page is still caught",
+      rp.strip_marginal_line_numbers(
+          "".join("".join("body text %d\n" % i for i in range(1, 31))
+                  for _ in range(3)))[1] == 90)
+check("the removal is reported, not silent",
+      "LAST_EXTRACTION_NOTES" in PIPELINE_SRC.read_text(encoding="utf-8")
+      and "Extraction: " in (ROOT / "app" / "server.py").read_text(encoding="utf-8"))
+
+print("\n[10] mathematical italic letters do not hide a statistic")
+# "p < 0.05" written in Word is U+1D45D, not "p": the manifest reported
+# "P-values reported: False" for a paper whose results table is all p-values,
+# and the prompt uses that manifest to decide what the model may call absent.
+MATHS = "were significant (\U0001D45D < 0.05 in Kruskal-Wallis tests)"
+check("the italic p is folded for detection",
+      rp.structure_evidence("x.pdf", MATHS, []).has_p_values)
+check("an ASCII p still works",
+      rp.structure_evidence("x.pdf", "significant (p < 0.05)", []).has_p_values)
+check("folding does not alter the text itself",
+      rp.fold_mathematical_letters("plain text") == "plain text")
+
 print()
 if failures:
     print(f"{len(failures)} FAILURE(S): {failures}")

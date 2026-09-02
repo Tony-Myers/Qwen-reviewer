@@ -27,6 +27,20 @@ No manuscript text leaves the machine.
    negative-constraint enforcement).
 6. **Output** — a markdown review report plus an evidence appendix.
 
+Manuscripts under review carry line numbers down the margin, and the PDF text
+layer puts them inside the sentences: *"The number of clusters (K) 174 was
+chosen based on the elbow heuristic"*. They are removed before anything reads
+the text, and the report says how many were taken out. Only a run of trailing
+integers that climbs through the document is removed, so a table row ending in
+a count is left alone; a document that is not numbered comes back untouched.
+
+This matters more than it sounds. On one submitted manuscript the line numbers
+made every quotation spanning a line break fail the citation check — three
+correct quotations reported as unverifiable, the reliability banner fired, and
+sound concerns pushed down the evidence table — and line 129 was read as a count
+of races. Published papers carry no line numbers, which is why a corpus of them
+never showed it.
+
 ## What the report grades, and what it does not
 
 Every concern carries a computed `Confidence:` line and the report ends with an

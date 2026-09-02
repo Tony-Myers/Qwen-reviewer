@@ -1199,7 +1199,14 @@ def structure_evidence(
     and build a manifest summarising what evidence is available.
     """
     manifest = EvidenceManifest(source_name=source_name)
-    text_lower = text.lower()
+    # Folded for detection only: the manuscript writes "p < 0.05" as "\U0001d45d < 0.05"
+    # with a mathematical italic p, and the manifest reported "P-values
+    # reported: False" on a paper whose results table is nothing but p-values.
+    # The manifest is not cosmetic -- the prompt forbids the model from calling
+    # a statistic absent when the manifest says it is present, so a false
+    # negative there invites exactly the wrong criticism. The text itself is
+    # left alone; only the copy these patterns read is folded.
+    text_lower = fold_mathematical_letters(text).lower()
 
     # --- Structured table blocks (from pdfplumber/camelot) ---
     for page_num, block_text in table_blocks:
@@ -2654,7 +2661,111 @@ def read_xlsx(path: Path, max_rows_per_sheet: int = 80) -> Tuple[str, List[Tuple
     return clean_extracted_evidence_text("\n".join(out), domain=OUTPUT_DOMAIN), []
 
 
+# ---------------------------------------------------------------------------
+# Marginal line numbers
+# ---------------------------------------------------------------------------
+# Manuscripts under review carry line numbers down the margin, and the PDF text
+# layer puts them inside the sentences: "The number of clusters (K) 174 was
+# chosen based on the elbow heuristic". Nothing downstream expects that. On one
+# submitted manuscript it made every quotation spanning a line break fail the
+# citation check -- three correct quotations reported as unverifiable, the
+# reliability banner fired, and good concerns pushed down the evidence table --
+# and it fed line 129 to the model as a count of races. Published papers do not
+# have them, which is why the corpus never showed this.
+#
+# Stripping every trailing integer would eat real data: a table row ending in a
+# count looks identical to a line number. So the numbers have to be recognised
+# as a sequence: only a run of trailing integers that climbs by small steps
+# through the document is removed, and only when there are enough of them for
+# the pattern to be a numbering scheme rather than a coincidence.
+_TRAILING_NUMBER_RE = re.compile(r"^(?P<body>.*\S)[ \t]+(?P<number>\d{1,4})[ \t]*$")
+MIN_LINE_NUMBERS = 25          # fewer than this is not a numbering scheme
+MAX_LINE_NUMBER_STEP = 4       # allows for blank or unnumbered lines between
+
+
+def fold_mathematical_letters(text: str) -> str:
+    """
+    Map Unicode Mathematical Alphanumeric letters onto their ASCII equivalents.
+
+    Manuscripts written in Word set variables in this range: the italic p of
+    "p < 0.05" is U+1D45D, not "p", and every pattern looking for ASCII misses
+    it silently.
+    """
+    if not text:
+        return text
+    out = []
+    for char in text:
+        if 0x1D400 <= ord(char) <= 0x1D7FF:
+            folded = unicodedata.normalize("NFKC", char)
+            out.append(folded if folded else char)
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def strip_marginal_line_numbers(text: str) -> Tuple[str, int]:
+    """
+    Remove marginal line numbers from extracted text.
+
+    Returns the cleaned text and how many were removed. Text that is not line
+    numbered comes back unchanged, and a trailing number that does not belong
+    to the run -- a table cell, a year, a count -- is left alone.
+    """
+    if not text:
+        return text, 0
+    lines = text.split("\n")
+    candidates = []
+    for index, line in enumerate(lines):
+        found = _TRAILING_NUMBER_RE.match(line)
+        if found:
+            candidates.append((index, int(found.group("number")), found))
+
+    # Which candidates belong to a climbing run. A restart (the number drops)
+    # begins a new run, so a document numbered per page is handled too.
+    in_run = set()
+    run: List[int] = []
+    last = None
+    for position, (_, value, _found) in enumerate(candidates):
+        if last is not None and 0 < value - last <= MAX_LINE_NUMBER_STEP:
+            run.append(position)
+        else:
+            if len(run) >= 3:
+                in_run.update(run)
+            run = [position]
+        last = value
+    if len(run) >= 3:
+        in_run.update(run)
+
+    if len(in_run) < MIN_LINE_NUMBERS or len(in_run) < len(candidates) * 0.5:
+        return text, 0
+
+    removed = 0
+    for position in sorted(in_run):
+        index, _value, found = candidates[position]
+        lines[index] = found.group("body")
+        removed += 1
+    return "\n".join(lines), removed
+
+
+# Set by load_document so the report can say what was done to the text before
+# anything read it. A silent repair is the failure mode this pipeline keeps
+# finding in itself.
+LAST_EXTRACTION_NOTES: List[str] = []
+
+
 def load_document(path: Path) -> Tuple[str, List[Tuple[int, str]]]:
+    text, tables = _read_document(path)
+    LAST_EXTRACTION_NOTES.clear()
+    text, removed = strip_marginal_line_numbers(text)
+    if removed:
+        LAST_EXTRACTION_NOTES.append(
+            f"{removed} marginal line number(s) removed before analysis; the "
+            f"manuscript is line numbered for review"
+        )
+    return text, tables
+
+
+def _read_document(path: Path) -> Tuple[str, List[Tuple[int, str]]]:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         return read_pdf(path)

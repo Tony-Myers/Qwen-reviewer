@@ -824,6 +824,9 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             f"Pipeline: {rp.PIPELINE_VERSION}\n"
             # Recorded so reviews accumulated over real use can be grouped by
             # mode afterwards; without it the comparison is unrecoverable.
+            # Said out loud, because a silent repair to the text everything
+            # else reads is the failure mode this pipeline keeps finding.
+            + "".join(f"Extraction: {note}\n" for note in rp.LAST_EXTRACTION_NOTES)
             + _reasoning_header_lines(
                 review_jobs.get(job_id, {}).get("thinking_scope", "review"),
                 passes_note)
