@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 def _stub(n,**a):
     m=types.ModuleType(n); [setattr(m,k,v) for k,v in a.items()]; sys.modules[n]=m
 _stub("docx",Document=object); _stub("openpyxl",load_workbook=lambda *a,**k:None)
-root=Path.home()/"mnt/local-llm/qwen35-review"; sys.path.insert(0,str(root/"app"))
+root=Path(__file__).resolve().parent.parent; sys.path.insert(0,str(root/"app"))
 import review_pipeline as rp
 
 RUN2 = """# Overall synopsis

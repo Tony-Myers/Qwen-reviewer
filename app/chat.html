@@ -154,6 +154,14 @@
             <option value="synthesis">thinking: synthesis only</option>
           </select>
         </label>
+        <label class="reasoning-choice" for="visionMode" title="Vision re-reads a table from its page image when the text layer looks damaged. Slower on papers with many tables. Was previously a server start-up flag.">
+          Vision
+          <select id="visionMode">
+            <option value="">server default</option>
+            <option value="1">on</option>
+            <option value="0">off</option>
+          </select>
+        </label>
       </div>
     </div>
     <div class="progress-area" id="progressArea">
@@ -378,6 +386,7 @@ async function startReview() {
   // "" leaves the server's own default alone; "0"/"1" force one mode for this
   // review only. The chosen mode is recorded in the report header.
   fd.append('thinking', document.getElementById('reasoningMode').value);
+  fd.append('vision', document.getElementById('visionMode').value);
   try {
     const r = await fetch(BASE + '/api/review', { method: 'POST', body: fd });
     if (!r.ok) { showErr('Upload failed: ' + r.status); btn.disabled = false; return; }

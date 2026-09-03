@@ -101,11 +101,20 @@ _INTERVAL_PROSE = re.compile(
 # relative to the interval rather than by position in the row.
 
 _CI_HEADER = re.compile(r"95\s*%\s*CI|lower\s*bound|upper\s*bound|confidence interval", re.I)
+# The separator must be unambiguous. An en dash with no spaces around it is a
+# minus sign in these tables, not a range: "0.0002<tab>-0.07" was read as an
+# interval of 0.0002 to 0.07 on a published paper, and the t-value before it
+# became the estimate.
 _CI_PAIR = re.compile(
-    r"(?P<lo>[-+\u2212\u2013]?\d+(?:\.\d+)?)\s*(?:,|;|\bto\b|\u2013)\s*"
+    r"(?P<lo>[-+\u2212\u2013]?\d+(?:\.\d+)?)"
+    r"(?:\s*,\s*|\s*;\s*|\s+to\s+|\s+[\u2013-]\s+)"
     r"(?P<hi>[-+\u2212\u2013]?\d+(?:\.\d+)?)"
 )
 _EXP_FIX = re.compile(r"([Ee])\s*([-+\u2212])\s*(\d)")
+# A decimal or a signed number inside the label cell means a value has
+# leaked into it -- "Ln(Mass) -0.05" -- and the next number along is then
+# read as the estimate. A bare trailing digit is just a name: Age2, VO2.
+_VALUE_IN_LABEL = re.compile(r"[-+\u2212\u2013]\s?\d|\d+\.\d")
 MIN_ROW_CELLS = 4
 OUTSIDE_SPANS = 5
 
@@ -133,6 +142,13 @@ def _row_estimate_and_interval(row: str, header_has_bounds: bool):
         return None
 
     if not header_has_bounds:
+        return None
+    # The label must be digit-free. Where a text-layer row splits badly the
+    # label absorbs the first value -- "Ln(Mass) -0.05" -- and the next number
+    # along is then read as the estimate, which produced a false positive on a
+    # published paper.
+    lead = re.split(r"\s*\|\s*|\t+|\s{2,}", fixed.strip())
+    if lead and _pure_number(lead[0]) is None and _VALUE_IN_LABEL.search(lead[0]):
         return None
     numbers = [(_pure_number(tok), tok) for tok in tokens]
     numbers = [v for v, _ in numbers if v is not None]
@@ -458,7 +474,13 @@ def table_cross_references(text: str,
         misplaced: List[Tuple[str, List[str]]] = []
         for value in _NEAR_VALUE.findall(window):
             v = _to_float(value)
-            if v is None or abs(v) < 0.001 or len(value.strip("-\u2212")) < 3:
+            # Four printed characters, so "0.1", "0.5" and "840" are out.
+            # Running against the pipeline's own table extraction rather than
+            # an evidence appendix, a three-character rule matched quantiles
+            # discussed in prose and a duration inside a table caption, on two
+            # published papers. Values worth checking a cross-reference for --
+            # coefficients, R-squared, AIC -- all carry more precision.
+            if v is None or abs(v) < 0.001 or len(value.strip("-\u2212")) < 4:
                 continue
             if _contains_value(index[label], v):
                 continue
@@ -564,11 +586,35 @@ def placeholder_warning(text: str) -> List[Finding]:
 
     artefacts = [m.group(0).strip() for m in _AUTHORING_ARTEFACT.finditer(text)]
     if artefacts:
+        counts: Dict[str, int] = {}
+        for hit in artefacts:
+            key = re.sub(r"\s+", " ", hit)
+            counts[key] = counts.get(key, 0) + 1
+        shown = "; ".join(f'"{k}" x{v}' if v > 1 else f'"{k}"'
+                          for k, v in sorted(counts.items(), key=lambda kv: -kv[1])[:4])
+        # A bare total misleads when the artefacts cluster: one submission held
+        # 21, of which 13 sat on a single appendix-listing page, and a reader
+        # working through the body could find only 7.
+        pages: Dict[str, int] = {}
+        current = "?"
+        for line in text.splitlines():
+            page = re.match(r"\s*\[Page (\d+)\]", line)
+            if page:
+                current = page.group(1)
+            found = len(_AUTHORING_ARTEFACT.findall(line))
+            if found:
+                pages[current] = pages.get(current, 0) + found
+        where = ""
+        if pages and "?" not in pages:
+            where = (" - " + ", ".join(f"page {k}: {v}" for k, v in
+                                       sorted(pages.items(), key=lambda kv: int(kv[0]))))
         findings.append(Finding(
             "authoring_artefact",
             f"The document contains {len(artefacts)} unresolved reference(s) or "
-            "placeholder(s) left by the authoring tool.",
-            "Examples: " + "; ".join(sorted(set(artefacts))[:4]),
+            f"placeholder(s) ({shown}){where}.",
+            "These are artefacts of the authoring tool, not of this extraction: "
+            "the submitted file itself does not resolve them, so the reader "
+            "cannot tell which table or figure is meant.",
         ))
 
     # X-placeholders are reported only outside the slots a journal asks authors

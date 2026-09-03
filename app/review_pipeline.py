@@ -24,6 +24,7 @@ import os
 import re
 import sys
 import unicodedata
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -39,6 +40,9 @@ from pypdf import PdfReader
 # load/generate/make_sampler with identical signatures and dispatches to
 # llama.cpp (for .gguf models) or mlx_lm (for MLX repo ids).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import design_expectations as de  # noqa: E402
+import manuscript_checks as mchk  # noqa: E402
 
 from llm_backend import (  # noqa: E402
     available_context,
@@ -221,6 +225,12 @@ class EvidenceManifest:
     blocks: List[EvidenceBlock] = field(default_factory=list)
     method_class: Optional["MethodClass"] = None
     additional_method_classes: List["MethodClass"] = field(default_factory=list)
+    # Study design is orthogonal to analysis method and neither replaces the
+    # other: a meta-analysis may pool with REML or with a Bayesian hierarchical
+    # model, and the method expectations remain correct for each.
+    design_class: Optional["de.DesignClass"] = None
+    design_signals: List[str] = field(default_factory=list)
+    synthesis_method_class: Optional["MethodClass"] = None
     table_labels: List[str] = field(default_factory=list)
     has_equations: bool = False
     has_model_spec: bool = False
@@ -239,6 +249,16 @@ class EvidenceManifest:
         """Human-readable manifest for injection into review prompts."""
         lines = [f"Evidence manifest for: {self.source_name}"]
         lines.append(f"  Method classification: {self.method_class.value if self.method_class else 'unclassified'}")
+        if self.design_class is not None:
+            lines.append(f"  Study design: {self.design_class.value}"
+                         + (f" (signals: {', '.join(self.design_signals)})"
+                            if self.design_signals else ""))
+        if self.synthesis_method_class is not None:
+            lines.append(
+                "  Analysis performed by the review itself: "
+                f"{self.synthesis_method_class.value} (scoped to the methods "
+                "section; method words elsewhere may belong to the included "
+                "studies)")
         if self.additional_method_classes:
             lines.append(
                 "  Additional method classifications: "
@@ -597,11 +617,18 @@ def classify_method(full_text: str) -> MethodClass:
     text_lower = full_text.lower()
 
     # Ignore references/bibliography when classifying the statistical method.
-    text_for_classification = re.split(
-        r"\b(?:references|bibliography|acknowledgments?)\b",
-        text_lower,
-        maxsplit=1,
-    )[0]
+    #
+    # Splitting at the FIRST occurrence of the bare word was wrong on any paper
+    # that uses it in the body. RJSP-2025-0796 says "all identified references
+    # were imported into the online Rayyan application" at 15% of the document,
+    # so the classifier saw 10,258 of 67,582 characters and returned
+    # unclassified. One paper in the development corpus kept only 7% of its
+    # text. de.strip_back_matter() looks for the word as a section heading in
+    # the back of the document instead, and keeps everything when it cannot
+    # find one, because retaining a reference list is a smaller error than
+    # discarding a results section. All sixteen corpus classifications are
+    # unchanged by this.
+    text_for_classification = de.strip_back_matter(full_text)
 
     # --- Early routing for designs that require multi-keyword conjunctions ---
 
@@ -1061,6 +1088,7 @@ MethodClass.FREQUENTIST_CORRELATION: """Method-specific expectations (frequentis
 def get_method_expectations(
     method_class: MethodClass,
     additional_classes: Optional[List["MethodClass"]] = None,
+    design_class: Optional["de.DesignClass"] = None,
 ) -> str:
     """
     Return framework-specific review expectations for the primary method,
@@ -1072,10 +1100,14 @@ def get_method_expectations(
 - Method not confidently classified. Apply general standards: appropriate diagnostics for the analysis type, clear reporting of estimates and uncertainty, and model assumptions addressed.
 - Match your diagnostic expectations to the actual analysis used. Do not default to OLS assumptions.""")
 
+    design_block = de.get_design_expectations(design_class) if design_class else ""
+
     if not additional_classes:
-        return primary
+        return (primary + "\n" + design_block) if design_block else primary
 
     parts = [primary]
+    if design_block:
+        parts.append(design_block)
     seen = {method_class}
     for mc in additional_classes:
         if mc in seen:
@@ -1430,6 +1462,18 @@ def structure_evidence(
     # --- Method classification ---
     manifest.method_class = classify_method(text)
     manifest.additional_method_classes = classify_additional_methods(text, manifest.method_class)
+
+    verdict = de.classify_design(text)
+    if verdict.design_class is not de.DesignClass.UNCLASSIFIED:
+        manifest.design_class = verdict.design_class
+        manifest.design_signals = verdict.matched
+    # In an evidence synthesis the body describes the included studies'
+    # methods, so the paper-level classification may not describe this paper.
+    # Both are reported and a disagreement is stated rather than resolved.
+    if manifest.design_class is de.DesignClass.EVIDENCE_SYNTHESIS:
+        scoped = de.scoped_synthesis_text(text)
+        if scoped:
+            manifest.synthesis_method_class = classify_method(scoped)
     
     combined_table_text = "\n\n".join(block_text for _, block_text in table_blocks)
     combined_block_text = "\n\n".join(b.text for b in manifest.blocks if b.block_type == BlockType.TABLE)
@@ -2790,6 +2834,27 @@ LAST_EXTRACTION_NOTES: List[str] = []
 VISION_TABLES = os.environ.get("QWEN_VISION_TABLES", "").strip().lower() in (
     "1", "true", "yes", "on")
 VISION_DPI = int(os.environ.get("QWEN_VISION_DPI", "200"))
+
+# VISION_TABLES is the process default, set by --vision at start-up. A single
+# review can override it, so the browser can offer vision per run in the same
+# way it offers a reasoning mode, without restarting the server.
+_VISION_OVERRIDE: Optional[bool] = None
+
+
+def vision_enabled() -> bool:
+    return VISION_TABLES if _VISION_OVERRIDE is None else _VISION_OVERRIDE
+
+
+@contextmanager
+def vision(enabled: Optional[bool]):
+    """Force vision on or off for the duration of one review."""
+    global _VISION_OVERRIDE
+    previous = _VISION_OVERRIDE
+    _VISION_OVERRIDE = enabled
+    try:
+        yield
+    finally:
+        _VISION_OVERRIDE = previous
 MAX_VISION_PAGES = int(os.environ.get("QWEN_VISION_MAX_PAGES", "6"))
 
 VISION_TABLE_PROMPT = (
@@ -2872,8 +2937,12 @@ def rescue_damaged_tables(pdf_path: Path,
     the report header. Never raises: vision is an enhancement, and a review
     that fails for want of a picture is worse than one that never had it.
     """
-    if not VISION_TABLES or not table_blocks:
-        return table_blocks, []
+    if not vision_enabled():
+        return table_blocks, ["vision was off, so no table was re-read from "
+                              "its page image"]
+    if not table_blocks:
+        return table_blocks, ["vision was on, but no table was extracted for "
+                              "it to check"]
     try:
         from llm_backend import describe_image, vision_available
         if not vision_available():
@@ -2891,7 +2960,8 @@ def rescue_damaged_tables(pdf_path: Path,
         if reason and page_number and page_number not in wanted:
             wanted[page_number] = reason
     if not wanted:
-        return table_blocks, []
+        return table_blocks, ["vision was on and no extracted table looked "
+                              "damaged, so none was re-read"]
 
     added: List[Tuple[int, str]] = []
     notes: List[str] = []
@@ -3245,12 +3315,19 @@ def _fingerprint_of(*paths) -> str:
 PIPELINE_PATH = Path(__file__).resolve()
 SERVER_PATH = PIPELINE_PATH.parent / "server.py"
 BACKEND_PATH = PIPELINE_PATH.parent / "llm_backend.py"
-PIPELINE_VERSION = _fingerprint_of(PIPELINE_PATH, SERVER_PATH, BACKEND_PATH)
+# The deterministic checks and the design registry decide what a report says as
+# much as the prompts do, so they belong in the fingerprint. Without this a
+# pattern could change and two reports would still claim to be comparable.
+CHECKS_PATH = PIPELINE_PATH.parent / "manuscript_checks.py"
+DESIGN_PATH = PIPELINE_PATH.parent / "design_expectations.py"
+PIPELINE_VERSION = _fingerprint_of(PIPELINE_PATH, SERVER_PATH, BACKEND_PATH,
+                                   CHECKS_PATH, DESIGN_PATH)
 
 
 def stale_module_warning() -> str:
     """A warning when the running code is older than the file on disk."""
-    current = _fingerprint_of(PIPELINE_PATH, SERVER_PATH, BACKEND_PATH)
+    current = _fingerprint_of(PIPELINE_PATH, SERVER_PATH, BACKEND_PATH,
+                              CHECKS_PATH, DESIGN_PATH)
     if current in ("unknown", PIPELINE_VERSION):
         return ""
     return (
@@ -3623,6 +3700,23 @@ def _reported_sample_sizes(text: str) -> List[int]:
     return found
 
 
+def _footnote_marker_artefact(value: int, text: str) -> bool:
+    """
+    True when a sample size looks like a value with a footnote marker attached.
+
+    A table header reading "N = 177" with a superscript 1 extracts as "1771",
+    and on RJSP-2024-1475 that produced a report telling the reviewer to ask
+    the authors why their sample of 191 contained 1,771 people -- while the
+    same report's extraction limits explained the artefact four headings
+    earlier. The signature is specific: drop the last digit and the remainder
+    is a number the document also states on its own.
+    """
+    stem = str(value)[:-1]
+    if len(stem) < 2:
+        return False
+    return re.search(rf"(?<!\d){re.escape(stem)}(?!\d)", text) is not None
+
+
 def sample_size_warning(text: str, table_blocks: List[Tuple[int, str]]) -> str:
     """A warning when a reported N exceeds the stated total sample."""
     total = stated_total_sample(text)
@@ -3632,6 +3726,7 @@ def sample_size_warning(text: str, table_blocks: List[Tuple[int, str]]) -> str:
     for _, block_text in table_blocks or []:
         reported.extend(_reported_sample_sizes(block_text))
     exceeding = sorted({n for n in reported if n > total})
+    exceeding = [n for n in exceeding if not _footnote_marker_artefact(n, text)]
     if not exceeding:
         return ""
     shown = ", ".join(f"{n:,}" for n in exceeding[:6])
@@ -3642,9 +3737,9 @@ def sample_size_warning(text: str, table_blocks: List[Tuple[int, str]]) -> str:
         f"{len(exceeding)} reported sample size(s) exceed it ({shown}; largest "
         f"exceeds the total by {max(exceeding) - total:,}). Either the stated "
         "total refers to a subset, a different sampling frame was used for "
-        "those analyses, or there is a reporting error. This is arithmetic, not "
-        "an inference: state it as a directly supported concern and ask the "
-        "authors to reconcile the figures."
+        "those analyses, or there is a reporting error. Check the figures in "
+        "the manuscript before raising it: this compares numbers as extracted, "
+        "and a table header can glue a footnote marker to a value."
     )
 
 
@@ -4101,40 +4196,22 @@ _SUBMISSION_ARTEFACT_RE = re.compile(
 
 
 def submission_integrity_warning(text: str) -> str:
-    """A warning when the document carries unresolved references or placeholders."""
-    hits = [m.group(0).strip() for m in _SUBMISSION_ARTEFACT_RE.finditer(text or "")]
-    if not hits:
+    """
+    A warning when the document carries unresolved references or placeholders.
+
+    The earlier version matched a bare "XXX" and so reported the review
+    blinding: on RJSP-2021-1229 it flagged a redacted grant number and contact
+    address as seventeen unresolved placeholders and instructed the reviewer to
+    raise them as an editorial concern, then the report described a blinded
+    submission as an unfinished draft. Redactions in funding, ethics, contact
+    and self-citation slots are what a journal asks authors for. The detection
+    now lives in manuscript_checks.placeholder_warning(), which reports
+    authoring artefacts, ignores the blinding, and does not instruct.
+    """
+    findings = mchk.placeholder_warning(text or "")
+    if not findings:
         return ""
-    counts: Dict[str, int] = {}
-    for hit in hits:
-        key = re.sub(r"\s+", " ", hit)
-        counts[key] = counts.get(key, 0) + 1
-    shown = "; ".join(f"\"{k}\" x{v}" if v > 1 else f"\"{k}\""
-                      for k, v in sorted(counts.items(), key=lambda kv: -kv[1])[:4])
-    # A bare total misleads when the artefacts cluster. One submission held 21,
-    # but 13 of them sat on a single appendix-listing page and a reader working
-    # through the body could only find 7 -- which makes the tool look wrong when
-    # it is not. Say where they are.
-    pages: Dict[str, int] = {}
-    current = "?"
-    for line in (text or "").splitlines():
-        page = re.match(r"\s*\[Page (\d+)\]", line)
-        if page:
-            current = page.group(1)
-        found = len(_SUBMISSION_ARTEFACT_RE.findall(line))
-        if found:
-            pages[current] = pages.get(current, 0) + found
-    where = ""
-    if pages and "?" not in pages:
-        where = (" — " + ", ".join(f"page {k}: {v}" for k, v in
-                                   sorted(pages.items(), key=lambda kv: int(kv[0]))))
-    return (
-        f"WARNING: the document contains {len(hits)} unresolved reference(s) or "
-        f"placeholder(s) ({shown}){where}. These are artefacts of the authoring "
-        "tool, not of this extraction: the submitted file itself does not "
-        "resolve them, so the reader cannot tell which table or figure is "
-        "meant. Raise this as an editorial concern."
-    )
+    return "WARNING: " + " ".join(f"{f.label} {f.detail}".strip() for f in findings)
 
 
 # Measured over the sixteen-paper reference set: the totals ran 0 to 10 display
@@ -4172,14 +4249,45 @@ def format_consistency_check(text: str,
     findings = [w for w in (sample_size_warning(text, table_blocks),
                             submission_integrity_warning(text),
                             display_item_warning(text)) if w]
+
+    # Checks measured over twenty documents before integration: nothing fired
+    # on any of the sixteen published papers, and every finding on the four
+    # manuscripts was true. See section 12 of the evaluation record.
+    blocks = [block for _, block in (table_blocks or [])]
+    extra = mchk.run_all(text or "", blocks)
+    findings.extend(f"{f.label} {f.detail}".strip()
+                    + (f" (page {f.page})" if f.page is not None else "")
+                    for f in extra)
+
     if not findings:
         return ""
     lines = ["\n\n# Data consistency check", "",
              "Computed directly from the extracted text, independently of the "
-             "model's reading.", ""]
+             "model's reading. These are arithmetic and pattern checks, not "
+             "judgements: confirm each against the manuscript before raising "
+             "it.", ""]
     for warning in findings:
-        lines.append(f"* {warning[len('WARNING: '):]}")
+        lines.append(f"* {warning[len('WARNING: '):] if warning.startswith('WARNING: ') else warning}")
     return "\n".join(lines) + "\n"
+
+
+def format_expected_elements(text: str,
+                             design_class: Optional["de.DesignClass"] = None) -> str:
+    """
+    The elements a study of this design is normally expected to report, and
+    which of them could not be found.
+
+    This is the one place the pipeline raises an omission. Everything else it
+    does requires a quotation, and an absence has none, which is why concerns
+    of this kind never reached a report. An absence check also fails in the
+    opposite direction from a quotation check -- a missed synonym accuses
+    rather than misses -- so every line prints the terms that were searched.
+    """
+    if design_class is None:
+        return ""
+    findings = de.check_expected_elements(text or "", design_class)
+    section = de.format_expected_elements_section(findings)
+    return ("\n\n" + section) if section else ""
 
 
 MAX_PROMPT_TABLE_ROWS = 45
@@ -4323,9 +4431,21 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
                 f"is not in the manuscript: \"{missing[:80]}\""
             )
         else:
-            problems.append(
-                f"Quotation not found in the manuscript: \"{quoted[:110]}\""
-            )
+            # A quotation that cannot be located is not the same as evidence
+            # that is not there. On three consecutive manuscripts the report's
+            # most substantive concern was demoted to Unverified because the
+            # model had joined a row label to a value from another cell, while
+            # every number it cited was present. Say which.
+            note = mchk.numeric_fallback(quoted, source_text)
+            if note:
+                problems.append(
+                    f"Quotation not found in the manuscript: \"{quoted[:110]}\" "
+                    f"-- {note}"
+                )
+            else:
+                problems.append(
+                    f"Quotation not found in the manuscript: \"{quoted[:110]}\""
+                )
 
     # Numbers are quoted as readily as words and fabricated more easily: a
     # value invented from a badly extracted cell reads as authoritative and is

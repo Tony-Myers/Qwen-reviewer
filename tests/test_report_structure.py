@@ -20,7 +20,8 @@ def _stub(n,**a):
     m=types.ModuleType(n)
     [setattr(m,k,v) for k,v in a.items()]; sys.modules[n]=m
 _stub("docx",Document=object); _stub("openpyxl",load_workbook=lambda *a,**k:None)
-root=Path.home()/"mnt/local-llm/qwen35-review"
+root=Path(__file__).resolve().parent.parent
+ROOT=root
 sys.path.insert(0,str(root/"app"))
 import review_pipeline as rp
 
@@ -180,13 +181,17 @@ ok("the server refuses to write one",
 print("\n[the version stamp covers every file that shapes a review]")
 import hashlib
 _app = Path(rp.__file__).resolve().parent
+# The deterministic checks and the design registry decide what a report says as
+# much as the prompts do, so they joined the stamp when they were integrated.
+_STAMPED = ["review_pipeline.py", "server.py", "llm_backend.py",
+            "manuscript_checks.py", "design_expectations.py"]
 _expected = hashlib.sha1(
-    (_app / "review_pipeline.py").read_bytes()
-    + (_app / "server.py").read_bytes()
-    + (_app / "llm_backend.py").read_bytes()
+    b"".join((_app / name).read_bytes() for name in _STAMPED)
 ).hexdigest()[:8]
-ok("the stamp hashes all three files that shape a review",
+ok("the stamp hashes every file that shapes a review",
    rp.PIPELINE_VERSION == _expected, f"{rp.PIPELINE_VERSION} vs {_expected}")
+ok("a change to a check would change the stamp",
+   rp._fingerprint_of(*[_app / n for n in _STAMPED[:-1]]) != rp.PIPELINE_VERSION)
 ok("a server-only edit would change the stamp",
    rp._fingerprint_of(_app / "review_pipeline.py") != rp.PIPELINE_VERSION)
 ok("so would a backend-only edit, where the sampler and thinking mode live",

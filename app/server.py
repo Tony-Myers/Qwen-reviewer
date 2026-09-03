@@ -39,7 +39,8 @@ import uvicorn
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import review_pipeline as rp  # noqa: E402
+import review_pipeline as rp
+import design_expectations as de  # noqa: E402
 import llm_backend  # noqa: E402
 from llm_backend import (  # noqa: E402
     BackendError,
@@ -422,6 +423,7 @@ async def start_review(
     file: UploadFile = File(...),
     domain: str = Form("general"),
     thinking: str = Form(""),
+    vision: str = Form(""),
 ):
     # Save uploaded file to temp directory
     job_id = uuid.uuid4().hex[:12]
@@ -446,10 +448,21 @@ async def start_review(
         want_thinking = True
         thinking_scope = "synthesis"
 
+    # Vision was a start-up flag only, so changing it meant restarting the
+    # server. "" keeps whatever --vision set; "1"/"0" force it for this review,
+    # in the same way the reasoning mode is forced.
+    vision_choice = str(vision).strip().lower()
+    want_vision = None
+    if vision_choice in ("1", "true", "on", "yes"):
+        want_vision = True
+    elif vision_choice in ("0", "false", "off", "no"):
+        want_vision = False
+
     review_jobs[job_id] = {
         "status": "running",
         "thinking": want_thinking,
         "thinking_scope": thinking_scope,
+        "vision": want_vision,
         "progress": [],
         "report": None,
         "appendix": None,
@@ -616,9 +629,10 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
     # synthesis, the passes, validation -- runs in the same mode. Restored on
     # the way out even if the review fails.
     want_thinking = review_jobs.get(job_id, {}).get("thinking")
+    want_vision = review_jobs.get(job_id, {}).get("vision")
     # Counters are per review, so the header reports this run and not the last.
     llm_backend.reset_reasoning_stats()
-    with llm_backend.thinking(want_thinking):
+    with llm_backend.thinking(want_thinking), rp.vision(want_vision):
         _run_review_inner(job_id, file_path, domain, tmp_dir)
 
 
@@ -658,8 +672,20 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             extra = ", ".join(m.value for m in manifest.additional_method_classes)
             _add_progress(job_id, f"Additional methods: {extra}")
 
+        if manifest.design_class is not None:
+            _add_progress(job_id, f"Design: {manifest.design_class.value}")
+            if (manifest.synthesis_method_class is not None
+                    and manifest.synthesis_method_class is not mc):
+                _add_progress(
+                    job_id,
+                    "The review's own analysis reads as "
+                    f"{manifest.synthesis_method_class.value}, which differs "
+                    f"from the paper-level {mc.value}: method words elsewhere "
+                    "may belong to the included studies.")
+
         method_expectations = rp.get_method_expectations(
             mc, additional_classes=manifest.additional_method_classes,
+            design_class=manifest.design_class,
         )
         manifest_summary = manifest.summary_text()
 
@@ -811,7 +837,11 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         # Both checks above read the quotation marks; strip only afterwards.
         final_report = rp.mark_unverified_quotations(final_report, citation_source)
         final_report = rp.report_reliability_banner(final_report) + final_report
+        # Stated availability is not verified availability, and a strength
+        # resting on one has twice been the thing a reviewer attacked.
+        final_report = de.annotate_self_report_strengths(final_report)
         final_report += rp.format_action_list(final_report)
+        final_report += rp.format_expected_elements(text, manifest.design_class)
         final_report += rp.format_consistency_check(text, table_blocks)
         final_report += rp.format_citation_check(report_problems, final_report)
 
