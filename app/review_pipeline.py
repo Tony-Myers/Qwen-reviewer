@@ -2800,11 +2800,56 @@ def strip_marginal_line_numbers(text: str) -> Tuple[str, int]:
         return text, 0
 
     removed = 0
+    kept: List[Tuple[int, int]] = []
     for position in sorted(in_run):
-        index, _value, found = candidates[position]
+        index, value, found = candidates[position]
         lines[index] = found.group("body")
+        kept.append((index, value))
         removed += 1
+
+    removed += _strip_abutting_line_numbers(lines, kept)
     return "\n".join(lines), removed
+
+
+def _strip_abutting_line_numbers(lines: List[str],
+                                 kept: List[Tuple[int, int]]) -> int:
+    """
+    Remove a line number that is glued to the text with no space before it.
+
+    _TRAILING_NUMBER_RE requires whitespace between the body and the number,
+    which is right: without it, "n=173" would lose its value. But a line
+    ending on an operator gets the number attached directly, and on
+    RPAN-2026-0184 the women's 200 m sample extracted as
+
+        ... and women's 200m (n =116
+        173). Swimmers were deidentified
+
+    where 116 is the marginal number for that line and 173 is the sample size
+    wrapping onto the next. 702 numbers were stripped from that document and
+    this was the one that was not, so two generations reported the sample as
+    "116 173" and the citation check endorsed it, because that is what the text
+    said. An extraction fault the checks cannot see is the worst kind.
+
+    Only a value MISSING from an otherwise complete run is removed, only at the
+    end of a line, and only on a line lying between the two survivors that
+    bracket it. A figure that happens to equal a line number is untouched,
+    because every other value in the run is accounted for.
+    """
+    if len(kept) < MIN_LINE_NUMBERS:
+        return 0
+    removed = 0
+    for (index_a, value_a), (index_b, value_b) in zip(kept, kept[1:]):
+        if value_b - value_a != 2:
+            continue
+        missing = value_a + 1
+        pattern = re.compile(rf"(?<=[^\s\d]){missing}[ \t]*$")
+        for index in range(index_a, min(index_b + 1, len(lines))):
+            line, count = pattern.subn("", lines[index], count=1)
+            if count:
+                lines[index] = line.rstrip()
+                removed += 1
+                break
+    return removed
 
 
 # Set by load_document so the report can say what was done to the text before
