@@ -26,7 +26,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.responses import StreamingResponse
@@ -480,6 +480,42 @@ async def start_review(
     return {"job_id": job_id, "status": "running"}
 
 
+@app.post("/api/review/{job_id}/ask")
+async def ask_about_review(job_id: str, request: dict):
+    """
+    Answer one question about a reviewed manuscript, from that manuscript only.
+
+    Bound to a completed review rather than to the chat tab: the point is that
+    the answer is checked against the same extracted text the report was built
+    from, which a free-standing chat cannot do.
+    """
+    job = review_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="No such review.")
+    if job.get("status") != "complete" or not job.get("text"):
+        raise HTTPException(
+            status_code=409,
+            detail="That review has not finished, so there is nothing to ask about.",
+        )
+    question = str(request.get("question", "")).strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="No question was sent.")
+
+    ensure_model()
+    history = request.get("history") or []
+    answer, problems = rp.answer_manuscript_question(
+        model, tokenizer, question, job["text"],
+        report_text=job.get("report") or "",
+        history=history,
+    )
+    return {
+        "answer": answer,
+        "check": rp.format_answer_check(answer, problems),
+        "problems": problems,
+        "passages": len(rp.select_passages(question, job["text"])),
+    }
+
+
 def _add_progress(job_id: str, message: str):
     """Thread-safe progress append."""
     if job_id in review_jobs:
@@ -882,6 +918,10 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             file_path, manifest, table_blocks, chunks,
         )
 
+        # Kept so the reviewer can ask where the paper says something. It is
+        # the same extracted text the report was built from, so an answer and a
+        # concern are checked against exactly the same source.
+        review_jobs[job_id]["text"] = text
         review_jobs[job_id]["report"] = final_report
         review_jobs[job_id]["appendix"] = appendix_lines
         review_jobs[job_id]["status"] = "complete"

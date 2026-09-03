@@ -167,6 +167,22 @@ what reading a table cell depends on) and turns on `QWEN_VISION_TABLES` for the
 app server. Without a projector beside the model the flag warns and carries on
 without it.
 
+### Asking about a reviewed manuscript
+
+Under a finished review there is an **Ask about this manuscript** box. It answers
+from that paper's extracted text and nothing else: the question selects passages
+by term overlap, the model sees only those passages, and every answer goes
+through the same citation check the report does, against the same text. The
+result travels with the answer — every quotation located, a quotation that could
+not be found, or a note that the answer quoted nothing and so was not checked at
+all.
+
+It is a lookup instrument, not a second opinion. It will not judge the paper, and
+where the retrieved passages do not settle a question it is told to say so rather
+than to infer. That matters because a report's concerns are labelled by whether
+their quotations resolved, which is not the same as whether they are right;
+asking where the paper says something is the cheapest way to find out.
+
 The flag now sets only the default. A single review can override it from the
 **Vision** selector in the browser, next to the reasoning mode, so vision can be
 turned on or off for one paper without restarting the server. The projector is

@@ -3988,21 +3988,29 @@ def count_report_items(report_text: str) -> Tuple[int, int]:
 
 def report_reliability_banner(report_text: str) -> str:
     """
-    A single line at the top when nothing in the report rests on the paper.
+    A single line at the top when no concern carries a located quotation.
 
     The per-concern confidence lines are accurate but easy to miss: a reader
     has to find and tally them. When not one concern reaches High, that is a
     fact about the whole report and belongs where it will be seen first.
+
+    What it is a fact ABOUT is the wording, not the findings. On four
+    consecutive manuscripts the label demoted a concern that a reviewer
+    independently raised, and on RJSP-2019-0453 this banner told the reader to
+    treat as mere leads a report whose concerns two referees raised and the
+    authors acted on. The banner therefore says what it measures and stops
+    instructing the reader what to conclude from it.
     """
     levels = re.findall(r"^\s*[-*]?\s*\**\s*Confidence:?\**\s*:?\s*(\w+)",
                         report_text or "", re.M | re.I)
     if not levels or any(level.lower() == "high" for level in levels):
         return ""
     return (
-        "> **No concern in this report is supported by evidence located in the "
-        "manuscript.** Every concern below was computed as moderate or low "
-        "confidence. Treat these as leads to check against the paper, not as "
-        "findings.\n\n"
+        "> **No concern in this report carries a quotation that could be "
+        "located in the extracted manuscript.** That is a statement about how "
+        "the concerns are worded and evidenced, not about whether they are "
+        "right: a correct concern often arrives paraphrased. Check each one "
+        "against the paper before accepting or dismissing it.\n\n"
     )
 
 
@@ -4098,10 +4106,13 @@ def annotate_concern_confidence(report_text: str, source_text: str) -> str:
 # self-assessed grade left in a report otherwise built on computed checks, so it
 # is gone. What remains is where each item's evidence actually stands, which the
 # citation check establishes mechanically.
+# "Verified" and "Unverified" read as verdicts on whether a concern is right.
+# They record only whether a quotation resolved, and the two came apart on four
+# consecutive manuscripts. The labels now name what was measured.
 _EVIDENCE_RANK = {
-    "high": ("Verified", 0),
-    "moderate": ("Inferred", 1),
-    "low": ("Unverified", 2),
+    "high": ("Quoted", 0),
+    "moderate": ("Reasoned", 1),
+    "low": ("Unquoted", 2),
 }
 _CONFIDENCE_RE = re.compile(r"^\s*[-*]?\s*\**\s*Confidence:?\**\s*:?\s*(\w+)", re.I)
 
@@ -4152,14 +4163,17 @@ def format_action_list(report_text: str) -> str:
         return ""
     rows.sort(key=lambda row: row[0])
     out = ["\n\n# Items by evidence", "",
-           "Ordered by how far each item is anchored to the manuscript, which "
-           "the citation check establishes mechanically. Verified means every "
-           "quotation was located; Inferred means the concern is reasoning "
-           "rather than quotation; Unverified means a quotation could not be "
-           "found or the evidence cited this pipeline's own summary; Question "
-           "marks a check to settle rather than an established fault. The "
-           "wording is each item's own. How much each matters is your "
-           "judgement: this table does not rank importance.", "",
+           "Ordered by how each item is worded and evidenced, which the "
+           "citation check establishes mechanically. Quoted means every "
+           "quotation in it was located in the manuscript; Reasoned means it "
+           "argues from the evidence rather than quoting it; Unquoted means a "
+           "quotation could not be located or the evidence cited this "
+           "pipeline's own summary; Question marks a check to settle rather "
+           "than an established fault. **This orders provenance, not "
+           "correctness.** An Unquoted item may be right and a Quoted one "
+           "wrong; on four manuscripts in the evaluation set an Unquoted "
+           "concern was one a human reviewer raised independently. The wording "
+           "is each item's own, and how much each matters is your judgement.", "",
            "| Evidence | Item |", "| --- | --- |"]
     for _, label, title in rows:
         title = re.sub(r"\s+", " ", title).replace("|", "/")
@@ -4548,6 +4562,218 @@ def mark_unverified_quotations(report_text: str, source_text: str) -> str:
     return "\n".join(lines) if changed else report_text
 
 
+# ---------------------------------------------------------------------------
+# Asking questions of a reviewed manuscript
+# ---------------------------------------------------------------------------
+# The recurring failure in the evaluation record is that a reviewer cannot
+# cheaply check a concern, so the evidence label ends up doing the checking for
+# them and does it badly: on four consecutive manuscripts it demoted a concern a
+# human reviewer independently raised. A lookup that answers "where does the
+# paper say this?" turns each of those into a two-second check.
+#
+# The danger is exactly the one this project exists to measure. An answer has
+# none of the machinery a report has, so a naive chat produces confident,
+# unverifiable claims about a manuscript. Three rules follow, and they are
+# enforced here rather than requested in the prompt: the model sees only
+# passages drawn from this manuscript, every answer is put through the same
+# citation check as a report, and the check's result travels with the answer.
+
+QA_MAX_TOKENS = int(os.environ.get("QWEN_QA_MAX_TOKENS", "700"))
+QA_PASSAGE_BUDGET = int(os.environ.get("QWEN_QA_PASSAGE_CHARS", "9000"))
+QA_BLOCK_CHARS = 1100
+
+_QA_STOPWORDS = {
+    "the", "a", "an", "of", "for", "to", "in", "and", "or", "was", "were",
+    "is", "are", "be", "been", "with", "that", "this", "these", "those", "as",
+    "by", "on", "at", "from", "it", "we", "our", "their", "they", "what",
+    "which", "where", "when", "how", "why", "did", "does", "do", "any", "there",
+    "about", "paper", "study", "authors", "manuscript", "report", "you",
+}
+
+
+def _qa_terms(question: str) -> set:
+    words = re.findall(r"[A-Za-z][A-Za-z0-9\-]+", (question or "").lower())
+    return {w for w in words if w not in _QA_STOPWORDS and len(w) > 2}
+
+
+def _qa_blocks(text: str) -> List[Tuple[Optional[int], str]]:
+    """Split the extracted manuscript into passages, keeping page numbers."""
+    blocks: List[Tuple[Optional[int], str]] = []
+    page: Optional[int] = None
+    buffer: List[str] = []
+    size = 0
+
+    def flush():
+        nonlocal buffer, size
+        if buffer:
+            blocks.append((page, "\n".join(buffer).strip()))
+        buffer, size = [], 0
+
+    for line in (text or "").splitlines():
+        marker = re.match(r"\s*\[Page (\d+)\]", line)
+        if marker:
+            flush()
+            page = int(marker.group(1))
+            continue
+        buffer.append(line)
+        size += len(line) + 1
+        if size >= QA_BLOCK_CHARS and not line.strip():
+            flush()
+    flush()
+    return [(p, b) for p, b in blocks if b]
+
+
+def select_passages(question: str, text: str,
+                    budget: int = QA_PASSAGE_BUDGET) -> List[Tuple[Optional[int], str]]:
+    """
+    The passages of the manuscript most likely to answer a question.
+
+    Term overlap, not embeddings: a question about a manuscript is nearly
+    always asked in the manuscript's own vocabulary ("did they report R-hat",
+    "what prior was used for rho"), and a retrieval step that needs a model
+    would be one more thing to keep in memory and to be wrong.
+    """
+    terms = _qa_terms(question)
+    blocks = _qa_blocks(text)
+    if not blocks:
+        return []
+    if not terms:
+        return blocks[:3]
+
+    scored = []
+    for index, (page, body) in enumerate(blocks):
+        lowered = body.lower()
+        hits = sum(1 for term in terms if term in lowered)
+        distinct = sum(1 for term in terms if lowered.count(term) > 1)
+        if hits:
+            scored.append((hits + 0.25 * distinct, index, page, body))
+    scored.sort(key=lambda row: -row[0])
+
+    chosen, used = [], 0
+    for _score, index, page, body in scored:
+        if used + len(body) > budget:
+            continue
+        chosen.append((index, page, body))
+        used += len(body)
+        if used >= budget:
+            break
+    if not chosen:
+        # Terms that match nothing is not the same as an empty manuscript.
+        # Returning the opening passages lets the model answer "not in the
+        # passages I can see", which is the honest answer and the one the
+        # system prompt asks for; returning nothing would make the caller
+        # invent an error message instead.
+        used = 0
+        for index, (page, body) in enumerate(blocks):
+            if used + len(body) > budget:
+                break
+            chosen.append((index, page, body))
+            used += len(body)
+    chosen.sort(key=lambda row: row[0])
+    return [(page, body) for _index, page, body in chosen]
+
+
+QA_SYSTEM = """You answer questions about one manuscript, for a reviewer who is \
+checking it. You are a lookup instrument, not a second opinion.
+
+Rules, all of them absolute:
+- Answer only from the passages below. They are the manuscript.
+- Quote the manuscript for every factual claim, reproducing the wording exactly.
+- If the passages do not contain the answer, say so plainly and say what section \
+or wording would settle it. Never fill a gap by inference and never guess at \
+what a paper of this kind usually says.
+- The absence of a passage is not evidence of absence in the manuscript: say \
+"not in the passages I can see", not "the manuscript does not report it".
+- If asked about the review rather than the paper, quote the review and say \
+that is what you are quoting.
+- Do not judge the paper, recommend a decision, or suggest improvements unless \
+asked, and then only from what the passages support.
+- Be brief. A located quotation with its page is a complete answer."""
+
+
+def answer_manuscript_question(model, tokenizer, question: str, text: str,
+                               report_text: str = "",
+                               history: Optional[List[dict]] = None,
+                               ) -> Tuple[str, List[str]]:
+    """
+    Answer one question about a reviewed manuscript, and check the answer.
+
+    Returns the answer and the citation-check problems found in it. The caller
+    is expected to show both: an answer whose quotations did not resolve is the
+    one a reviewer most needs to know about.
+    """
+    passages = select_passages(question, text)
+    if not passages:
+        return ("No manuscript text is available for this review, so there is "
+                "nothing to look in.", [])
+    del history  # reserved: each question is answered from the manuscript alone
+
+    rendered = []
+    for page, body in passages:
+        where = f"[Page {page}]" if page is not None else "[Page unknown]"
+        rendered.append(f"{where}\n{body}")
+    passage_block = "\n\n---\n\n".join(rendered)
+
+    report_block = ""
+    if report_text:
+        report_block = (
+            "\n\nThe review this pipeline produced, for questions about the "
+            "review itself. It is not the manuscript, and quoting it is not "
+            "evidence about the paper:\n\"\"\"\n"
+            + report_text[:12000] + "\n\"\"\"\n"
+        )
+
+    user_text = f"""{QA_SYSTEM}
+
+Passages from the manuscript:
+\"\"\"
+{passage_block}
+\"\"\"{report_block}
+
+Question: {question}"""
+
+    prompt = apply_chat_template_compat(tokenizer, user_text)
+    sampler = make_default_sampler()
+    out = generate(model, tokenizer, prompt=prompt, max_tokens=QA_MAX_TOKENS,
+                   sampler=sampler, verbose=False)
+    answer = clean_model_output(out)
+
+    problems = verify_report_citations(answer, text)
+    if report_text:
+        # A quotation taken from the review is not a failed manuscript
+        # quotation. Relabel rather than drop it: the reviewer still needs to
+        # know the answer is quoting this pipeline and not the paper.
+        kept = []
+        for problem in problems:
+            quoted = re.search(r'"([^"]{8,})"', problem)
+            if quoted and quoted.group(1)[:80] in report_text:
+                kept.append(
+                    "Quoted from the review rather than the manuscript: "
+                    f"\"{quoted.group(1)[:80]}\""
+                )
+            else:
+                kept.append(problem)
+        problems = kept
+    return answer, problems
+
+
+def format_answer_check(answer: str, problems: List[str]) -> str:
+    """A short verification footer for one answer."""
+    if problems:
+        lines = ["", "_Check:_"]
+        lines += [f"- {p}" for p in problems]
+        return "\n".join(lines)
+    if not _quoted_spans(answer or ""):
+        # The check only inspects quotations of 12 characters or more, so a
+        # two-word quotation is not "nothing quoted"; it is nothing checkable.
+        if _QUOTE_CHAR_RE.search(answer or ""):
+            return ("\n_Check: the quotations in this answer are too short for "
+                    "the citation check to verify._")
+        return ("\n_Check: this answer quotes nothing, so nothing in it was "
+                "verified against the manuscript._")
+    return "\n_Check: every quotation was located in the manuscript._"
+
+
 # The last heading the synthesis is asked to write. A report that does not
 # reach it stopped early, whatever else it contains.
 FINAL_REPORT_HEADING = "Overall confidence"
@@ -4877,6 +5103,14 @@ Required format:
 - Do not rank or grade your own concerns. State each one and its evidence; how much each matters is the reviewer's judgement, not yours.
 - Under "Verification prompts", each bullet must start with "Check:" and include "Reason:".
 - Under "Extraction limits", each bullet must start with "Limit:".
+- An impossible or nonsensical value in the extracted material is not
+  automatically an extraction fault. A prior given as a uniform distribution on
+  a single point, an estimate outside its own confidence interval, or a
+  percentage set summing to 163% may be exactly what the manuscript prints. Where
+  you cannot tell an extraction artefact from the manuscript's own error, put it
+  under "Verification prompts" as a check to settle, not under "Extraction
+  limits". A reviewer reads the checks; the limits section is where this
+  pipeline records its own shortcomings, and a real fault filed there is lost.
 - Do not include concerns that cannot be linked to specific evidence in the supplied material.
 
 Evidence must come from the manuscript:

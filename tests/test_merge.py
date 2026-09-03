@@ -213,7 +213,8 @@ ok("a report with no concerns is safe",
 print("\n[reliability banner]")
 all_low = rp.annotate_concern_confidence(ECHO, "unrelated source")
 ok("banner appears when nothing is High",
-   "No concern in this report is supported" in rp.report_reliability_banner(all_low))
+   "carries a quotation that could be located" in rp.report_reliability_banner(all_low)
+   and "not about whether they are right" in rp.report_reliability_banner(all_low))
 ok("no banner once a concern is High",
    rp.report_reliability_banner(all_low.replace("Confidence: Low", "Confidence: High", 1)) == "")
 ok("no banner without confidence lines",

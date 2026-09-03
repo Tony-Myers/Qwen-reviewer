@@ -420,7 +420,52 @@ function showReport(md, hasAppendix, jobId) {
   }
   html += '</div>';
   html += '<div id="appendixSection" style="display:none; margin-top: 16px;"></div>';
+  // Asking where the paper says something is the cheapest way to check a
+  // concern, and every answer is put through the same citation check as the
+  // report, against the same extracted text.
+  html += '<div class="ask-area" id="askArea" style="margin-top:20px; border-top:1px solid var(--border,#ddd); padding-top:14px;">'
+    + '<div style="font-weight:600; margin-bottom:6px;">Ask about this manuscript</div>'
+    + '<div style="font-size:12px; opacity:.75; margin-bottom:8px;">Answers come only from this paper\'s extracted text and are checked against it. '
+    + 'It will not judge the paper or answer from outside the document.</div>'
+    + '<div style="display:flex; gap:8px;">'
+    + '<input id="askInput" type="text" style="flex:1; padding:7px 9px;" '
+    + 'placeholder="e.g. where does it say how convergence was checked?" '
+    + 'onkeydown="if(event.key===\'Enter\')askReview()">'
+    + '<button class="btn-secondary" id="askBtn" onclick="askReview()">Ask</button>'
+    + '</div><div id="askLog" style="margin-top:12px;"></div></div>';
   ra.innerHTML = html;
+}
+
+async function askReview() {
+  const input = document.getElementById('askInput');
+  const log = document.getElementById('askLog');
+  const btn = document.getElementById('askBtn');
+  const q = (input.value || '').trim();
+  if (!q || !currentJobId) return;
+  input.value = '';
+  btn.disabled = true;
+  const entry = document.createElement('div');
+  entry.style.marginBottom = '14px';
+  entry.innerHTML = '<div style="font-weight:600;">' + esc(q) + '</div><div style="opacity:.6;">Looking...</div>';
+  log.appendChild(entry);
+  try {
+    const r = await fetch(BASE + '/api/review/' + currentJobId + '/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q })
+    });
+    if (!r.ok) {
+      const detail = await r.json().catch(() => ({}));
+      throw new Error(detail.detail || ('HTTP ' + r.status));
+    }
+    const d = await r.json();
+    entry.innerHTML = '<div style="font-weight:600;">' + esc(q) + '</div>'
+      + '<div class="report-content">' + renderMd(d.answer + '\n' + (d.check || '')) + '</div>'
+      + '<div style="font-size:11px; opacity:.55;">' + d.passages + ' passage(s) searched</div>';
+  } catch (e) {
+    entry.innerHTML = '<div style="font-weight:600;">' + esc(q) + '</div>'
+      + '<div style="color:var(--error)">' + esc(e.message) + '</div>';
+  }
+  btn.disabled = false;
 }
 
 async function fetchAppendix() {

@@ -94,18 +94,18 @@ for name, report in (("bold markers", REPORT_A), ("plain markers", REPORT_B)):
     # awarded itself. The severity label used one of its three values for 82%
     # of concerns and, when it did discriminate, ranked its best-supported
     # concern below its weakest.
-    ok("a concern whose quotations verify is Verified", "| Verified |" in table)
-    ok("one resting on the pipeline's own summary is Unverified",
-       "| Unverified |" in table)
+    ok("a concern whose quotations verify is Quoted", "| Quoted |" in table)
+    ok("one resting on the pipeline's own summary is Unquoted",
+       "| Unquoted |" in table)
     ok("a verification prompt is a Question", "| Question |" in table)
-    ok("the table does not claim to rank importance",
-       "does not rank importance" in table)
-    ok("Verified sorts above Unverified",
-       table.index("| Verified |") < table.index("| Unverified |"))
+    ok("the table says it orders provenance and not correctness",
+       "orders provenance, not correctness" in table)
+    ok("Quoted sorts above Unquoted",
+       table.index("| Quoted |") < table.index("| Unquoted |"))
     lines = [l for l in table.splitlines() if l.startswith("| ") and "---" not in l]
     ok("one header + four items", len(lines) == 5, str(len(lines)))
     ok("the verified concern sorts first",
-       lines[1].startswith("| Verified |"), lines[1][:40])
+       lines[1].startswith("| Quoted |"), lines[1][:40])
 
     over = rp.overclaim_problems(annotated)
     ok("'fundamental error' flagged", any("fundamental error" in p for p in over), str(over))
@@ -139,15 +139,15 @@ _ONE_LINE = ("# Directly supported concerns\n"
              "- Check: whether season was modelled. Reason: it spans two seasons.\n")
 _table = rp.format_action_list(_ONE_LINE)
 ok("a run-together concern is cut at the next field",
-   "| Verified | The prior specification needs clarification |" in _table, _table)
+   "| Quoted | The prior specification needs clarification |" in _table, _table)
 ok("a stray severity label does not reach the item text",
    "Severity" not in _table, _table)
 ok("its own confidence still places it",
-   "| Inferred | The ACWR calculation could be clarified |" in _table, _table)
+   "| Reasoned | The ACWR calculation could be clarified |" in _table, _table)
 ok("a run-together check drops its reason",
    "| Question | Whether season was modelled |" in _table, _table)
 ok("the field-per-line form still works",
-   "| Verified | Something is wrong. |" in rp.format_action_list(
+   "| Quoted | Something is wrong. |" in rp.format_action_list(
        "# Directly supported concerns\n* Concern: Something is wrong.\n"
        "Evidence: The text states, \"a quotation\".\n"
        "* Confidence: High — every quotation was located.\n"))
