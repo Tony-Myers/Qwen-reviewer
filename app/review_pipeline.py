@@ -4450,7 +4450,10 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
     # Numbers are quoted as readily as words and fabricated more easily: a
     # value invented from a badly extracted cell reads as authoritative and is
     # the kind of thing that gets sent to an author.
-    source_digits = re.findall(r"\d+\.\d+", _normalise_numeric_artefacts(source_text))
+    # \d*\. so that a manuscript writing ".001" is matched by a report writing
+    # "0.001": on the basketball manuscript the model reported the gamma prior
+    # faithfully and the check called the number absent.
+    source_digits = re.findall(r"\d*\.\d+", _normalise_numeric_artefacts(source_text))
     source_numbers = set(source_digits)
     # A report that rounds an extracted value is not fabricating it. Saying
     # "approximately 0.13" of a table's 0.134, or calling 0.221 - 0.211 a
@@ -4463,7 +4466,11 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
             source_values.append(float(token))
         except ValueError:
             continue
-    for number in dict.fromkeys(re.findall(r"(?<![\d.])\d+\.\d+(?!\d)", report_text)):
+    # A verification prompt asks a question and offers examples; the numbers in
+    # "e.g., 0.95, 0.99, or a ROPE" are hypothetical thresholds, not citations,
+    # and were reported as absent on Eustace et al. 2025.
+    citable = re.split(r"^#+\s*Verification prompts\s*$", report_text, flags=re.M | re.I)[0]
+    for number in dict.fromkeys(re.findall(r"(?<![\d.])\d+\.\d+(?!\d)", citable)):
         if number in source_numbers:
             continue
         places = len(number.split(".")[1])

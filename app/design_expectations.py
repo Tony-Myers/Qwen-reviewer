@@ -164,6 +164,14 @@ _DESIGN_PRIORITY: List[DesignClass] = [
 
 MIN_SIGNALS = 2
 
+# Some classes need more than one strong signal. A paper with a three-sentence
+# "Reliability" subsection saying reliability was established elsewhere matched
+# "reliability of the" and was classified as a measurement-validation study; it
+# was a Bayesian spatial model of basketball tracking data. A real validation
+# study names several of limits of agreement, test-retest, typical error and
+# criterion validity.
+MIN_STRONG: Dict[DesignClass, int] = {DesignClass.MEASUREMENT_VALIDATION: 2}
+
 
 _SPACED_HYPHEN = re.compile(r"(\w)[ \t]+-[ \t]*(\w)|(\w)-[ \t]+(\w)")
 
@@ -264,13 +272,13 @@ def classify_design(full_text: str) -> DesignVerdict:
     hits: Dict[DesignClass, List[str]] = {}
     for design, signals in _DESIGN_SIGNALS.items():
         names: List[str] = []
-        strong = False
+        strong = 0
         for name, pattern, strength in signals:
             if re.search(pattern, body):
                 names.append(name)
                 if strength == "strong":
-                    strong = True
-        if strong and len(names) >= MIN_SIGNALS:
+                    strong += 1
+        if strong >= MIN_STRONG.get(design, 1) and len(names) >= MIN_SIGNALS:
             hits[design] = names
 
     if not hits:
