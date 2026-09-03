@@ -23,6 +23,7 @@ import hashlib
 import os
 import re
 import sys
+import math
 import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -4653,8 +4654,29 @@ def mark_unverified_quotations(report_text: str, source_text: str) -> str:
 # citation check as a report, and the check's result travels with the answer.
 
 QA_MAX_TOKENS = int(os.environ.get("QWEN_QA_MAX_TOKENS", "700"))
-QA_PASSAGE_BUDGET = int(os.environ.get("QWEN_QA_PASSAGE_CHARS", "9000"))
 QA_BLOCK_CHARS = 1100
+QA_MIN_BUDGET = 6000
+# Room for the question and the chat scaffolding around the passages.
+QA_SLACK_CHARS = 2000
+QA_REPORT_CHARS = 12000
+
+# Retrieval is a fallback, not the design. A manuscript in this field extracts
+# to around 20,000 tokens and the context window is 32,768, so the whole paper
+# usually fits in one prompt -- and the best retrieval is no retrieval, because
+# a passage that was never selected cannot be quoted. Only a long document is
+# narrowed, and the prompt then says which case it is: an absence in a complete
+# document is evidence, an absence in a selection is not.
+
+
+def qa_passage_budget(report_chars: int = 0) -> int:
+    """Characters of manuscript one question may carry."""
+    override = os.environ.get("QWEN_QA_PASSAGE_CHARS")
+    if override:
+        return int(override)
+    budget = prompt_char_budget(reserve_tokens=QA_MAX_TOKENS)
+    budget -= len(QA_SYSTEM_PARTIAL) + QA_SLACK_CHARS
+    budget -= min(report_chars, QA_REPORT_CHARS)
+    return max(QA_MIN_BUDGET, budget)
 
 _QA_STOPWORDS = {
     "the", "a", "an", "of", "for", "to", "in", "and", "or", "was", "were",
@@ -4697,30 +4719,61 @@ def _qa_blocks(text: str) -> List[Tuple[Optional[int], str]]:
     return [(p, b) for p, b in blocks if b]
 
 
-def select_passages(question: str, text: str,
-                    budget: int = QA_PASSAGE_BUDGET) -> List[Tuple[Optional[int], str]]:
-    """
-    The passages of the manuscript most likely to answer a question.
+BM25_K1 = 1.5
+BM25_B = 0.75
 
-    Term overlap, not embeddings: a question about a manuscript is nearly
-    always asked in the manuscript's own vocabulary ("did they report R-hat",
-    "what prior was used for rho"), and a retrieval step that needs a model
-    would be one more thing to keep in memory and to be wrong.
+
+def _bm25_scores(terms: set, blocks: List[Tuple[Optional[int], str]]) -> List[float]:
     """
+    BM25 over the blocks of one manuscript.
+
+    Counting how many question terms a block contains, which is what this did
+    first, weighs "cluster" and "S_Dbw" the same in a paper about clustering:
+    the common word contributes nothing but dominates the count, and a long
+    block wins by containing more words. Inverse document frequency and length
+    normalisation are the standard fix and need no model.
+    """
+    tokenised = [re.findall(r"[a-z0-9][a-z0-9\-]+", body.lower()) for _p, body in blocks]
+    lengths = [len(tokens) or 1 for tokens in tokenised]
+    average = sum(lengths) / len(lengths)
+    total = len(blocks)
+
+    scores = [0.0] * total
+    for term in terms:
+        containing = sum(1 for tokens in tokenised if term in tokens)
+        if not containing:
+            continue
+        idf = math.log(1 + (total - containing + 0.5) / (containing + 0.5))
+        for index, tokens in enumerate(tokenised):
+            frequency = tokens.count(term)
+            if not frequency:
+                continue
+            norm = 1 - BM25_B + BM25_B * lengths[index] / average
+            scores[index] += idf * frequency * (BM25_K1 + 1) / (frequency + BM25_K1 * norm)
+    return scores
+
+
+def select_passages(question: str, text: str,
+                    budget: Optional[int] = None) -> List[Tuple[Optional[int], str]]:
+    """
+    The passages of the manuscript most likely to answer a question, or all of
+    them when the manuscript fits.
+    """
+    if budget is None:
+        budget = qa_passage_budget()
     terms = _qa_terms(question)
     blocks = _qa_blocks(text)
     if not blocks:
         return []
+    if len(text) <= budget:
+        return blocks
     if not terms:
         return blocks[:3]
 
-    scored = []
-    for index, (page, body) in enumerate(blocks):
-        lowered = body.lower()
-        hits = sum(1 for term in terms if term in lowered)
-        distinct = sum(1 for term in terms if lowered.count(term) > 1)
-        if hits:
-            scored.append((hits + 0.25 * distinct, index, page, body))
+    scored = [(score, index, page, body)
+              for (score, (index, (page, body)))
+              in zip(_bm25_scores(terms, blocks), enumerate(blocks))
+              if score > 0]
     scored.sort(key=lambda row: -row[0])
 
     chosen, used = [], 0
@@ -4747,7 +4800,7 @@ def select_passages(question: str, text: str,
     return [(page, body) for _index, page, body in chosen]
 
 
-QA_SYSTEM = """You answer questions about one manuscript, for a reviewer who is \
+QA_SYSTEM_HEAD = """You answer questions about one manuscript, for a reviewer who is \
 checking it. You are a lookup instrument, not a second opinion.
 
 Rules, all of them absolute:
@@ -4756,13 +4809,26 @@ Rules, all of them absolute:
 - If the passages do not contain the answer, say so plainly and say what section \
 or wording would settle it. Never fill a gap by inference and never guess at \
 what a paper of this kind usually says.
-- The absence of a passage is not evidence of absence in the manuscript: say \
-"not in the passages I can see", not "the manuscript does not report it".
+{absence}
 - If asked about the review rather than the paper, quote the review and say \
 that is what you are quoting.
 - Do not judge the paper, recommend a decision, or suggest improvements unless \
 asked, and then only from what the passages support.
 - Be brief. A located quotation with its page is a complete answer."""
+
+_ABSENCE_PARTIAL = ("- The passages below are a selection from a long document. "
+                    "The absence of something from them is not evidence of "
+                    "absence in the manuscript: say \"not in the passages I can "
+                    "see\", not \"the manuscript does not report it\".")
+_ABSENCE_COMPLETE = ("- The passages below are the whole manuscript, in order. "
+                     "If something is not in them it is not in the paper, and "
+                     "you may say so - but say it of what the text contains, "
+                     "never of what a figure might show, since figures are not "
+                     "in the text.")
+
+QA_SYSTEM_PARTIAL = QA_SYSTEM_HEAD.format(absence=_ABSENCE_PARTIAL)
+QA_SYSTEM_COMPLETE = QA_SYSTEM_HEAD.format(absence=_ABSENCE_COMPLETE)
+QA_SYSTEM = QA_SYSTEM_PARTIAL          # kept for callers that want the default
 
 
 def answer_manuscript_question(model, tokenizer, question: str, text: str,
@@ -4776,7 +4842,9 @@ def answer_manuscript_question(model, tokenizer, question: str, text: str,
     is expected to show both: an answer whose quotations did not resolve is the
     one a reviewer most needs to know about.
     """
-    passages = select_passages(question, text)
+    budget = qa_passage_budget(len(report_text or ""))
+    passages = select_passages(question, text, budget)
+    complete = len(text) <= budget
     if not passages:
         return ("No manuscript text is available for this review, so there is "
                 "nothing to look in.", [])
@@ -4797,7 +4865,7 @@ def answer_manuscript_question(model, tokenizer, question: str, text: str,
             + report_text[:12000] + "\n\"\"\"\n"
         )
 
-    user_text = f"""{QA_SYSTEM}
+    user_text = f"""{QA_SYSTEM_COMPLETE if complete else QA_SYSTEM_PARTIAL}
 
 Passages from the manuscript:
 \"\"\"

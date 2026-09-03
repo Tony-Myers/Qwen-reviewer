@@ -192,9 +192,17 @@ without it.
 ### Asking about a reviewed manuscript
 
 Under a finished review there is an **Ask about this manuscript** box. It answers
-from that paper's extracted text and nothing else: the question selects passages
-by term overlap, the model sees only those passages, and every answer goes
-through the same citation check the report does, against the same text. The
+from that paper's extracted text and nothing else, and every answer goes through
+the same citation check the report does, against the same text.
+
+Where the manuscript fits the context window the whole of it is sent, because a
+passage that was never selected cannot be quoted; a paper in this field extracts
+to around 20,000 tokens against a 32,768-token context. Longer documents are
+narrowed by BM25 over the manuscript's own paragraphs, which weighs a term by
+how rare it is in that paper — "S_Dbw" locates a passage, "cluster" does not.
+The prompt says which case applies, because it changes what an absence means: if
+the whole paper is present, something missing from it is missing from the paper;
+if it is a selection, it is only missing from the selection. The
 result travels with the answer — every quotation located, a quotation that could
 not be found, or a note that the answer quoted nothing and so was not checked at
 all.

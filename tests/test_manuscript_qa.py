@@ -76,17 +76,48 @@ def ask(question, answer, report=""):
                                          report_text=report)
 
 
-print("\nRetrieval")
+print("\nRetrieval: a manuscript that fits is not retrieved from")
 
+# A paper in this field extracts to around 20,000 tokens against a 32,768
+# context, so the whole document usually fits. A passage never selected cannot
+# be quoted, so selection is the fallback, not the design.
 hits = rp.select_passages("how was convergence checked?", TEXT)
-check("the relevant page is retrieved", hits and hits[0][0] == 5, hits[:1])
-check("only what is needed is retrieved", len(hits) == 1, len(hits))
+check("a short manuscript is sent whole", len(hits) == len(rp._qa_blocks(TEXT)), len(hits))
+check("in document order", [p for p, _ in hits] == sorted(p for p, _ in hits))
 check("page numbers survive", all(isinstance(p, int) for p, _ in hits))
+check("an empty manuscript returns nothing", rp.select_passages("anything", "") == [])
 
-none_match = rp.select_passages("what does it say about heterogeneity?", TEXT)
+print("\nRetrieval: a long manuscript is narrowed, by BM25")
+
+LONG = TEXT + "\n\n" + "\n\n".join(
+    f"[Page {n}]\nA paragraph about clustering and pacing and clustering again, "
+    f"with no bearing on the question, numbered {n}." for n in range(20, 120))
+narrowed = rp.select_passages("how was convergence checked?", LONG, budget=2500)
+check("a long manuscript is narrowed", 0 < len(narrowed) < len(rp._qa_blocks(LONG)),
+      len(narrowed))
+check("the relevant page is still found", any(p == 5 for p, _ in narrowed),
+      [p for p, _ in narrowed])
+check("the selection respects the budget",
+      sum(len(b) for _, b in narrowed) <= 2500)
+
+# "clustering" is in every filler block and carries no information; "prior" is
+# in one. Counting terms weighs them the same, BM25 does not.
+scores = rp._bm25_scores({"clustering"}, rp._qa_blocks(LONG))
+rare = rp._bm25_scores({"prior"}, rp._qa_blocks(LONG))
+check("a term in every block scores below a term in one",
+      max(scores) < max(rare), (round(max(scores), 2), round(max(rare), 2)))
+
+none_match = rp.select_passages("xyzzy plugh", LONG, budget=2500)
 check("a question matching nothing still returns passages to answer from",
       len(none_match) > 0, len(none_match))
-check("an empty manuscript returns nothing", rp.select_passages("anything", "") == [])
+
+print("\nWhat the model may conclude from an absence")
+
+check("a selection forbids inferring absence",
+      "not in the passages I can see" in rp.QA_SYSTEM_PARTIAL)
+check("a complete document allows it",
+      "If something is not in them it is not in the paper" in rp.QA_SYSTEM_COMPLETE)
+check("and still excludes figures", "figures are not" in rp.QA_SYSTEM_COMPLETE)
 
 print("\nChecking the answer")
 
@@ -123,11 +154,11 @@ check("a quotation too short to check is described as such",
 print("\nScope")
 
 check("the system prompt forbids answering beyond the passages",
-      "Answer only from the passages below" in rp.QA_SYSTEM)
-check("it forbids inferring an absence in the manuscript",
-      "not in the passages I can see" in rp.QA_SYSTEM)
+      "Answer only from the passages below" in rp.QA_SYSTEM_PARTIAL)
+check("it forbids inferring an absence from a selection",
+      "not in the passages I can see" in rp.QA_SYSTEM_PARTIAL)
 check("it forbids judging the paper unasked",
-      "Do not judge the paper" in rp.QA_SYSTEM)
+      "Do not judge the paper" in rp.QA_SYSTEM_PARTIAL)
 
 server_src = (ROOT / "app" / "server.py").read_text()
 check("the endpoint refuses a review that has not finished",
