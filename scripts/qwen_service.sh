@@ -341,19 +341,23 @@ start_llama() {
   # Vision needs a projector alongside the model. Upstream warns that Qwen-VL
   # models need at least 1024 image tokens to place things correctly on the
   # page, which is exactly what reading a table cell depends on.
+  # Vision is now a per-review choice in the browser, so the projector is
+  # loaded whenever one sits beside the model and --vision only decides the
+  # default. Without this the selector could not turn vision on: the encoder
+  # would not be in memory. Set QWEN_LOAD_MMPROJ=0 to keep it out.
   local -a vision_args=()
-  if [[ "$QWEN_VISION_TABLES" == "1" ]]; then
-    local mmproj
+  local mmproj=""
+  if [[ "${QWEN_LOAD_MMPROJ:-1}" == "1" ]]; then
     mmproj="$(ls "$(dirname "$MODEL")"/*mmproj*.gguf 2>/dev/null | head -1)"
-    if [[ -n "$mmproj" ]]; then
-      vision_args=(--mmproj "$mmproj" --image-min-tokens 1024)
-      log_line "Vision enabled: $(basename "$mmproj")"
-    else
-      log_line "WARNING: --vision was asked for but no mmproj file sits beside"
-      log_line "         $(basename "$MODEL"). Starting without it; tables will"
-      log_line "         be read from the text layer only."
-      QWEN_VISION_TABLES=0
-    fi
+  fi
+  if [[ -n "$mmproj" ]]; then
+    vision_args=(--mmproj "$mmproj" --image-min-tokens 1024)
+    log_line "Vision available: $(basename "$mmproj") (default $([[ "$QWEN_VISION_TABLES" == "1" ]] && echo on || echo off); choose per review in the browser)"
+  elif [[ "$QWEN_VISION_TABLES" == "1" ]]; then
+    log_line "WARNING: --vision was asked for but no mmproj file sits beside"
+    log_line "         $(basename "$MODEL"). Starting without it; tables will"
+    log_line "         be read from the text layer only."
+    QWEN_VISION_TABLES=0
   fi
 
   log_line "Starting llama-server on port $LLAMA_PORT ($(basename "$MODEL"))..."
@@ -364,7 +368,7 @@ start_llama() {
     --ctx-size "$LLAMA_CTX" \
     --n-gpu-layers "$LLAMA_NGL" \
     --jinja \
-    "${vision_args[@]}" \
+    ${vision_args[@]+"${vision_args[@]}"} \
     >> "$LLAMA_LOG" 2>&1 < /dev/null &
   echo $! > "$LLAMA_PID_FILE"
   log_line "llama-server pid $(cat "$LLAMA_PID_FILE"), log: $LLAMA_LOG"

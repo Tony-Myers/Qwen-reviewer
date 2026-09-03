@@ -167,13 +167,15 @@ what reading a table cell depends on) and turns on `QWEN_VISION_TABLES` for the
 app server. Without a projector beside the model the flag warns and carries on
 without it.
 
-The flag sets the default. A single review can override it from the **Vision**
-selector in the browser, next to the reasoning mode, so vision can be turned on
-or off for one paper without restarting the server. The projector still has to
-have been loaded at start-up: the selector chooses whether to use it, not
-whether it exists. The report header says which of three things happened —
-vision off, vision on with no damaged table found, or the pages that were
-re-read — so a silent header no longer has two possible meanings.
+The flag now sets only the default. A single review can override it from the
+**Vision** selector in the browser, next to the reasoning mode, so vision can be
+turned on or off for one paper without restarting the server. The projector is
+loaded whenever one sits beside the model, whether or not `--vision` was passed,
+because otherwise the selector would have nothing to switch on; set
+`QWEN_LOAD_MMPROJ=0` to keep it out of memory. The report header says which of
+three things happened — vision off, vision on with no damaged table found, or
+the pages that were re-read — so a silent header no longer has two possible
+meanings.
 
 Only tables that look structurally damaged are re-read, and damage means one of
 three things actually observed: a word broken across lines, a malformed cell
