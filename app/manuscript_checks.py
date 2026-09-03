@@ -695,5 +695,7 @@ def run_all(text: str, table_blocks: Sequence[str] = ()) -> List[Finding]:
     # parallel prose by lexical overlap.
     findings += table_cross_references(text, table_blocks)
     findings += unsuitable_math_glyph(text)
-    findings += placeholder_warning(text)
+    # placeholder_warning() is NOT run here. review_pipeline calls it through
+    # submission_integrity_warning(), and running it in both places printed the
+    # same 23 unresolved references twice in one report.
     return findings

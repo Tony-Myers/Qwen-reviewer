@@ -4338,6 +4338,28 @@ def _quoted_spans(text: str) -> List[str]:
     return spans
 
 
+SHORT_QUOTE_MIN = 4
+
+
+def _short_quoted_spans(text: str) -> List[str]:
+    """
+    Quoted passages too short for _quoted_spans, kept only when numeric.
+
+    The 12-character floor there exists so that a stray pair of quote marks
+    around one word is not treated as a citation. That is the right default for
+    prose and the wrong one for figures.
+    """
+    positions = [m.start() for m in _QUOTE_CHAR_RE.finditer(text)]
+    spans = []
+    for i in range(0, len(positions) - 1, 2):
+        content = text[positions[i] + 1: positions[i + 1]]
+        if "\n" in content or not (SHORT_QUOTE_MIN <= len(content) < 12):
+            continue
+        if re.search(r"\d", content):
+            spans.append(content)
+    return spans
+
+
 def _normalise_numeric_artefacts(text: str) -> str:
     """
     Repair decimal separators that PDF extraction mangles.
@@ -4429,9 +4451,16 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
             f"...{line.strip()[-110:]}"
         )
 
-    for quoted in _quoted_spans(report_text):
+    # A numeric quotation is checked however short it is. "n = 116 173" is
+    # eleven characters and three words, so it passed under both floors on
+    # RPAN-2026-0184 -- and it was fabricated: the marginal line number 116 had
+    # been stripped correctly, and the manuscript reads n = 173. Numbers are
+    # the quotations most worth checking and the easiest to invent.
+    spans = list(_quoted_spans(report_text))
+    spans += [s for s in _short_quoted_spans(report_text) if s not in spans]
+    for quoted in spans:
         quoted = quoted.strip()
-        if len(quoted.split()) < 4:
+        if len(quoted.split()) < 4 and not re.search(r"\d", quoted):
             continue
         # Tolerances live in _missing_fragment: punctuation, spacing (extraction
         # splits "strati fied" and fuses "i tw a sW C"), and elision with "...".

@@ -114,6 +114,22 @@ check("a report with verified quotations still reads as clean",
 check("the single-argument call still works",
       "Every quotation in this report was located" in rp.format_citation_check([]))
 
+print("\n[a short numeric quotation is still a quotation]")
+# On RPAN-2026-0184 the report quoted the women's 200 m sample as
+# "n = 116 173". The 116 is a marginal line number, correctly stripped from the
+# extracted text, so the quotation was fabricated -- and at eleven characters
+# and three words it passed under both floors in the citation check.
+_SRC = "women's 200m ( n= 173). Swimmers were deidentified, however results are preserved."
+_short = rp.verify_report_citations(
+    'reported in the text as "n = 116 173," which is ambiguous.', _SRC)
+check("a fabricated short numeric quotation is caught", len(_short) == 1, _short)
+check("and the fallback names which value is real",
+      _short and "173 appear in the manuscript, 116 do not" in _short[0], _short)
+check("a faithful short numeric quotation passes",
+      rp.verify_report_citations('given as "n= 173" for that event.', _SRC) == [])
+check("a short quotation with no digits is still ignored",
+      rp.verify_report_citations('it is "ambiguous" here.', _SRC) == [])
+
 print()
 if fails: print(f"{len(fails)} FAILURE(S): {fails}"); sys.exit(1)
 print("All citation-check tests passed.")
