@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore")
 def _stub(n,**a):
     m=types.ModuleType(n); [setattr(m,k,v) for k,v in a.items()]; sys.modules[n]=m
 _stub("docx",Document=object); _stub("openpyxl",load_workbook=lambda *a,**k:None)
-root=Path.home()/"mnt/local-llm/qwen35-review"; sys.path.insert(0,str(root/"app"))
+root=Path(__file__).resolve().parent.parent; sys.path.insert(0,str(root/"app"))
 import review_pipeline as rp
 
 # Exactly the chain server.py::_run_review performs after synthesis.
@@ -61,8 +61,8 @@ check("a verified quotation kept its marks",
       '"just over half a point per bout,"' in final_report,
       "the verified span should still be in quotation marks")
 check("the item table is ordered by evidence, not by a self-awarded grade",
-      "| Verified |" in final_report or "| Inferred |" in final_report
-      or "| Unverified |" in final_report,
+      any(f"| {label} |" in final_report
+          for label in ("Quoted", "Reasoned", "Unquoted", "Question")),
       "no evidence column rendered")
 
 print()

@@ -313,7 +313,12 @@ ok("no prompt builder hard-codes the flag any more",
 print("\n[the choice reaches the pipeline]")
 server_src = (ROOT / "app" / "server.py").read_text()
 ok("the endpoint accepts it", 'thinking: str = Form("")' in server_src)
-ok("it is held for the whole review", "with llm_backend.thinking(want_thinking):" in server_src)
+# The vision choice joined it on the same statement, so this looks for the
+# context manager rather than the whole line it used to occupy alone.
+ok("it is held for the whole review",
+   "with llm_backend.thinking(want_thinking)" in server_src)
+ok("and the vision choice is held the same way",
+   "rp.vision(want_vision)" in server_src)
 ok("blank means the server default", 'want_thinking = None' in server_src)
 ok("the mode is written into the header", "Reasoning:" in server_src)
 ok("so is what the model actually did", "Reasoning check:" in server_src)

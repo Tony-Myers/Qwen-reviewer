@@ -4189,7 +4189,10 @@ def format_action_list(report_text: str) -> str:
             if found:
                 confidence = found.group(1).lower()
                 break
-        label, order = _EVIDENCE_RANK.get(confidence, ("Unverified", 2))
+        # An unparsed confidence line falls to the most cautious label the
+        # preamble defines. The old default was "Unverified", a word the
+        # renamed vocabulary no longer explains to the reader.
+        label, order = _EVIDENCE_RANK.get(confidence, ("Unquoted", 2))
         rows.append((order, label, title))
 
     for line in sections.get("verification prompts", []):
@@ -4912,8 +4915,10 @@ def format_answer_check(answer: str, problems: List[str]) -> str:
             return ("\n_Check: the quotations in this answer are too short for "
                     "the citation check to verify._")
         return ("\n_Check: this answer quotes nothing, so nothing in it was "
-                "verified against the manuscript._")
-    return "\n_Check: every quotation was located in the manuscript._"
+                "verified against the extracted text._")
+    return ("\n_Check: every quotation was located in the extracted text, "
+            "which is not the same as the manuscript. Check any numeric value "
+            "against the PDF._")
 
 
 # The last heading the synthesis is asked to write. A report that does not
@@ -4969,6 +4974,12 @@ def format_citation_check(problems: List[str], report_text: str = "") -> str:
             "\n\n# Citation check\n\n"
             "* Every quotation in this report was located in the extracted "
             "manuscript text, and no citation refers to the pipeline's own summary.\n"
+            # The clean branch is the one a reviewer takes assurance from, so it
+            # carries the same limit as the branch that reports problems.
+            "* **This establishes a match to the extracted text, not to the "
+            "manuscript.** A value corrupted in extraction is confirmed here "
+            "rather than caught. Check numeric values against the PDF, and "
+            "read the Extraction lines in the header.\n"
         )
     lines = [
         "\n\n# Citation check",

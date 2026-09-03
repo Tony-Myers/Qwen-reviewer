@@ -220,7 +220,12 @@ check("vision is off unless asked for", rp.VISION_TABLES is False)
 
 blocks = [(21, DETACHED), (19, CLEAN_TABLE)]
 same, notes = rp.rescue_damaged_tables(ROOT / "nothing.pdf", blocks)
-check("nothing happens while the flag is off", same == blocks and notes == [])
+# Vision off is now stated rather than silent: a header that says nothing
+# leaves a reviewer unable to tell a paper with no damaged table from one
+# whose tables were never re-read.
+check("the tables are untouched while the flag is off", same == blocks)
+check("and the header says vision was off",
+      any("vision was off" in n for n in notes), str(notes))
 
 # Vision is an enhancement: when it cannot deliver, the review proceeds on the
 # text layer and the report says so rather than looking as though it never asked.
