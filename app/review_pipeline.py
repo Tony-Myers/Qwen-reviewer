@@ -4911,6 +4911,20 @@ def format_citation_check(problems: List[str], report_text: str = "") -> str:
         "marks, and a citation of the pipeline's own summary is not evidence "
         "from the paper.",
         "",
+        # A reviewer reads this section and reasonably takes a clean result as
+        # assurance. It is narrower than that, and the limit is invisible from
+        # inside: the model, this check and the question box all read the same
+        # extracted text, so a value extraction corrupted is confirmed by all
+        # three. One manuscript's sample size of 173 arrived as "116 173" with a
+        # marginal line number glued to it, and every mechanism agreed.
+        "**This establishes that a quotation matches the extracted text, not "
+        "that it matches the manuscript.** Extraction can corrupt a value, and "
+        "this check would confirm the corrupted version. Read the Extraction "
+        "lines in the header, and check numeric values -- sample sizes, "
+        "coefficients, degrees of freedom, p-values, interval limits -- against "
+        "the PDF before using them. Anything that exists only in a graphical "
+        "figure was never read at all.",
+        "",
     ]
     for problem in problems:
         lines.append(f"* {problem}")

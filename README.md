@@ -85,6 +85,17 @@ the model to load, then starts the review interface on
 <http://localhost:8090>. Upload a PDF and watch the progress log; the report
 and evidence appendix download when it finishes.
 
+Two settings sit beside the **Start review** button and apply to that review
+only, so neither needs a restart:
+
+| Control | What it does |
+| --- | --- |
+| **Reasoning** | `instruct`, `thinking`, or `thinking: synthesis only` — the hybrid, which reasons in the synthesis and validation but not in the chunk notes. See [Reasoning mode](#reasoning-mode). |
+| **Vision** | whether a table whose text layer looks damaged is re-read from the page image. See [Reading damaged tables from the page image](#reading-damaged-tables-from-the-page-image). |
+
+Once a review has finished, an **Ask about this manuscript** box appears below
+it. See [Asking about a reviewed manuscript](#asking-about-a-reviewed-manuscript).
+
 ```bash
 ./scripts/qwen_service.sh status     # what is running, and on which code
 ./scripts/qwen_service.sh logs app   # follow the app-server log
@@ -118,13 +129,24 @@ unless `--keep-llama` is given.
 3. **Method classification** — rule-based detection of the analytic framework
    (Bayesian mixed effects, distributional/GAMLSS, cross-classified MCMC,
    frequentist profile models, and others).
-4. **Method-aware critique** — the prompt for each chunk carries the
+4. **Study-design classification** — separately from the method, and reported
+   beside it: a meta-analysis pooling with a Bayesian model is both an evidence
+   synthesis and a Bayesian analysis, and the two expectations are different.
+   Where the design is recognised, the report gains an **Expected reporting
+   elements** section listing what a study of that kind normally reports and
+   could not be found — with the search terms printed, because an absence check
+   accuses where a quotation check merely misses.
+5. **Method-aware critique** — the prompt for each chunk carries the
    expectations appropriate to the framework actually used, so a Bayesian
    analysis is not criticised for missing frequentist diagnostics.
-5. **Synthesis and validation** — synthesis into a single report, followed by
+6. **Synthesis and validation** — synthesis into a single report, followed by
    programmatic and model-driven post-checks: contradiction correction,
-   direction-of-effect checks, negative-constraint enforcement.
-6. **Output** — a markdown review report plus an evidence appendix showing
+   direction-of-effect checks, negative-constraint enforcement, and arithmetic
+   checks that need no model at all — an estimate lying outside its own
+   confidence interval, a fit index failing a threshold the manuscript itself
+   declared, a set of category percentages that does not sum, a value the text
+   attributes to one table that appears only in another.
+7. **Output** — a markdown review report plus an evidence appendix showing
    exactly what was extracted and fed to the model.
 
 ### Manuscripts under review
@@ -239,12 +261,21 @@ Every concern carries a computed `Confidence:` line, and the report ends with an
 
 | Label | Meaning |
 | --- | --- |
-| Verified | every quotation in the concern was located in the manuscript |
-| Inferred | the concern is reasoning rather than quotation |
-| Unverified | a quotation could not be found, or the evidence cited the pipeline's own summary rather than the paper |
+| Quoted | every quotation in the item was located in the extracted text |
+| Reasoned | the item argues from the evidence rather than quoting it |
+| Unquoted | a quotation could not be located, or the evidence cited the pipeline's own summary rather than the paper |
 | Question | a check to settle, not an established fault |
 
-When no concern reaches Verified, a banner at the top of the report says so.
+**This orders provenance, not correctness.** An Unquoted item may be right and a
+Quoted one wrong. The labels record how an item is worded and evidenced, which
+is a useful signal and not a verdict: across the manuscripts this pipeline has
+been measured against, concerns that human reviewers raised independently have
+arrived Unquoted, because the model paraphrased rather than quoted. Read the
+label as "how far can I check this without opening the paper", not as "is this
+right".
+
+When no concern reaches Quoted, a banner at the top of the report says so, in
+the same terms.
 
 These labels are computed by the citation check, not asserted by the model.
 There is deliberately no severity grade: an earlier version asked the model to
@@ -263,6 +294,39 @@ anything the model said:
 - **Citation check** — every quotation searched for in the extracted text, and
   every number checked against it. A report containing no quotations at all is
   called out rather than congratulated.
+
+### What the citation check cannot tell you
+
+**It verifies that a quotation matches the extracted text, not that it matches
+the manuscript.** Everything downstream of extraction — the model, the citation
+check, and the question box — reads the same extracted text, so a value that
+extraction corrupted is confirmed rather than caught, and it is confirmed
+consistently by all three.
+
+This is not hypothetical. A line-numbered manuscript under review reported a
+sample size as `n = 173`, and the marginal line number for that line was glued
+to the end of the text with no space before it, so the extracted text read
+`n =116 173`. The report asked the reviewer to resolve the ambiguity, the
+citation check confirmed the quotation, and the question box confirmed it again.
+All three were right about the text and wrong about the paper. The stripper now
+removes numbers in that position, but the general point stands.
+
+So:
+
+- **Check numeric values against the PDF before using them.** Sample sizes,
+  coefficients, degrees of freedom, p-values and confidence limits are the
+  values most often disturbed by extraction and the least self-evident when they
+  are wrong. A figure that looks odd usually is odd, in one direction or the
+  other.
+- **Read the `Extraction:` header lines.** They say how many marginal line
+  numbers were removed, which tables were re-read from the page image, and
+  whether vision was on at all. A manuscript with hundreds of line numbers
+  removed is one where a stray number surviving is plausible.
+- **Graphical figures are never read.** Anything that exists only in a figure —
+  a flow diagram, a directed acyclic graph, a plotted distribution — is invisible
+  to the pipeline, and a report cannot notice a fault it cannot see. Where a
+  concern turns on a figure, the report should be saying it could not look; if it
+  says anything stronger, treat that as the model overreaching.
 
 ---
 
