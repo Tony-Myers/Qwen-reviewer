@@ -26,6 +26,7 @@ are right.
 
 from __future__ import annotations
 
+import bisect
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -595,17 +596,29 @@ def placeholder_warning(text: str) -> List[Finding]:
         # A bare total misleads when the artefacts cluster: one submission held
         # 21, of which 13 sat on a single appendix-listing page, and a reader
         # working through the body could find only 7.
+        #
+        # The breakdown is taken from the same scan as the total, by locating
+        # each match's offset in the page markers. Counting line by line missed
+        # any artefact that wrapped across a newline, which the whole-text scan
+        # still counted: one submission reported 23 and then broke them down as
+        # 21. A breakdown that does not sum to its own total is worse than none,
+        # so an artefact that cannot be placed suppresses the breakdown.
+        marker_starts: List[int] = []
+        marker_pages: List[str] = []
+        for marker in re.finditer(r"^[ \t]*\[Page (\d+)\]", text, re.M):
+            marker_starts.append(marker.start())
+            marker_pages.append(marker.group(1))
         pages: Dict[str, int] = {}
-        current = "?"
-        for line in text.splitlines():
-            page = re.match(r"\s*\[Page (\d+)\]", line)
-            if page:
-                current = page.group(1)
-            found = len(_AUTHORING_ARTEFACT.findall(line))
-            if found:
-                pages[current] = pages.get(current, 0) + found
+        unplaced = 0
+        for hit in _AUTHORING_ARTEFACT.finditer(text):
+            index = bisect.bisect_right(marker_starts, hit.start()) - 1
+            if index < 0:
+                unplaced += 1
+                continue
+            page_number = marker_pages[index]
+            pages[page_number] = pages.get(page_number, 0) + 1
         where = ""
-        if pages and "?" not in pages:
+        if pages and not unplaced:
             where = (" - " + ", ".join(f"page {k}: {v}" for k, v in
                                        sorted(pages.items(), key=lambda kv: int(kv[0]))))
         findings.append(Finding(

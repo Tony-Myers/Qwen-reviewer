@@ -4558,6 +4558,18 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
             source_values.append(float(token))
         except ValueError:
             continue
+    # A table writing 4.59e-3 and a report writing 0.0046 hold the same value.
+    # The pattern above takes "4.59" out of "4.59e-3" and drops the exponent, so
+    # the rounding tolerance could not fire and the check called a faithful
+    # conversion absent on the swimming manuscript. Collected as values only:
+    # the literal strings differ, so this can suppress a finding but never add
+    # one.
+    for token in re.findall(r"\d*\.?\d+[eE][-+]?\d+",
+                            _normalise_numeric_artefacts(source_text)):
+        try:
+            source_values.append(float(token))
+        except ValueError:
+            continue
     # A verification prompt asks a question and offers examples; the numbers in
     # "e.g., 0.95, 0.99, or a ROPE" are hypothetical thresholds, not citations,
     # and were reported as absent on Eustace et al. 2025.

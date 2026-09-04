@@ -130,6 +130,19 @@ check("a faithful short numeric quotation passes",
 check("a short quotation with no digits is still ignored",
       rp.verify_report_citations('it is "ambiguous" here.', _SRC) == [])
 
+# A p-value given as 4.59e-3 in a table and written as 0.0046 in the report is
+# the same number. The source pattern dropped the exponent, so the check called
+# the conversion a fabrication on the swimming manuscript.
+_SCI = "Women's 200m Hierarchical 4 15.05 4.59e-3 0.09 [0.04, 1]"
+check("a rounded scientific-notation value is not called absent",
+      rp.verify_report_citations("the hierarchical p-value was 0.0046 here.",
+                                 _SCI) == [],
+      rp.verify_report_citations("the hierarchical p-value was 0.0046 here.", _SCI))
+check("a value that is genuinely absent is still caught",
+      any("0.0071" in p for p in
+          rp.verify_report_citations("the p-value was 0.0071 here.", _SCI)),
+      rp.verify_report_citations("the p-value was 0.0071 here.", _SCI))
+
 print()
 if fails: print(f"{len(fails)} FAILURE(S): {fails}"); sys.exit(1)
 print("All citation-check tests passed.")

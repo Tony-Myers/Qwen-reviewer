@@ -165,6 +165,36 @@ check("a failed quotation whose numbers are absent says that instead",
 check("a quotation with no numbers returns nothing",
       mc.numeric_fallback("a plausible sounding phrase", source) is None)
 
+print("\nThe placeholder breakdown sums to its own total")
+
+# The artefact wraps across a newline, so a line-by-line count misses it while
+# the whole-text scan finds it. That mismatch printed a total of 23 over a
+# breakdown of 21 on the swimming manuscript.
+_WRAPPED = (
+    "[Page 7]\n"
+    "These are plotted in Error! Reference source not found. and again in\n"
+    "Error!\nReference source not found. below.\n"
+    "[Page 9]\n"
+    "See Error! Reference source not found. for the full set.\n"
+)
+_placeholder = [f for f in mc.placeholder_warning(_WRAPPED)
+                if f.key == "authoring_artefact"]
+check("the wrapped artefact is counted", len(_placeholder) == 1, str(_placeholder))
+_detail = _placeholder[0].label if _placeholder else ""
+check("the total counts all three", "contains 3 unresolved" in _detail, _detail)
+import re as _re
+_per_page = [int(n) for n in _re.findall(r"page \d+: (\d+)", _detail)]
+check("and the breakdown sums to the total", sum(_per_page) == 3, _detail)
+
+# An artefact before the first page marker cannot be placed, so no breakdown is
+# printed rather than one that does not sum.
+_UNPLACED = ("Error! Reference source not found.\n[Page 4]\n"
+             "Error! Reference source not found.\n")
+_detail2 = [f for f in mc.placeholder_warning(_UNPLACED)
+            if f.key == "authoring_artefact"][0].label
+check("an unplaceable artefact suppresses the breakdown",
+      "contains 2 unresolved" in _detail2 and "page 4:" not in _detail2, _detail2)
+
 print("\nThe check that is not shipped")
 
 check("duplicated_sentences is excluded from run_all",
