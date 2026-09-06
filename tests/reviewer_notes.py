@@ -38,6 +38,25 @@ Four things measured in reports/CHAT-RETRIEVAL-PROBE.md decide the design.
     conceptual phrase "model comparison cross validation" made that question
     worse, because the added words belong to the prediction textbooks
     (section 7.3). Synonyms, never paraphrases.
+
+5.  DEMOTE THE SECTIONS THAT DESCRIBE THE NOTE RATHER THAN ANSWER ANYTHING.
+    A note's purpose, terminology list, red flags and checklists match many
+    questions by word overlap and answer almost none of them; they were taking
+    display slots from the sections carrying the explanation. Halving their
+    score widened the gap between the in-scope and out-of-scope medians from
+    0.127 to 0.153 over the fifty-one questions, and took the ten questions
+    from a live review from eight to nine out of ten answered by a section
+    that explains something. The result is flat for any weight at or below
+    0.6, so this is the difference between demoting and not, rather than a
+    tuned number.
+
+    Two alternatives were measured against this one and rejected. Folding
+    word forms together (sensitivity/sensitive) reached the right note more
+    often and the right section less often, 8 of 10 down to 7, and narrowed
+    the median gap to 0.106. Expanding a query about sensitivity with
+    "robust" changed no ranking at all and lowered every score, because the
+    added word lengthens the query vector without matching the passages that
+    deserve to win. tests/probe_expansion.py reproduces all of it.
 """
 
 from __future__ import annotations
@@ -58,6 +77,22 @@ CHUNK_CHARS = 1800
 # wrong heading -- the R-hat answer displayed as "What is Hamiltonian Monte
 # Carlo?" -- which is the fault section 9.5 of the probe record exists to fix.
 MIN_SECTION_CHARS = 220
+
+# Headings whose sections describe the note instead of answering a question.
+# "What reviewers should look for" is included because it is a checklist in
+# substance -- the tick-list mirror of the box-list at the end -- and because
+# it is the configuration the measurement in design note 5 was made under.
+META_HEADINGS = (
+    "purpose",
+    "what reviewers should look for",
+    "common reviewer questions",
+    "common misconceptions",
+    "common terminology",
+    "common reviewer red flags",
+    "quick reviewer checklist",
+    "what this guide does",
+)
+META_WEIGHT = 0.5
 
 _HEADING = re.compile(r"(?m)^\s{0,3}(#{1,6})\s+(\S.*)$")
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9_+-]*")
@@ -151,6 +186,16 @@ def _tokenise(text: str) -> List[str]:
     return [t for t in _TOKEN.findall(text.lower()) if t not in _STOPWORDS and len(t) > 1]
 
 
+def is_meta(note: str, heading: str) -> bool:
+    """A section that describes the note rather than answering a question.
+
+    The note's own title counts: the text before the first inner heading is
+    the purpose paragraph, and it carries the title as its heading.
+    """
+    h = heading.strip().lower()
+    return h.startswith(META_HEADINGS) or h == note.strip().lower()
+
+
 def expand(query: str) -> str:
     """Add exact technical synonyms for terms the notes may spell differently."""
     low = query.lower()
@@ -224,6 +269,9 @@ class NotesIndex:
             else:
                 s = sum(w * qv.get(t, 0.0) for t, w in dv.items())
             if s > 0:
+                p = self.passages[i]
+                if is_meta(p.note, p.heading):
+                    s *= META_WEIGHT
                 scored.append((s, i))
         scored.sort(key=lambda x: (-x[0], x[1]))
 

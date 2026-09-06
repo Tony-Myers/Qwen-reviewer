@@ -123,6 +123,24 @@ for question in ["how do I select a clustering method",
 check("an entirely unrelated question returns nothing at all",
       index.search("zzzqqq vvvv xqklm bfftz", k=3) == [])
 
+print("meta sections are demoted")
+# A note's purpose, terminology, red flags and checklists match many questions
+# by word overlap and answer almost none of them. Before they were demoted, the
+# heterogeneity question returned the note's preamble, its checklist and its
+# definition, and none of the sections that answer it.
+check("the demotion weight is the measured one", rn.META_WEIGHT == 0.5)
+check("a note title is recognised as its own preamble",
+      rn.is_meta("Between-Study Heterogeneity and Priors on Tau",
+                 "Between-Study Heterogeneity and Priors on Tau"))
+check("a question heading is not treated as meta",
+      not rn.is_meta("Effect Sizes", "Why does the denominator of an SMD matter?"))
+for question in ["how sensitive are the results to the prior for heterogeneity",
+                 "what convergence diagnostics should be reported",
+                 "were the outcomes from the same participants independent"]:
+    hits = index.search(question, k=3)
+    check(f"no meta section leads {question[:40]!r}",
+          bool(hits) and not rn.is_meta(hits[0].note, hits[0].heading))
+
 print("presentation")
 passages = index.search("what convergence diagnostics should be reported", k=2)
 rendered = rn.format_passages(passages)

@@ -281,9 +281,10 @@ arbitrary window of characters.
 What was measured before anything was built on it: fifty-one questions, twenty
 one of them statistical and thirty deliberately outside the notes' scope, taken
 from highly viewed CrossValidated questions rather than written alongside the
-notes. In scope the best passage scored a median of 0.333; out of scope, 0.207.
-Three of the thirty out-of-scope questions scored at or above the in-scope
-median. The same questions run against a full corpus of statistical texts, in a
+notes. In scope the best passage scored a median of 0.328; out of scope, 0.175.
+Four of the thirty out-of-scope questions scored at or above the in-scope
+median, a count that moves with either distribution and says less than the gap
+between the two medians. The same questions run against a full corpus of statistical texts, in a
 separate application and so not reproducible from this repository, put ten of
 the thirty there. The restriction to a deliberately written set is what produces
 the separation, not the retrieval method, which is the plainest one available.
@@ -292,12 +293,28 @@ That restriction is a resource to spend rather than a permanent property. The
 out-of-scope median was 0.188 across ten notes and 0.207 across fifteen, while
 the in-scope median did not move; each note added raises the floor a little,
 because more documents means commoner words and lower weights for the
-distinctive ones. The count of out-of-scope questions reaching the in-scope
-median stayed at three throughout, so nothing has degraded yet, but the figure
-to watch when adding a note is the out-of-scope median rather than whether the
-new note answers its own question.
+distinctive ones. The figure to watch when adding a note is therefore the
+out-of-scope median, not whether the new note answers its own question.
 
-Three in thirty is the honest figure, and it is why the passages are headed as
+Sections that describe a note rather than answer anything -- its purpose, the
+terminology list, the red flags, the checklists -- are scored at half weight.
+They match many questions by word overlap and answer almost none of them, and
+before they were demoted they were taking display slots from the sections
+carrying the explanation: a question about the prior on tau returned the note's
+preamble, its checklist and its definition, and none of the sections that
+address it. Halving them widened the gap between the two medians from 0.127 to
+0.153, and the result is flat for any weight at or below 0.6, so this is the
+difference between demoting and not rather than a tuned number.
+
+Two alternatives were measured against it and rejected. Folding word forms
+together, so that "sensitive" matches "sensitivity", reached the right note
+more often and the right section less often and narrowed the gap to 0.106.
+Expanding a query about sensitivity with "robust" changed no ranking at all
+and lowered every score, because the added word lengthens the query vector
+without matching the passages that deserve to win. `tests/probe_expansion.py`
+reproduces both.
+
+Four in thirty is the honest figure, and it is why the passages are headed as
 passages you may find relevant rather than as an answer: retrieval returns text,
 and one of the passages may simply be off the point. The score is printed to
 show the separation and gates nothing.
