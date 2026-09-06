@@ -312,7 +312,9 @@ more often and the right section less often and narrowed the gap to 0.106.
 Expanding a query about sensitivity with "robust" changed no ranking at all
 and lowered every score, because the added word lengthens the query vector
 without matching the passages that deserve to win. `tests/probe_expansion.py`
-reproduces both.
+reproduces all five arms, and reads the shipped weight, so the comparison can
+be repeated when the notes change: a conclusion drawn over fifteen notes is not
+automatically true over twenty.
 
 Four in thirty is the honest figure, and it is why the passages are headed as
 passages you may find relevant rather than as an answer: retrieval returns text,
@@ -598,6 +600,7 @@ so you can repeat them on your own papers and your own model.
 .venv/bin/python tests/sampler_sweep.py a.pdf b.pdf        # compare configurations
 .venv/bin/python tests/report_tally.py reports/            # tally reports you have
 python3 tests/run_reviewer_notes.py --measure              # reviewer-note retrieval
+python3 tests/probe_expansion.py                           # and the alternatives to it
 ```
 
 `sampler_sweep.py` reviews each paper under each configuration and scores the
