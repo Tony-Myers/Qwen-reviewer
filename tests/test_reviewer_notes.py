@@ -53,12 +53,24 @@ cases = [
     ("does a non-significant p-value mean there is no effect", "non-significant result"),
     ("is a lower or higher DIC better", "DIC"),
     ("what is BFMI", "BFMI"),
-    ("which direction is better for ELPD", "direction"),
 ]
 for question, expected in cases:
     hit = top(question)
     check(f"{question!r} -> heading contains {expected!r}",
           hit is not None and expected.lower() in hit.heading.lower())
+
+# ELPD is asserted on content rather than on a heading. Adding the effect-size
+# note, which uses "direction" in its own sense, lowered the IDF of that word
+# and moved "Which direction is better?" out of the top slot. What replaced it
+# -- "What is ELPD?" -- states "Higher ELPD values indicate better expected
+# predictive performance", so the question is answered by the passage a reader
+# sees first. Asserting the heading would have failed on an improvement; the
+# assertion is therefore on the answer being present and visible.
+elpd = index.search("which direction is better for ELPD", k=3)
+check("'which direction is better for ELPD' -> the top passage says which way is better",
+      bool(elpd) and "higher elpd" in elpd[0].text.lower())
+check("'which direction is better for ELPD' -> the direction section is still returned",
+      any("direction" in h.heading.lower() for h in elpd))
 
 # Where several sections of one note are within a hair of each other, the right
 # one need only be in the top few. "Does the outcome have to be Normally
@@ -104,8 +116,12 @@ for question in ["how do I select a clustering method",
     hits = index.search(question, k=3)
     check(f"no forced result for {question[:38]!r}",
           all(h.score > 0 for h in hits))
+# The nonsense string must stay nonsense. "unrelated" stopped being nonsense
+# when the network meta-analysis note arrived carrying "unrelated mean effects
+# models", and this check failed on a real word rather than on a fault. Any
+# replacement must avoid words that could become technical terms later.
 check("an entirely unrelated question returns nothing at all",
-      index.search("zzzqqq unrelated tokens vvvv", k=3) == [])
+      index.search("zzzqqq vvvv xqklm bfftz", k=3) == [])
 
 print("presentation")
 passages = index.search("what convergence diagnostics should be reported", k=2)

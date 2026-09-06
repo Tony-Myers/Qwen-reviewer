@@ -189,30 +189,6 @@ what reading a table cell depends on) and turns on `QWEN_VISION_TABLES` for the
 app server. Without a projector beside the model the flag warns and carries on
 without it.
 
-### Asking about a reviewed manuscript
-
-Under a finished review there is an **Ask about this manuscript** box. It answers
-from that paper's extracted text and nothing else, and every answer goes through
-the same citation check the report does, against the same text.
-
-Where the manuscript fits the context window the whole of it is sent, because a
-passage that was never selected cannot be quoted; a paper in this field extracts
-to around 20,000 tokens against a 32,768-token context. Longer documents are
-narrowed by BM25 over the manuscript's own paragraphs, which weighs a term by
-how rare it is in that paper — "S_Dbw" locates a passage, "cluster" does not.
-The prompt says which case applies, because it changes what an absence means: if
-the whole paper is present, something missing from it is missing from the paper;
-if it is a selection, it is only missing from the selection. The
-result travels with the answer — every quotation located, a quotation that could
-not be found, or a note that the answer quoted nothing and so was not checked at
-all.
-
-It is a lookup instrument, not a second opinion. It will not judge the paper, and
-where the retrieved passages do not settle a question it is told to say so rather
-than to infer. That matters because a report's concerns are labelled by whether
-their quotations resolved, which is not the same as whether they are right;
-asking where the paper says something is the cheapest way to find out.
-
 The flag now sets only the default. A single review can override it from the
 **Vision** selector in the browser, next to the reasoning mode, so vision can be
 turned on or off for one paper without restarting the server. The projector is
@@ -241,6 +217,97 @@ transcription recovered the structure completely, invented no numbers at all,
 and preserved a garbled cell (`s0`) rather than tidying it away. That last
 point is what makes it usable — the garbled cell turned out to be what the
 paper prints. `tests/probe_vision.py` runs the same comparison on any page.
+
+### Asking about a reviewed manuscript
+
+Under a finished review there is an **Ask about this manuscript** box. It answers
+from that paper's extracted text and nothing else, and every answer goes through
+the same citation check the report does, against the same text.
+
+Where the manuscript fits the context window the whole of it is sent, because a
+passage that was never selected cannot be quoted; a paper in this field extracts
+to around 20,000 tokens against a 32,768-token context. Longer documents are
+narrowed by BM25 over the manuscript's own paragraphs, which weighs a term by
+how rare it is in that paper — "S_Dbw" locates a passage, "cluster" does not.
+The prompt says which case applies, because it changes what an absence means: if
+the whole paper is present, something missing from it is missing from the paper;
+if it is a selection, it is only missing from the selection. The
+result travels with the answer — every quotation located, a quotation that could
+not be found, or a note that the answer quoted nothing and so was not checked at
+all.
+
+It is a lookup instrument, not a second opinion. It will not judge the paper, and
+where the retrieved passages do not settle a question it is told to say so rather
+than to infer. That matters because a report's concerns are labelled by whether
+their quotations resolved, which is not the same as whether they are right;
+asking where the paper says something is the cheapest way to find out.
+
+### Statistical reference notes
+
+The ask box answers from the manuscript. A reviewer's other kind of question is
+not about the manuscript at all: whether an R-hat of 1.05 is close enough to 1,
+what a Pareto k warning does to a LOO comparison, whether a non-significant
+result licenses a claim of no difference. Nothing in a review answers those, and
+a model asked one of them with no source in front of it will answer anyway.
+
+`resources/reviewer_notes/` holds fifteen notes written for that gap: Bayesian
+computation and convergence, HMC and Gibbs sampling, Bayesian decision rules and
+posterior interpretation, model comparison and predictive performance, the BARG
+reporting points, model fit and information criteria, regression assumptions and
+residual diagnostics, choosing distributions, transformations and
+back-transformations, interpreting p-values and non-significant results, effect
+sizes and standardised mean differences, between-study heterogeneity and priors
+on tau, network meta-analysis assumptions, dose-response coverage, and reviewing
+Bayesian studies after Lee and Yin. Each ends with the sources it summarises, and they are released under CC BY 4.0
+(`resources/reviewer_notes/LICENCE.md`). They are summaries written for
+reviewing, not replacements for the papers behind them.
+
+```bash
+python3 tests/run_reviewer_notes.py "is an R-hat of 1.05 acceptable?"
+python3 tests/run_reviewer_notes.py --ask
+python3 tests/run_reviewer_notes.py --measure
+```
+
+`--ask` reads questions a line at a time, which is the only reliable way to
+type one: a shell treats "?" as a wildcard, ">" as a redirection and brackets
+as grouping, and a question pasted from a word processor arrives with curly
+quotes that do not quote. Nothing beyond the standard library is needed, so
+the virtual environment is optional here. Retrieval is TF-IDF cosine over the notes' own sections: no
+model, no index to build, no network. Sections come from the headings the notes
+were written under, so a passage arrives labelled with the question it was
+written to answer rather than with whatever heading happened to precede an
+arbitrary window of characters.
+
+What was measured before anything was built on it: fifty-one questions, twenty
+one of them statistical and thirty deliberately outside the notes' scope, taken
+from highly viewed CrossValidated questions rather than written alongside the
+notes. In scope the best passage scored a median of 0.333; out of scope, 0.207.
+Three of the thirty out-of-scope questions scored at or above the in-scope
+median. The same questions run against a full corpus of statistical texts, in a
+separate application and so not reproducible from this repository, put ten of
+the thirty there. The restriction to a deliberately written set is what produces
+the separation, not the retrieval method, which is the plainest one available.
+
+That restriction is a resource to spend rather than a permanent property. The
+out-of-scope median was 0.188 across ten notes and 0.207 across fifteen, while
+the in-scope median did not move; each note added raises the floor a little,
+because more documents means commoner words and lower weights for the
+distinctive ones. The count of out-of-scope questions reaching the in-scope
+median stayed at three throughout, so nothing has degraded yet, but the figure
+to watch when adding a note is the out-of-scope median rather than whether the
+new note answers its own question.
+
+Three in thirty is the honest figure, and it is why the passages are headed as
+passages you may find relevant rather than as an answer: retrieval returns text,
+and one of the passages may simply be off the point. The score is printed to
+show the separation and gates nothing.
+
+**None of this is connected to the interface yet.** It lives in `tests/` and
+`resources/`, outside the files the pipeline fingerprint covers, so a review
+runs exactly as it did before the notes existed and the `Pipeline` hash in a
+report header does not move. Connecting it to the ask box is a separate step,
+and the evidence it waits on is a set of questions taken from a real review of a
+real manuscript, which is the case these notes will actually meet.
 
 ---
 
@@ -513,6 +580,7 @@ so you can repeat them on your own papers and your own model.
 .venv/bin/python tests/probe_thinking_chunk.py paper.pdf   # how much does it reason?
 .venv/bin/python tests/sampler_sweep.py a.pdf b.pdf        # compare configurations
 .venv/bin/python tests/report_tally.py reports/            # tally reports you have
+python3 tests/run_reviewer_notes.py --measure              # reviewer-note retrieval
 ```
 
 `sampler_sweep.py` reviews each paper under each configuration and scores the
@@ -551,6 +619,8 @@ app/
 scripts/
   qwen_service.sh       start, stop and inspect the service
 tests/                  test suites and measurement tools
+resources/
+  reviewer_notes/       statistical notes for reviewers, CC BY 4.0
 start_server.sh         single-terminal launcher
 start_llama_server.sh   model server on its own
 run_review.sh           command-line entry point

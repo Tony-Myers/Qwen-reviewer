@@ -3,7 +3,13 @@
 Ask the reviewer notes a question, or measure them over a question set.
 
     python3 tests/run_reviewer_notes.py "is an R-hat of 1.01 acceptable"
+    python3 tests/run_reviewer_notes.py --ask
     python3 tests/run_reviewer_notes.py --measure
+
+--ask reads questions from the terminal one line at a time, so the shell
+never sees them. Use it for anything containing brackets, ">", "?" or the
+curly quotes a word processor produces; an empty line ends the session.
+Running the script with no arguments at a terminal does the same thing.
 
 --measure runs the 51 CrossValidated questions of section 9 of
 reports/CHAT-RETRIEVAL-PROBE.md, labelled in advance as in scope (the notes
@@ -113,17 +119,64 @@ def measure(index: NotesIndex) -> int:
     return 0
 
 
+def ask(index: NotesIndex) -> int:
+    """Read questions a line at a time.
+
+    The shell is the wrong place to type a research question: "?" globs, ">"
+    redirects, brackets group, and a question pasted from a word processor
+    arrives with curly quotes that are not quotes at all. input() sees the
+    line exactly as typed.
+    """
+    print("Type a question and press return. An empty line ends the session.\n")
+    while True:
+        try:
+            question = input("notes> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if not question:
+            return 0
+        print()
+        print(format_passages(index.search(question, k=3)))
+        print()
+
+
 def main() -> int:
-    index = NotesIndex()
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if "--measure" in sys.argv:
-        return measure(index)
-    if not args:
+    argv = sys.argv[1:]
+
+    # "--ask" and the question run together, which is what happens when both
+    # are pasted as one line. Take the remainder as the question rather than
+    # falling through to a usage message that looks like a refusal.
+    for i, a in enumerate(argv):
+        if a.startswith("--ask") and a != "--ask":
+            argv[i : i + 1] = ["--ask", a[len("--ask") :]]
+        elif a.startswith("--measure") and a != "--measure":
+            argv[i : i + 1] = ["--measure", a[len("--measure") :]]
+
+    flags = {a for a in argv if a.startswith("--")}
+    unknown = flags - {"--ask", "--measure", "--help"}
+    if unknown:
+        print(f"Unrecognised option(s): {', '.join(sorted(unknown))}\n")
+        print(__doc__)
+        return 2
+    if "--help" in flags:
         print(__doc__)
         return 0
-    question = " ".join(args)
-    print(f"Question: {question}\n")
-    print(format_passages(index.search(question, k=3)))
+
+    args = [a for a in argv if not a.startswith("--") and a.strip()]
+    index = NotesIndex()
+    if "--measure" in flags:
+        return measure(index)
+    if args:
+        # A question was given, with or without --ask; answer it, then keep
+        # the prompt open if --ask was asked for.
+        question = " ".join(args)
+        print(f"Question: {question}\n")
+        print(format_passages(index.search(question, k=3)))
+        return ask(index) if "--ask" in flags else 0
+    if "--ask" in flags or sys.stdin.isatty():
+        return ask(index)
+    print(__doc__)
     return 0
 
 
