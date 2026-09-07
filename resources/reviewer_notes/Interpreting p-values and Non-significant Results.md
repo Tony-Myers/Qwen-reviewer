@@ -98,6 +98,18 @@ A statement such as:
 
 is usually **not** justified unless the study was specifically designed to demonstrate equivalence or the confidence interval excludes clinically important differences.  
 
+##### Should the significance threshold be justified?
+
+Yes, and it almost never is.
+
+0.05 is a convention, not a property of the world. Unlike a credible interval's width, it does have an operating characteristic -- it is a long-run rate of rejecting a true null hypothesis -- so "why 0.05?" has an answerable form: what rate of false positives is tolerable here, given what a false positive and a false negative each cost in this setting.
+
+Reviewers should not expect authors to depart from 0.05. What is reasonable to expect is that the choice appears as a choice: stated, and prespecified rather than settled once the p-values were in view. A threshold selected after the results are visible is not a threshold.
+
+Where several tests are reported, the threshold and the treatment of multiplicity belong together. A paper that applies 0.05 to twenty comparisons and corrects for none of them has made a decision about error rates whether or not it says so.
+
+The same question arises in Bayesian work without the error-rate meaning; see the note on Bayesian decision rules.
+
 ##### Why are confidence intervals important?
 
 Confidence intervals show the range of effect sizes that remain reasonably compatible with the observed data under the statistical model.

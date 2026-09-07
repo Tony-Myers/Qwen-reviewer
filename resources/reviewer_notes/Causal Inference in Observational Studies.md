@@ -129,6 +129,18 @@ The useful form asks how strong an unmeasured confounder would have to be, in it
 
 Such analyses do not demonstrate that no confounding remains. They tell a reader whether the finding would survive a plausible one, which is a question the reader can otherwise only guess at.
 
+##### What do placebo tests and negative controls establish?
+
+Less than they are usually said to.
+
+A **negative control outcome** is one the treatment could not plausibly affect; a **negative control exposure** is one that could not plausibly affect the outcome. If an association appears where none should exist, something is wrong -- residual confounding, selection, or an error in the data or the code. A **permutation or label-shuffling test** is a related device: the grouping label is reassigned at random and the structure of interest should disappear.
+
+What a clean result establishes is narrow. It says that no spurious signal was detected **at the power available**, which is not the same as showing there is none, and it speaks only to the particular route the control was chosen to probe. A negative control cannot demonstrate that unmeasured confounding is absent in general.
+
+It is also worth being clear what a shuffling test addresses. Reassigning group labels destroys all structure at that level, so the test asks whether the observed clustering exceeds what chance would produce. That is a question about model specification, not about identification: a variance component can be real and the effect attached to it still confounded.
+
+Reviewers should ask how many units carry the shuffled label, because with few groups the permutation null is coarse and the test has little power; how many permutations were run; whether the negative control is genuinely one, on the authors' own theory; and whether it was prespecified, since a falsification test chosen after the results are known can be selected for the answer it gives.
+
 ##### When may a paper use causal language?
 
 When it states the assumptions its causal interpretation requires and defends them.
