@@ -110,14 +110,15 @@ def run(index, do_fold: bool, do_concept: bool, meta_weight: float):
 
 # Ten questions from a live review of a Bayesian dose-response meta-analysis.
 # The allowed notes are the ones that ought to answer each, recorded before the
-# arms were run. The list is deliberately strict and one entry is arguably too
-# strict: on the first question the Lee and Yin passage on credible versus
-# confidence intervals is a good answer from a note not listed here.
+# arms were run. Two entries were originally too strict: on both credible-interval
+# questions the Lee and Yin passage on credible versus confidence intervals is a
+# good answer, and excluding it recorded a near-tie between two correct notes as a
+# failure -- which then let a scorer appear to improve by flipping the tie. Widened.
 MANUSCRIPT = [
-    (("Bayesian Decision Rules",), "Is it appropriate to interpret a 95% Bayesian credible "
-     "interval that excludes zero as showing statistical significance?"),
-    (("Bayesian Decision Rules",), "If the authors use whether the 95% CrI crosses zero as a "
-     "decision rule, was that rule prespecified, and why was 95% chosen?"),
+    (("Bayesian Decision Rules", "Lee & Yin"), "Is it appropriate to interpret a 95% Bayesian "
+     "credible interval that excludes zero as showing statistical significance?"),
+    (("Bayesian Decision Rules", "Lee & Yin"), "If the authors use whether the 95% CrI crosses "
+     "zero as a decision rule, was that rule prespecified, and why was 95% chosen?"),
     (("Bayesian Decision Rules",), "Should the authors report posterior probabilities such as "
      "P(effect > 0 | data), or probabilities that the effect exceeds a clinically meaningful "
      "threshold, rather than only whether the CrI includes zero?"),

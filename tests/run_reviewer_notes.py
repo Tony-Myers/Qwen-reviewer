@@ -114,6 +114,16 @@ def measure(index: NotesIndex) -> int:
     above = sum(1 for s in outs if s >= med)
     print(f"\n  out-of-scope questions at or above the in-scope median: "
           f"{above} of {len(outs)}")
+
+    # Rank separation: the probability that a randomly chosen in-scope question
+    # outscores a randomly chosen out-of-scope one, ties counting a half. It is
+    # invariant to any monotone rescaling of the score, which the medians are
+    # not: a scorer that compresses the range narrows the median gap without
+    # separating anything less well. Use this figure when comparing scorers,
+    # and the medians when comparing corpora under one scorer.
+    wins = sum(1 for a in ins for b in outs if a > b)
+    ties = sum(1 for a in ins for b in outs if a == b)
+    print(f"  rank separation: {(wins + 0.5 * ties) / (len(ins) * len(outs)):.3f}")
     print("\n  The score is reported to show the separation, not because it gates "
           "anything.\n  Passages are always displayed; see design note 2 in "
           "tests/reviewer_notes.py.")
