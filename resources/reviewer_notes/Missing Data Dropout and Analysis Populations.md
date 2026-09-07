@@ -119,7 +119,11 @@ The traditional recommendation of five imputations is often inadequate.
 
 The required number generally increases with the fraction of missing information.
 
-Authors should use enough imputations that Monte Carlo error from the imputation itself is negligible. A widely cited rule of thumb sets the number of imputations at roughly the percentage of incomplete cases, which is far more than five in most real datasets.
+Authors should use enough imputations that Monte Carlo error from the imputation itself is negligible.
+
+A widely cited rule of thumb sets the number of imputations at roughly one hundred times the fraction of missing information, which is the same as saying at least the percentage of incomplete cases. That is far more than five in most real datasets: a fraction of missing information of 0.3 implies about thirty imputations, not three.
+
+The direction matters as much as the number. More missing information requires **more** imputations, not fewer, because the between-imputation variance is being estimated from m draws and its contribution to the total variance grows with the fraction missing. Any rule that reduces m as missingness rises has the relationship inverted.
 
 ##### Does imputing missing outcomes always add something?
 
@@ -317,4 +321,4 @@ None of those are covered by any note in this set, so a question about them will
 
 ---
 
-*Based on:* Rubin, D. B. (1987). *Multiple Imputation for Nonresponse in Surveys*. Wiley; Little, R. J. A., & Rubin, D. B. (2019). *Statistical Analysis with Missing Data* (3rd ed.). Wiley; and general guidance on the reporting of missing data in trials. See also the note on effect sizes for variability that had to be reconstructed rather than observed.
+*Based on:* Rubin, D. B. (1987). *Multiple Imputation for Nonresponse in Surveys*. Wiley; White, I. R., Royston, P., & Wood, A. M. (2011). Multiple imputation using chained equations: issues and guidance for practice. *Statistics in Medicine*, 30, 377-399; Little, R. J. A., & Rubin, D. B. (2019). *Statistical Analysis with Missing Data* (3rd ed.). Wiley; and general guidance on the reporting of missing data in trials. See also the note on effect sizes for variability that had to be reconstructed rather than observed.
