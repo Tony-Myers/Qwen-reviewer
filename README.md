@@ -281,7 +281,7 @@ arbitrary window of characters.
 What was measured before anything was built on it: fifty-one questions, twenty
 one of them statistical and thirty deliberately outside the notes' scope, taken
 from highly viewed CrossValidated questions rather than written alongside the
-notes. In scope the best passage scored a median of 0.328; out of scope, 0.175.
+notes. In scope the best passage scored a median of 0.319; out of scope, 0.172.
 Four of the thirty out-of-scope questions scored at or above the in-scope
 median, a count that moves with either distribution and says less than the gap
 between the two medians. The same questions run against a full corpus of statistical texts, in a
@@ -303,8 +303,12 @@ before they were demoted they were taking display slots from the sections
 carrying the explanation: a question about the prior on tau returned the note's
 preamble, its checklist and its definition, and none of the sections that
 address it. Halving them widened the gap between the two medians from 0.127 to
-0.153, and the result is flat for any weight at or below 0.6, so this is the
-difference between demoting and not rather than a tuned number.
+0.153 when it was introduced, and the result is flat for any weight at or below
+0.6, so this is the difference between demoting and not rather than a tuned
+number. The advantage is corpus-dependent and has since narrowed: as the notes
+grew the same comparison reads 0.142 against 0.147. It still leads with a
+section that explains something more often, on eight of ten questions from a
+live review against seven.
 
 Two alternatives were measured against it and rejected. Folding word forms
 together, so that "sensitive" matches "sensitivity", reached the right note
@@ -315,6 +319,13 @@ without matching the passages that deserve to win. `tests/probe_expansion.py`
 reproduces all five arms, and reads the shipped weight, so the comparison can
 be repeated when the notes change: a conclusion drawn over fifteen notes is not
 automatically true over twenty.
+
+The probe reports the ten questions two ways, because the interface shows three
+passages and a top-one count records a near-tie as a failure when the right
+passage is second by a thousandth. On the count that matches what a reviewer
+sees, all three passages, the shipped configuration answers ten of ten, which
+is why folding is not worth its cost in separation even though it leads with
+the best passage more often.
 
 Four in thirty is the honest figure, and it is why the passages are headed as
 passages you may find relevant rather than as an answer: retrieval returns text,

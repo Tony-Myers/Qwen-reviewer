@@ -90,15 +90,19 @@ def run(index, do_fold: bool, do_concept: bool, meta_weight: float):
         for in_scope, q in QUESTIONS:
             hits = index.search(q, k=1)
             scores.setdefault(in_scope, []).append(hits[0].score if hits else 0.0)
-        note_ok, sect_ok = [], []
+        sect_ok, top3_ok = [], []
         for note_set, q in MANUSCRIPT:
-            hits = index.search(q, k=1)
-            right = bool(hits) and any(n in hits[0].note for n in note_set)
-            note_ok.append(right)
-            # the strict criterion: the right note AND a section that explains
-            # something, rather than the note's preamble or its checklist
-            sect_ok.append(right and not rn.is_meta(hits[0].note, hits[0].heading))
-        return scores, note_ok, sect_ok
+            hits = index.search(q, k=3)
+            def good(h):
+                return (any(n in h.note for n in note_set)
+                        and not rn.is_meta(h.note, h.heading))
+            # top: the leading passage explains something and comes from a note
+            # that ought to answer the question. top3: the same, anywhere in the
+            # three passages the reviewer is actually shown -- top-1 alone
+            # counts a near-tie as a failure when the right passage is second.
+            sect_ok.append(bool(hits) and good(hits[0]))
+            top3_ok.append(any(good(h) for h in hits))
+        return scores, sect_ok, top3_ok
     finally:
         rn._tokenise, rn.META_WEIGHT = original_tok, original_w
 
@@ -143,30 +147,32 @@ ARMS = [("A  no demotion", False, False, 1.0),
 
 def main() -> int:
     print(f"{'arm':<32}{'in-scope':>10}{'out':>8}{'gap':>8}"
-          f"{'note':>8}{'section':>10}{'terms':>8}")
+          f"{'top':>9}{'top-3':>10}{'terms':>8}")
     print("-" * 84)
     cache = {}
     for label, do_fold, do_concept, weight in ARMS:
         if do_fold not in cache:
             cache[do_fold] = build(do_fold)
         index = cache[do_fold]
-        scores, note_ok, sect_ok = run(index, do_fold, do_concept, weight)
+        scores, sect_ok, top3_ok = run(index, do_fold, do_concept, weight)
         m_in = statistics.median(scores[1])
         m_out = statistics.median(scores[0])
         print(f"{label:<32}{m_in:>10.3f}{m_out:>8.3f}{m_in - m_out:>8.3f}"
-              f"{sum(note_ok):>5} /10{sum(sect_ok):>7} /10{len(index._idf):>8}")
+              f"{sum(sect_ok):>6} /10{sum(top3_ok):>7} /10{len(index._idf):>8}")
 
     print("""
 in-scope and out are the median score of the best passage, over the 21 questions
 the notes are meant to cover and the 30 they are not; gap is the difference, and
-is the figure to read. note counts the ten manuscript questions whose top
-passage came from a note that ought to answer it. section is the stricter count,
-where that passage also explains something rather than being the note's
-preamble, terminology list or checklist. terms is the vocabulary size, showing
-how much folding merged.
+is the figure to read. top counts the ten manuscript questions whose leading
+passage both comes from a note that ought to answer it and explains something,
+rather than being the note's preamble, terminology list or checklist. top-3 is
+the same test applied to all three passages the reviewer is shown, which is
+what the interface displays; top-1 alone records a near-tie as a failure when
+the right passage is second by a thousandth. terms is the vocabulary size,
+showing how much folding merged.
 
-Read across: demotion widens the gap and answers more questions with a section
-that explains something. Folding does the opposite -- it reaches the right note
+Read across: demotion widens the gap and leads with a section that explains
+something more often. Folding does the opposite -- it reaches the right note
 more often and the right section less often. Adding "robust" to a question about
 sensitivity moves no ranking at all and lowers every score, because the extra
 word lengthens the query vector without matching the passages that should win.""")

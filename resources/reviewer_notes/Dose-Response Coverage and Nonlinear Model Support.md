@@ -36,6 +36,10 @@ Where several doses come from the same study, those observations usually share a
 
 A smooth fitted curve does not imply equally strong evidence everywhere along that curve.
 
+A reviewer can only judge coverage if the manuscript reports it. What is needed is the number of studies and participants contributing at each dose or dose band rather than in total, a display of the observed doses against the fitted curve with study sizes visible, and an explicit statement of where interpolation ends and extrapolation begins. A useful direct test is whether the curvature survives removing the few studies at the extremes: if the shape depends on two trials at the top of the range, the nonlinearity is a property of those trials rather than of the evidence as a whole.
+
+Where none of this is reported, the honest conclusion is not that coverage is inadequate but that it cannot be assessed, and the distribution should be reported so that it can.
+
 ##### Why does sparse coverage matter for nonlinear models?
 
 Nonlinear models can estimate curvature even when relatively little information exists at the extremes.
@@ -127,6 +131,18 @@ Where possible, authors should report:
 - observed dose coverage near the optimum;
 - sensitivity to alternative functional forms.
 
+##### How narrow do the intervals around an optimum need to be?
+
+There is no width that qualifies in general, and any universal figure would be invented.
+
+The criterion is decision-relative: the interval is narrow enough when a dose at one end and a dose at the other would lead to the same practical recommendation. An interval spanning a range across which the advice to a practitioner would differ is not narrow enough, whatever its numerical width.
+
+Three checks matter more than the width itself:
+
+- whether the curve is flat near its maximum, since an effect at the optimum that cannot be distinguished from effects at doses well away from it does not support the word "optimal" however tight the interval on the dose;
+- whether the maximum is interior, with observations near it, rather than at the edge of the observed range where the assumed form is doing the work;
+- whether the optimum moves when the functional form changes, because an interval obtained from a single spline or Emax fit is conditional on that fit and understates the uncertainty rather than measuring it.
+
 #### Common misconceptions
 
 ##### "A smooth nonlinear curve means the dose-response relationship is well established."
@@ -178,6 +194,8 @@ A clinically useful optimum also depends on uncertainty, harms, feasibility, cos
 - Extrapolated effects discussed as observed evidence.
 - Functional form selected only after seeing results.
 - Optimal dose reported without uncertainty.
+- Uncertainty around an optimum reported from one functional form only.
+- Dose distribution not reported, so coverage cannot be assessed.
 - Model selected solely because it has the lowest DIC or WAIC.
 - Sparse evidence at the dose-range boundaries ignored.
 - Multiple doses from one study treated as independent observations.
@@ -198,6 +216,8 @@ A clinically useful optimum also depends on uncertainty, harms, feasibility, cos
 □ Model-comparison differences are interpreted relative to their uncertainty.
 
 □ Claims about thresholds, plateaux and optimal doses are supported by observed evidence.
+
+□ The uncertainty around an optimum is narrow enough that its ends would support the same recommendation.
 
 ---
 

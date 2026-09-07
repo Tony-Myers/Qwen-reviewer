@@ -156,7 +156,21 @@ Useful sensitivity analyses may compare results:
 - under alternative plausible assumptions;
 - using alternative estimates of within-participant correlation where change-score SDs must be derived.
 
+Two things are commonly left out. The within-participant correlation assumed when deriving change-score SDs should be varied across a plausible range rather than fixed at a single convenient value, and the value used should come from studies reporting enough to estimate it rather than from convention. And the sensitivity analysis should report the effect on the estimated heterogeneity as well as on the pooled effect, because imputed variability tends to suppress apparent heterogeneity and so narrows the interval around the pooled estimate twice over.
+
+A statement that results were robust is not a sensitivity analysis. Reviewers should expect both estimates to be shown, and the studies requiring reconstruction to be named along with the route used for each.
+
 The purpose is to determine whether conclusions depend on uncertain estimates of variability.
+
+##### Would the conclusions change if effects were described continuously?
+
+This is worth checking directly rather than in principle.
+
+Take each sentence in the abstract and conclusions that carries a label, and rewrite it with the estimate and its interval in place of the word. If the sentence still stands, the categories were decoration. If it collapses, the categories were carrying the argument, and the conclusion rests on a convention rather than on the evidence.
+
+Comparisons made by label deserve particular attention. A finding described as moderate in one subgroup and small in another, where the two intervals overlap substantially, is an artefact of categorisation rather than a difference between the groups.
+
+The constructive form of the request is for the primary conclusions to be restated in terms of the estimates and their uncertainty, against a meaningful threshold where one can be defended for the outcome in question.
 
 ##### What if several effect sizes come from the same participants?
 
