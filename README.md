@@ -255,7 +255,7 @@ what a Pareto k warning does to a LOO comparison, whether a non-significant
 result licenses a claim of no difference. Nothing in a review answers those, and
 a model asked one of them with no source in front of it will answer anyway.
 
-`resources/reviewer_notes/` holds sixteen notes written for that gap: Bayesian
+`resources/reviewer_notes/` holds seventeen notes written for that gap: Bayesian
 computation and convergence, HMC and Gibbs sampling, Bayesian decision rules and
 posterior interpretation, model comparison and predictive performance, the BARG
 reporting points, model fit and information criteria, regression assumptions and
@@ -263,7 +263,8 @@ residual diagnostics, choosing distributions, transformations and
 back-transformations, interpreting p-values and non-significant results, effect
 sizes and standardised mean differences, between-study heterogeneity and priors
 on tau, network meta-analysis assumptions, dose-response coverage, missing data
-and analysis populations, and reviewing Bayesian studies after Lee and Yin. Each ends with the sources it summarises, and they are released under CC BY 4.0
+and analysis populations, causal inference in observational studies, and
+reviewing Bayesian studies after Lee and Yin. Each ends with the sources it summarises, and they are released under CC BY 4.0
 (`resources/reviewer_notes/LICENCE.md`). They are summaries written for
 reviewing, not replacements for the papers behind them.
 
@@ -286,7 +287,7 @@ arbitrary window of characters.
 What was measured before anything was built on it: fifty-one questions, twenty
 one of them statistical and thirty deliberately outside the notes' scope, taken
 from highly viewed CrossValidated questions rather than written alongside the
-notes. In scope the best passage scored a median of 0.328; out of scope, 0.171.
+notes. In scope the best passage scored a median of 0.329; out of scope, 0.167.
 Three of the thirty out-of-scope questions scored at or above the in-scope
 median, a count that moves with either distribution and says less than the gap
 between the two medians. The same questions run against a full corpus of statistical texts, in a
