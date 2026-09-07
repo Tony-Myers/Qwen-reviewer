@@ -287,10 +287,17 @@ arbitrary window of characters.
 What was measured before anything was built on it: fifty-one questions, twenty
 one of them statistical and thirty deliberately outside the notes' scope, taken
 from highly viewed CrossValidated questions rather than written alongside the
-notes. In scope the best passage scored a median of 0.329; out of scope, 0.167.
-Three of the thirty out-of-scope questions scored at or above the in-scope
-median, a count that moves with either distribution and says less than the gap
-between the two medians. The same questions run against a full corpus of statistical texts, in a
+notes. In scope the best passage scored a median of 0.328; out of scope, 0.170,
+and four of the thirty out-of-scope questions reached the in-scope median.
+
+Better than any of those is the rank separation, 0.838: the probability that a
+randomly chosen in-scope question outscores a randomly chosen out-of-scope one.
+It is invariant to any rescaling of the score, which the medians are not -- a
+scorer that compresses the range narrows the median gap while separating
+nothing less well. Use the separation when comparing one scorer with another,
+and the medians when comparing corpora under a single scorer. Nine scorers were
+compared this way in `tests/probe_scoring.py`, including BM25 at several
+settings; none beat what ships. The same questions run against a full corpus of statistical texts, in a
 separate application and so not reproducible from this repository, put ten of
 the thirty there. The restriction to a deliberately written set is what produces
 the separation, not the retrieval method, which is the plainest one available.
