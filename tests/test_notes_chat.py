@@ -54,6 +54,14 @@ check("a reserved source is not silently unlabelled",
 check("nothing populates a reference yet",
       server.provenance(server.SOURCE_NOTES)["reference"] is None)
 
+# A citation-check finding is not a failure to answer. The manuscript mode once
+# set resolved from the citation problems, so an answer that had correctly
+# relabelled a quotation as coming from the review displayed as "did not settle
+# the question" when it had settled it exactly.
+check("resolved is independent of the citation check",
+      "resolved=not problems" not in (Path(__file__).resolve().parent.parent
+                                      / "app" / "server.py").read_text())
+
 print("the used line is parsed, not guessed")
 cases = [
     ("An answer.\n\nUsed: [1], [3]", ("An answer.", [1, 3], False, True)),

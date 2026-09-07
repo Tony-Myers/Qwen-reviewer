@@ -132,6 +132,15 @@ def provenance(source: str, passages=None, used=None, resolved: bool = True,
     }
 
 
+# `resolved` answers one question only: did this source settle what was asked.
+# It is not a quality mark. In the manuscript mode the citation check is what
+# reports whether quotations were located, and it has its own display; a
+# quotation correctly relabelled as coming from the review rather than the
+# paper is a note about provenance, not a failure to answer, and marking such
+# an answer "did not settle the question" told the reader the opposite of the
+# truth.
+
+
 def parse_used(answer: str):
     """
     Split the trailing "Used:" line off an answer.
@@ -720,7 +729,7 @@ async def ask_about_review(job_id: str, request: dict):
                                  passages=[{"note": job.get("filename", "manuscript"),
                                             "heading": f"{found} passage(s) searched",
                                             "score": None}],
-                                 resolved=not problems),
+                                 resolved=found > 0),
     }
 
 
