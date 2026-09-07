@@ -14,6 +14,7 @@ anything in this repository.
 
     python3 tests/probe_chat_citations.py            # print the protocol
     python3 tests/probe_chat_citations.py --ask      # collect answers to grade
+    python3 tests/probe_chat_citations.py --ask --no-cite-prompt
 
 --ask posts each question twice to a running server and writes the answers to
 logs/chat-citations-<timestamp>.md for grading. Twice matters: a reference that
@@ -109,8 +110,37 @@ done the work the hedge disclaimed.
 """
 
 
-def ask(question: str, timeout: int = 300) -> str:
-    body = json.dumps({"messages": [{"role": "user", "content": question}],
+# The default chat system prompt asks for citations -- "Cite full, authentic
+# references (author, year, title, outlet, DOI/ISBN) where relevant" -- as well
+# as forbidding fabrication. Those are two instructions, and the model has been
+# complying with the first while failing the second. --no-cite-prompt removes
+# only that one line and changes nothing else, so the two runs differ in the
+# request for citations and in nothing more. It tests whether asking for
+# references is what produces them.
+CITATION_LINE = ("- Cite full, authentic references (author, year, title, "
+                 "outlet, DOI/ISBN) where relevant. Prefer peer-reviewed or "
+                 "primary sources. Never fabricate references.\n")
+
+
+def system_without_citation_line():
+    """The default prompt minus its request for references, or None."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
+        import review_pipeline as rp
+    except Exception as exc:
+        print(f"Cannot load the default chat prompt to modify it ({exc}).")
+        return None
+    default = rp._DEFAULT_CHAT_SYSTEM
+    if CITATION_LINE not in default:
+        print("The citation line has changed; update CITATION_LINE to match.")
+        return None
+    return default.replace(CITATION_LINE, "")
+
+
+def ask(question: str, timeout: int = 300, system: str = None) -> str:
+    messages = ([{"role": "system", "content": system}] if system else []) + [
+        {"role": "user", "content": question}]
+    body = json.dumps({"messages": messages,
                        "max_tokens": 1600, "temperature": 0.4}).encode("utf-8")
     req = urllib.request.Request(SERVER, data=body,
                                  headers={"Content-Type": "application/json"})
@@ -127,9 +157,17 @@ def main() -> int:
             print(f"{i:2}. [{kind}]\n    {q}\n")
         return 0
 
+    system = None
+    if "--no-cite-prompt" in sys.argv:
+        system = system_without_citation_line()
+        if system is None:
+            return 2
+        print("Running without the prompt's request for references.\n")
+
     out_dir = Path(__file__).resolve().parent.parent / "logs"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"chat-citations-{time.strftime('%Y%m%d-%H%M%S')}.md"
+    tag = "-nocite" if system else ""
+    out = out_dir / f"chat-citations{tag}-{time.strftime('%Y%m%d-%H%M%S')}.md"
 
     lines = ["# Chat citation probe", "",
              f"Collected: {time.strftime('%Y-%m-%dT%H:%M:%S')}",
@@ -140,7 +178,7 @@ def main() -> int:
         lines += [f"## {i}. {q}", "", f"*{kind}*", ""]
         for run in range(1, REPEATS + 1):
             try:
-                answer = ask(q)
+                answer = ask(q, system=system)
             except Exception as exc:
                 answer = f"(request failed: {exc})"
             lines += [f"### Run {run}", "", answer, "",
