@@ -220,9 +220,14 @@ paper prints. `tests/probe_vision.py` runs the same comparison on any page.
 
 ### Asking about a reviewed manuscript
 
-Under a finished review there is an **Ask about this manuscript** box. It answers
-from that paper's extracted text and nothing else, and every answer goes through
-the same citation check the report does, against the same text.
+Under a finished review there is an **Ask a question** box with two sources,
+chosen from a selector: this manuscript, or the reviewer notes. Every answer
+says which one it came from, so a reader never has to infer where a sentence
+originated.
+
+The manuscript source answers from that paper's extracted text and nothing else,
+and every answer goes through the same citation check the report does, against
+the same text.
 
 Where the manuscript fits the context window the whole of it is sent, because a
 passage that was never selected cannot be quoted; a paper in this field extracts
@@ -338,12 +343,31 @@ passages you may find relevant rather than as an answer: retrieval returns text,
 and one of the passages may simply be off the point. The score is printed to
 show the separation and gates nothing.
 
-**None of this is connected to the interface yet.** It lives in `tests/` and
-`resources/`, outside the files the pipeline fingerprint covers, so a review
-runs exactly as it did before the notes existed and the `Pipeline` hash in a
-report header does not move. Connecting it to the ask box is a separate step,
-and the evidence it waits on is a set of questions taken from a real review of a
-real manuscript, which is the case these notes will actually meet.
+The notes are the second source in the ask box. Choosing them sends the
+retrieved passages to the model numbered, with an instruction to answer from
+those passages and nothing else, to make no claim about the manuscript it has
+not read, and to end with a line naming the passages it drew on. Where the
+passages do not settle the question it is told to say so rather than to infer,
+and where nothing scores above zero the box says that outright instead of
+showing the least bad passage.
+
+`app/reviewer_notes.py` sits beside the pipeline but is not one of the five
+files the fingerprint covers, deliberately: it cannot change a report, which is
+written before any question is asked. What is fingerprinted is `server.py`,
+which holds the prompt and the provenance.
+
+**Reasoning is not offered, and that is the point of this phase.** The model may
+not answer from what it knows, only from what was retrieved. Two further
+provenances are already named in the code -- model reasoning, and model
+reasoning supported by a verified reference -- so that adding one later costs a
+label rather than an interface change, but neither is reachable, and neither
+should be until there is evidence about how often retrieval genuinely falls
+short and on what. That evidence is what this phase collects: every question
+asked of the notes is appended to `logs/reviewer-notes-chat.jsonl` with the
+sections retrieved and their scores, the sections the answer used, and whether
+no suitable note was found. Reviewing several papers and then reading that file
+is the experiment. If the misses cluster on one subject, the answer is another
+note; if they scatter, that is the argument for a reasoning layer.
 
 ---
 
@@ -650,8 +674,9 @@ for t in tests/test_*.py; do .venv/bin/python "$t"; done
 ```
 app/
   review_pipeline.py    parsing, evidence extraction, classification, critique
-  server.py             FastAPI app: chat, review upload, progress stream
+  server.py             FastAPI app: chat, review upload, progress stream, ask
   llm_backend.py        backend abstraction over llama.cpp and mlx_lm
+  reviewer_notes.py     retrieval over the reviewer notes (not fingerprinted)
   chat.html             web interface
 scripts/
   qwen_service.sh       start, stop and inspect the service
@@ -663,8 +688,9 @@ start_llama_server.sh   model server on its own
 run_review.sh           command-line entry point
 ```
 
-`inputs/`, `reports/` and `reviews/` are excluded from version control: they
-hold manuscripts and generated reviews.
+`inputs/`, `reports/`, `reviews/` and `logs/` are excluded from version control:
+they hold manuscripts, generated reviews, and questions asked about work that
+is usually unpublished.
 
 ## Troubleshooting
 

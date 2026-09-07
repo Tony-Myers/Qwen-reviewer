@@ -424,16 +424,65 @@ function showReport(md, hasAppendix, jobId) {
   // concern, and every answer is put through the same citation check as the
   // report, against the same extracted text.
   html += '<div class="ask-area" id="askArea" style="margin-top:20px; border-top:1px solid var(--border,#ddd); padding-top:14px;">'
-    + '<div style="font-weight:600; margin-bottom:6px;">Ask about this manuscript</div>'
-    + '<div style="font-size:12px; opacity:.75; margin-bottom:8px;">Answers come only from this paper\'s extracted text and are checked against it. '
-    + 'It will not judge the paper or answer from outside the document.</div>'
+    + '<div style="font-weight:600; margin-bottom:6px;">Ask a question</div>'
+    + '<div id="askHelp" style="font-size:12px; opacity:.75; margin-bottom:8px;"></div>'
     + '<div style="display:flex; gap:8px;">'
+    + '<select id="askMode" style="padding:7px 9px;" onchange="askModeChanged()">'
+    + '<option value="manuscript">This manuscript</option>'
+    + '<option value="reviewer_notes">Reviewer notes</option>'
+    + '</select>'
     + '<input id="askInput" type="text" style="flex:1; padding:7px 9px;" '
-    + 'placeholder="e.g. where does it say how convergence was checked?" '
     + 'onkeydown="if(event.key===\'Enter\')askReview()">'
     + '<button class="btn-secondary" id="askBtn" onclick="askReview()">Ask</button>'
     + '</div><div id="askLog" style="margin-top:12px;"></div></div>';
   ra.innerHTML = html;
+  askModeChanged();
+}
+
+// The two sources answer different questions and one of them has not read the
+// paper, so the box says which it is before the question is typed as well as
+// after the answer arrives.
+const ASK_MODES = {
+  manuscript: {
+    help: 'Answers come only from this paper\'s extracted text and are checked against it. '
+        + 'It will not judge the paper or answer from outside the document.',
+    placeholder: 'e.g. where does it say how convergence was checked?'
+  },
+  reviewer_notes: {
+    help: 'Answers come only from the reviewer notes in resources/, which are general '
+        + 'statistical guidance. This mode has not read the manuscript, so it will not say '
+        + 'what these authors did.',
+    placeholder: 'e.g. is an R-hat of 1.05 acceptable?'
+  }
+};
+
+function askModeChanged() {
+  const sel = document.getElementById('askMode');
+  const cfg = ASK_MODES[sel ? sel.value : 'manuscript'] || ASK_MODES.manuscript;
+  const help = document.getElementById('askHelp');
+  const input = document.getElementById('askInput');
+  if (help) help.textContent = cfg.help;
+  if (input) input.placeholder = cfg.placeholder;
+}
+
+function renderProvenance(d) {
+  const p = d.provenance;
+  if (!p) return '<div style="font-size:11px; opacity:.55;">' + (d.passages || 0) + ' passage(s) searched</div>';
+  let out = '<div style="font-size:11px; opacity:.7; margin-top:4px;"><strong>' + esc(p.label) + '</strong>';
+  if (!p.resolved) out += ' &middot; did not settle the question';
+  out += '</div>';
+  if (p.passages && p.passages.length) {
+    const rows = p.passages.map(function (x) {
+      const used = (p.used || []).some(function (u) {
+        return u.note === x.note && u.heading === x.heading;
+      });
+      const score = (x.score === null || x.score === undefined) ? '' : ' (' + x.score + ')';
+      return '<div style="font-size:11px; opacity:' + (used ? '.75' : '.45') + ';">'
+        + (used ? '&#10003; ' : '&nbsp;&nbsp; ') + esc(x.note) + ' &mdash; ' + esc(x.heading) + score + '</div>';
+    }).join('');
+    out += rows;
+  }
+  return out;
 }
 
 async function askReview() {
@@ -451,7 +500,7 @@ async function askReview() {
   try {
     const r = await fetch(BASE + '/api/review/' + currentJobId + '/ask', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: q })
+      body: JSON.stringify({ question: q, mode: (document.getElementById('askMode') || {}).value || 'manuscript' })
     });
     if (!r.ok) {
       const detail = await r.json().catch(() => ({}));
@@ -460,7 +509,7 @@ async function askReview() {
     const d = await r.json();
     entry.innerHTML = '<div style="font-weight:600;">' + esc(q) + '</div>'
       + '<div class="report-content">' + renderMd(d.answer + '\n' + (d.check || '')) + '</div>'
-      + '<div style="font-size:11px; opacity:.55;">' + d.passages + ' passage(s) searched</div>';
+      + renderProvenance(d);
   } catch (e) {
     entry.innerHTML = '<div style="font-weight:600;">' + esc(q) + '</div>'
       + '<div style="color:var(--error)">' + esc(e.message) + '</div>';

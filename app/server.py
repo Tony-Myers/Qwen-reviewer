@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import review_pipeline as rp
 import design_expectations as de  # noqa: E402
+import reviewer_notes as notes  # noqa: E402  standard library only, no model
 import llm_backend  # noqa: E402
 from llm_backend import (  # noqa: E402
     BackendError,
@@ -50,6 +52,187 @@ from llm_backend import (  # noqa: E402
     make_sampler,
     set_backend,
 )
+
+# ---------------------------------------------------------------------------
+# Reviewer notes: the second thing a reviewer asks about
+# ---------------------------------------------------------------------------
+# The manuscript mode answers from this paper and refuses to go outside it. A
+# reviewer's other question -- whether an R-hat of 1.05 is acceptable, what a
+# credible interval excluding zero does and does not license -- is not about
+# the paper at all, and the manuscript mode cannot answer it by design.
+#
+# Retrieval is the default and reasoning is not offered. The model is given
+# numbered passages and told to answer from them or to say that they do not
+# settle the question. Two further provenances are already named below --
+# model reasoning, and model reasoning supported by a verified reference --
+# because the interface should not have to change when they are added. Neither
+# is reachable today, and neither should be until the logs written here show
+# how often retrieval genuinely falls short and on what.
+
+NOTES_PASSAGES = 3
+NOTES_MAX_TOKENS = 700
+NOTES_LOG_PATH = SCRIPT_DIR.parent / "logs" / "reviewer-notes-chat.jsonl"
+
+# The provenance vocabulary. Adding a value here and a label is the whole of
+# what a new source costs the interface.
+SOURCE_MANUSCRIPT = "manuscript"
+SOURCE_NOTES = "reviewer_notes"
+SOURCE_REASONING = "model_reasoning"                       # reserved
+SOURCE_REASONING_REF = "model_reasoning_with_reference"    # reserved
+SOURCE_LABELS = {
+    SOURCE_MANUSCRIPT: "Source: manuscript",
+    SOURCE_NOTES: "Source: reviewer notes",
+    SOURCE_REASONING: "Source: model reasoning",
+    SOURCE_REASONING_REF: "Source: model reasoning + verified reference",
+}
+
+NOTES_SYSTEM = """You are helping a peer reviewer who has just finished reading a report on a manuscript.
+
+Numbered passages from a set of reviewer notes follow. Answer the question using those passages and nothing else. Do not draw on anything you know that is not in them, and do not fill a gap in them with your own explanation.
+
+You have not read the manuscript. Do not say what its authors did, or should have done. Answer the general methodological question and leave the judgement about this paper to the reviewer.
+
+Finish your reply with a line naming every passage you drew on, in this form:
+
+    Used: [1], [3]
+
+If the passages do not settle the question, do not infer an answer. Say in one sentence what they do not cover, and finish with:
+
+    Used: none"""
+
+_notes_index = None
+_notes_index_lock = threading.Lock()
+_notes_log_lock = threading.Lock()
+
+
+def get_notes_index():
+    """Build the notes index once. It costs milliseconds and holds no model."""
+    global _notes_index
+    with _notes_index_lock:
+        if _notes_index is None:
+            _notes_index = notes.NotesIndex()
+        return _notes_index
+
+
+def provenance(source: str, passages=None, used=None, resolved: bool = True,
+               reference=None) -> dict:
+    """
+    Where an answer came from, in the shape every source will use.
+
+    `reference` is reserved for a verified citation drawn from a curated
+    registry; nothing populates it yet, and a model must never fill it in.
+    """
+    return {
+        "source": source,
+        "label": SOURCE_LABELS.get(source, "Source: unknown"),
+        "passages": passages or [],
+        "used": used or [],
+        "resolved": bool(resolved),
+        "reference": reference,
+    }
+
+
+def parse_used(answer: str):
+    """
+    Split the trailing "Used:" line off an answer.
+
+    Returns (answer without that line, indices used, the model said none,
+    the line was found at all). The last flag matters: a missing line is not
+    the same as a model reporting that nothing applied, and conflating them
+    would put a parsing failure into the record as evidence about the notes.
+    """
+    lines = (answer or "").rstrip().split("\n")
+    for i in range(len(lines) - 1, -1, -1):
+        stripped = lines[i].strip()
+        if not stripped:
+            continue
+        if stripped.lower().startswith("used:"):
+            body = stripped[5:].strip()
+            rest = "\n".join(lines[:i]).rstrip()
+            if body.lower().startswith("none"):
+                return rest, [], True, True
+            found = [int(n) for n in re.findall(r"\[?(\d+)\]?", body)]
+            return rest, found, not found, True
+        break
+    return (answer or "").rstrip(), [], False, False
+
+
+def log_notes_interaction(record: dict) -> None:
+    """
+    Append one interaction to logs/, for inspection after a few reviews.
+
+    Best effort: a chat answer must not fail because a log line could not be
+    written. logs/ is excluded from version control, which is where anything
+    quoting an unpublished manuscript belongs.
+    """
+    try:
+        NOTES_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(record, ensure_ascii=False)
+        with _notes_log_lock:
+            with open(NOTES_LOG_PATH, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    except Exception as exc:  # pragma: no cover - logging must never raise
+        print(f"[notes] could not write the interaction log: {exc}")
+
+
+def answer_notes_question(question: str, job_id: str = "") -> dict:
+    """
+    Answer one methodological question from the reviewer notes alone.
+
+    Returns the same shape the manuscript mode returns, so the interface does
+    not branch on the source.
+    """
+    index = get_notes_index()
+    hits = index.search(question, NOTES_PASSAGES)
+    retrieved = [{"note": h.note, "heading": h.heading, "score": h.score}
+                 for h in hits]
+
+    if not hits:
+        # Nothing scored above zero. Saying so is the answer; the alternative
+        # is the least bad passage presented as though it were relevant.
+        answer = ("Nothing in the reviewer notes bears on that question, so "
+                  "there is nothing to show you. The notes cover statistical "
+                  "reporting and interpretation, not the manuscript itself.")
+        log_notes_interaction({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "job_id": job_id,
+            "mode": SOURCE_NOTES, "question": question, "retrieved": [],
+            "used": [], "no_suitable_note": True, "used_line_found": None,
+            "answer": answer, "model": MODEL_NAME,
+            "pipeline": rp.PIPELINE_VERSION,
+        })
+        return {
+            "answer": answer,
+            "provenance": provenance(SOURCE_NOTES, [], [], resolved=False),
+            "check": "", "problems": [], "passages": 0,
+        }
+
+    numbered = "\n\n".join(
+        f"[{i + 1}] {h.note} - {h.heading}\n{h.text}"
+        for i, h in enumerate(hits)
+    )
+    user_text = (f"{NOTES_SYSTEM}\n\nPassages from the reviewer notes:\n"
+                 f'"""\n{numbered}\n"""\n\nQuestion: {question}')
+
+    prompt = rp.apply_chat_template_compat(tokenizer, user_text)
+    out = generate(model, tokenizer, prompt=prompt, max_tokens=NOTES_MAX_TOKENS,
+                   sampler=rp.make_default_sampler(), verbose=False)
+    answer, used_idx, said_none, line_found = parse_used(rp.clean_model_output(out))
+
+    used = [retrieved[i - 1] for i in used_idx if 1 <= i <= len(retrieved)]
+    log_notes_interaction({
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "job_id": job_id,
+        "mode": SOURCE_NOTES, "question": question, "retrieved": retrieved,
+        "used": used, "no_suitable_note": said_none,
+        "used_line_found": line_found, "answer": answer,
+        "model": MODEL_NAME, "pipeline": rp.PIPELINE_VERSION,
+    })
+    return {
+        "answer": answer,
+        "provenance": provenance(SOURCE_NOTES, retrieved, used,
+                                 resolved=not said_none),
+        "check": "", "problems": [], "passages": len(retrieved),
+    }
+
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -483,11 +666,18 @@ async def start_review(
 @app.post("/api/review/{job_id}/ask")
 async def ask_about_review(job_id: str, request: dict):
     """
-    Answer one question about a reviewed manuscript, from that manuscript only.
+    Answer one question under a finished review, from one named source.
 
-    Bound to a completed review rather than to the chat tab: the point is that
-    the answer is checked against the same extracted text the report was built
-    from, which a free-standing chat cannot do.
+    Two sources exist. `manuscript` answers from this paper's extracted text
+    and checks every quotation against it. `reviewer_notes` answers a general
+    methodological question from the notes in resources/, and has not read the
+    paper at all. Both return the same shape, and both say which they were, so
+    a reader never has to infer where a sentence came from.
+
+    Bound to a completed review rather than to the chat tab: the manuscript
+    mode has to be checked against the same extracted text the report was
+    built from, which a free-standing chat cannot do, and the notes mode is
+    logged against the review that prompted the question.
     """
     job = review_jobs.get(job_id)
     if not job:
@@ -501,18 +691,36 @@ async def ask_about_review(job_id: str, request: dict):
     if not question:
         raise HTTPException(status_code=400, detail="No question was sent.")
 
+    mode = str(request.get("mode") or SOURCE_MANUSCRIPT).strip().lower()
+    if mode in ("notes", SOURCE_NOTES):
+        mode = SOURCE_NOTES
+    if mode not in (SOURCE_MANUSCRIPT, SOURCE_NOTES):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown source '{mode}'. Ask the manuscript or the reviewer notes.",
+        )
+
     ensure_model()
+    if mode == SOURCE_NOTES:
+        return answer_notes_question(question, job_id=job_id)
+
     history = request.get("history") or []
     answer, problems = rp.answer_manuscript_question(
         model, tokenizer, question, job["text"],
         report_text=job.get("report") or "",
         history=history,
     )
+    found = len(rp.select_passages(question, job["text"]))
     return {
         "answer": answer,
         "check": rp.format_answer_check(answer, problems),
         "problems": problems,
-        "passages": len(rp.select_passages(question, job["text"])),
+        "passages": found,
+        "provenance": provenance(SOURCE_MANUSCRIPT,
+                                 passages=[{"note": job.get("filename", "manuscript"),
+                                            "heading": f"{found} passage(s) searched",
+                                            "score": None}],
+                                 resolved=not problems),
     }
 
 

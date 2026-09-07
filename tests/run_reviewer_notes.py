@@ -23,6 +23,7 @@ No model is loaded and nothing in app/ is touched.
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from reviewer_notes import NotesIndex, format_passages   # noqa: E402

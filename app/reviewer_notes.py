@@ -8,8 +8,14 @@ should be reported or interpreted. This module returns passages from
 and it does not decide anything: the model answers, and these passages let the
 reviewer check that answer against something written down.
 
-Standalone in tests/, outside the pipeline fingerprint. Standard library only;
-no scikit-learn, so the review pipeline gains no dependency.
+Standard library only; no scikit-learn, so the review pipeline gains no
+dependency and the index costs milliseconds to build.
+
+It lives in app/ but is not one of the five files the pipeline fingerprint
+covers, and deliberately so: it cannot change a report. A report is written by
+the pipeline before any question is asked, and these passages reach only the
+ask box. What does change a report's hash is server.py, which holds the prompt
+and the provenance, and that is fingerprinted already.
 
     python3 tests/run_reviewer_notes.py "what convergence diagnostics are needed"
 
