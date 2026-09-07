@@ -72,6 +72,12 @@ Implementations typically use honest splitting, in which one part of the data ch
 
 Reviewers should expect a manuscript reporting a causal forest to state the conditioning set, the number of trees and the tuning approach, whether honest splitting and cross-fitting were used, and how overlap was assessed.
 
+Two requirements are easy to overlook because they are properties of the estimator rather than of the design.
+
+The covariates must be **pre-treatment**. A variable measured after treatment, or affected by it, does not belong in the conditioning set, and putting one there reintroduces the mediator and collider problems below with a flexible model to hide them in. Non-parametric estimation does not make post-treatment adjustment safe.
+
+The confidence intervals rest on **regularity conditions** that are rarely stated: the conditional effect is assumed to vary smoothly with the covariates, and the outcome to be well behaved in its tails. Where the true pattern is a sharp discontinuity, or the outcome is heavy-tailed, the intervals are optimistic rather than wrong in an obvious way. This bears directly on subgroup claims: a forest asked to find a step change will render it as a gradient, and report a tidy interval for it.
+
 ##### How should heterogeneity from a causal forest be interpreted?
 
 Cautiously, and more cautiously than the average effect.
