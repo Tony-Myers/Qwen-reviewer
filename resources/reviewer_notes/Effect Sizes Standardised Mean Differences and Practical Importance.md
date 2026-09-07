@@ -224,6 +224,20 @@ Where possible, reviewers should prefer:
 - the distribution of effects reported in the relevant literature;
 - comparison with effects from relevant previous studies.
 
+##### What is the smallest worthwhile change, and how is it set?
+
+In sport and exercise science the **smallest worthwhile change (SWC)** is the threshold below which a change is treated as trivial, and the usual convention sets it at **0.2 of the between-athlete standard deviation** — the boundary of Hopkins' trivial band, where standardised differences are classified as trivial below 0.2, small from 0.2 to 0.6, moderate from 0.6 to 1.2, large from 1.2 to 2.0 and very large above.
+
+Three things a reviewer should check.
+
+**Which standard deviation.** The convention uses the between-athlete SD, not the SD of change scores and not the within-athlete variation. The three give different thresholds from the same data.
+
+**Whether the change can be detected at all.** The SWC is a statement about what matters; the typical error of measurement is a statement about what the instrument can resolve. Where the typical error exceeds the SWC, a worthwhile change cannot be distinguished from noise in an individual, and a paper claiming individual responses in that situation is claiming more than the measurement supports.
+
+**Whether it was set in advance.** An SWC chosen once the results are visible is not a threshold, and a value borrowed from another sport, another population or another instrument needs the borrowing defended.
+
+The 0.2 convention is a convention. Where a genuinely anchored value exists — a change that alters selection, placing or clinical management — it is the better threshold, and the reviewer should prefer it to any multiple of a standard deviation.
+
 ##### Is an effect of 0.49 meaningfully different from 0.51?
 
 No.
@@ -321,6 +335,10 @@ Its validity depends on the information available, the study design and the assu
 **Effect-size benchmark** – reference value used to aid interpretation of effect magnitude.
 
 **Minimally Important Difference (MID)** – smallest effect considered substantively or clinically important.
+
+**Smallest worthwhile change (SWC)** – the sport-science form of the same idea, conventionally 0.2 of the between-athlete standard deviation.
+
+**Typical error of measurement** – the within-athlete variation between repeated measurements, which bounds what a study can resolve in an individual.
 
 **Dependent effect sizes** – effect estimates that share participants, treatment arms, outcomes or other information and are therefore statistically correlated.
 
