@@ -366,7 +366,19 @@ should be until there is evidence about how often retrieval genuinely falls
 short and on what. That evidence is what this phase collects: every question
 asked of the notes is appended to `logs/reviewer-notes-chat.jsonl` with the
 sections retrieved and their scores, the sections the answer used, and whether
-no suitable note was found. Reviewing several papers and then reading that file
+no suitable note was found.
+
+The notes prompt also forbids citation outright. Asked general questions with
+nothing retrieved, this model produced sound explanations carrying a
+misattributed paper, a citation wrong in four metadata fields, and a quotation
+that does not exist at a page that does in a book that does. None of that has
+appeared in the notes mode, where the model answers from passages, but a
+fabricated reference displayed under "Source: reviewer notes" would be the
+worst failure this design admits, so the prohibition is explicit rather than
+implied. `tests/probe_chat_citations.py` is the acceptance test for a new
+model: eleven questions, each asked twice, graded by hand against five checks.
+A reference that changes between two samples of one question is fabricated,
+whatever it says. Reviewing several papers and then reading that file
 is the experiment. If the misses cluster on one subject, the answer is another
 note; if they scatter, that is the argument for a reasoning layer.
 
@@ -643,6 +655,7 @@ so you can repeat them on your own papers and your own model.
 .venv/bin/python tests/report_tally.py reports/            # tally reports you have
 python3 tests/run_reviewer_notes.py --measure              # reviewer-note retrieval
 python3 tests/probe_expansion.py                           # and the alternatives to it
+python3 tests/probe_chat_citations.py                      # what the model does with evidence
 ```
 
 `sampler_sweep.py` reviews each paper under each configuration and scores the

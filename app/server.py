@@ -92,6 +92,8 @@ Numbered passages from a set of reviewer notes follow. Answer the question using
 
 You have not read the manuscript. Do not say what its authors did, or should have done. Answer the general methodological question and leave the judgement about this paper to the reviewer.
 
+Cite nothing. Do not name papers, books, authors or years, and do not place quotation marks around anything that is not in the passages above. If a passage names a source, you may repeat what the passage says about it; you may not add one. Tested on this model, unprompted references came out misattributed, wrong in four metadata fields, and in one case a quotation that does not exist, at a page that does, in a book that does.
+
 Finish your reply with a line naming every passage you drew on, in this form:
 
     Used: [1], [3]
