@@ -125,7 +125,7 @@ Methods designed for this case include inverse probability weighting with margin
 
 A quantitative sensitivity analysis, rather than an assurance.
 
-The useful form asks how strong an unmeasured confounder would have to be, in its association with both treatment and outcome, to explain away the reported effect. The **E-value** expresses this on a familiar scale. Bias analyses that posit a specific confounder and recompute the estimate serve the same purpose.
+The useful form asks how strong an unmeasured confounder would have to be, in its association with both treatment and outcome, to explain away the reported effect. The **E-value** expresses this on a familiar scale: for an observed risk ratio above one it is RR + the square root of RR × (RR − 1), so a risk ratio of 2.0 gives an E-value of about 3.41, meaning a confounder would need associations of at least that size with both exposure and outcome, beyond the measured covariates, to account for the finding. For a ratio below one the calculation is applied to its reciprocal, and reporting the E-value for the confidence limit nearest the null as well as for the point estimate is the more informative practice. Bias analyses that posit a specific confounder and recompute the estimate serve the same purpose.
 
 Such analyses do not demonstrate that no confounding remains. They tell a reader whether the finding would survive a plausible one, which is a question the reader can otherwise only guess at.
 
