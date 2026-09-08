@@ -58,6 +58,8 @@ SERVER = None                       # resolved by check_server()
 REPEATS = 2
 MAX_TOKENS = 2400          # matches the interface default; 1600 truncated answers
 TEMPERATURE = 0.4          # the interface default; --temp sweeps it
+TOP_P = None               # --top-p; the interface sends 0.9, Qwen3 says 0.80
+PRESENCE = None            # --presence; Qwen3 says 1.5 for instruct, 0.0 thinking
 
 # Whether a fabrication is stable across samples is a separate question from
 # whether it happens. It decides whether asking twice detects anything: a
@@ -226,8 +228,13 @@ def check_server() -> bool:
 def ask(question: str, timeout: int = 300, system: str = None) -> str:
     messages = ([{"role": "system", "content": system}] if system else []) + [
         {"role": "user", "content": question}]
-    body = json.dumps({"messages": messages,
-                       "max_tokens": MAX_TOKENS, "temperature": TEMPERATURE}).encode("utf-8")
+    payload = {"messages": messages, "max_tokens": MAX_TOKENS,
+               "temperature": TEMPERATURE}
+    if TOP_P is not None:
+        payload["top_p"] = TOP_P
+    if PRESENCE is not None:
+        payload["presence_penalty"] = PRESENCE
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(SERVER, data=body,
                                  headers={"Content-Type": "application/json"})
     try:
@@ -246,13 +253,17 @@ def main() -> int:
             print(f"{i:2}. [{kind}]\n    {q}\n")
         return 0
 
-    global REPEATS, TEMPERATURE
+    global REPEATS, TEMPERATURE, TOP_P, PRESENCE
     only = None
     for i, a in enumerate(sys.argv):
         if a == "--runs" and i + 1 < len(sys.argv):
             REPEATS = max(1, int(sys.argv[i + 1]))
         if a == "--temp" and i + 1 < len(sys.argv):
             TEMPERATURE = float(sys.argv[i + 1])
+        if a == "--top-p" and i + 1 < len(sys.argv):
+            TOP_P = float(sys.argv[i + 1])
+        if a == "--presence" and i + 1 < len(sys.argv):
+            PRESENCE = float(sys.argv[i + 1])
         if a == "--only" and i + 1 < len(sys.argv):
             only = {int(n) for n in sys.argv[i + 1].split(",")}
 
@@ -270,6 +281,10 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = "-nocite" if system else ""
     tag += f"-t{TEMPERATURE:g}"
+    if TOP_P is not None:
+        tag += f"-p{TOP_P:g}"
+    if PRESENCE is not None:
+        tag += f"-pp{PRESENCE:g}"
     out = out_dir / f"chat-citations{tag}-{time.strftime('%Y%m%d-%H%M%S')}.md"
 
     tally, stability = [], []

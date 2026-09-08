@@ -557,6 +557,17 @@ async def chat_completions(request: dict):
     max_tokens = request.get("max_tokens", 1200)
     temperature = request.get("temperature", rp.TEMPERATURE)
     top_p = request.get("top_p", rp.TOP_P)
+    # The endpoint is OpenAI-shaped and was silently discarding two fields it
+    # accepts. A client sending presence_penalty got generation without one and
+    # no indication that its request had been ignored. Passing them through
+    # changes nothing by default -- both fall back to the pipeline's values --
+    # and makes the sampler addressable, which is the precondition for
+    # measuring it. Qwen3 recommends presence_penalty 1.5 for instruct mode
+    # and 0.0 for thinking, and the degenerate repetition loops recorded in
+    # section 12 were produced here with none set at all.
+    presence_penalty = request.get("presence_penalty", rp.PRESENCE_PENALTY)
+    repetition_penalty = request.get("repetition_penalty", rp.REPETITION_PENALTY)
+    top_k = int(request.get("top_k", rp.TOP_K))
 
     # Inject default system prompt if no system message is present
     has_system = any(m.get("role") == "system" for m in messages)
@@ -581,7 +592,9 @@ async def chat_completions(request: dict):
     else:
         prompt = messages[-1]["content"] if messages else ""
 
-    sampler = make_sampler(temperature, top_p=top_p, top_k=rp.TOP_K)
+    sampler = make_sampler(temperature, top_p=top_p, top_k=top_k,
+                           repetition_penalty=repetition_penalty,
+                           presence_penalty=presence_penalty)
 
     with model_lock:
         output = generate(
