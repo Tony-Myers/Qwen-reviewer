@@ -31,13 +31,22 @@ are the reason the grading below separates them.
 """
 
 import json
+import os
 import re
 import sys
 import time
 import urllib.request
 from pathlib import Path
 
-SERVER = "http://127.0.0.1:8080/v1/chat/completions"
+# The app server runs on 8090 by default -- scripts/qwen_service.sh sets it
+# from QWEN_APP_PORT, and the comment there says 8090 is deliberate because
+# FastAPI's 8080 collides with other things. server.py's own default is 8080,
+# which is what a probe naively hardcodes and then fails to reach. Read the
+# environment, try both, and say which was used.
+APP_HOST = os.environ.get("QWEN_APP_HOST", "127.0.0.1")
+CANDIDATE_PORTS = [int(os.environ["QWEN_APP_PORT"])] if os.environ.get(
+    "QWEN_APP_PORT") else [8090, 8080]
+SERVER = None                       # resolved by check_server()
 REPEATS = 2
 MAX_TOKENS = 2400          # matches the interface default; 1600 truncated answers
 
@@ -169,7 +178,7 @@ class Unreachable(Exception):
 
 
 def check_server() -> bool:
-    """Fail before collecting, not after.
+    """Find the server and fail before collecting, not after.
 
     A refused connection produced a file of "(request failed)" strings that
     the detector scored as containing no citations, so the run reported zero
@@ -177,17 +186,26 @@ def check_server() -> bool:
     A measurement that reports a clean result when it measured nothing is
     worse than one that crashes.
     """
-    try:
-        with urllib.request.urlopen(SERVER.replace("/v1/chat/completions",
-                                                   "/v1/models"), timeout=10):
-            return True
-    except Exception as exc:
-        print(f"Cannot reach the server at {SERVER}: {exc}\n")
-        print("Start it first, then re-run:")
-        print("    ./scripts/qwen_service.sh start      # or: status, to check")
-        print("\nNothing has been written. A run against a dead server would")
-        print("report no citations in every answer, which is not a result.")
-        return False
+    global SERVER
+    tried = []
+    for port in CANDIDATE_PORTS:
+        url = f"http://{APP_HOST}:{port}"
+        try:
+            with urllib.request.urlopen(f"{url}/v1/models", timeout=10):
+                SERVER = f"{url}/v1/chat/completions"
+                print(f"Server found on port {port}.")
+                return True
+        except Exception as exc:
+            tried.append(f"  {port}: {exc}")
+    print("Cannot reach the app server. Tried:")
+    print("\n".join(tried) + "\n")
+    print("Check where it is listening, and start it if it is not:")
+    print("    ./scripts/qwen_service.sh status")
+    print("    ./scripts/qwen_service.sh start")
+    print("Set QWEN_APP_PORT if it is somewhere else.")
+    print("\nNothing has been written. A run against a dead server would")
+    print("report no citations in every answer, which is not a result.")
+    return False
 
 
 def ask(question: str, timeout: int = 300, system: str = None) -> str:
