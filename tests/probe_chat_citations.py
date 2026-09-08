@@ -15,6 +15,14 @@ anything in this repository.
     python3 tests/probe_chat_citations.py            # print the protocol
     python3 tests/probe_chat_citations.py --ask      # collect answers to grade
     python3 tests/probe_chat_citations.py --ask --no-cite-prompt
+    python3 tests/probe_chat_citations.py --ask --temp 0 --runs 2 --only 1,2,3,4,5,7
+
+--temp sweeps the sampling temperature, --only restricts to numbered
+questions, and with two or more runs the file reports whether each question
+produced the same references twice. That last figure is the point of a
+temperature sweep: fabrication is not obviously a sampling accident, so
+lowering the temperature may not reduce it and may instead make the same
+invention recur, which would look more solid rather than less.
 
 --ask posts each question twice to a running server and writes the answers to
 logs/chat-citations-<timestamp>.md for grading. Twice matters: a reference that
@@ -49,6 +57,13 @@ CANDIDATE_PORTS = [int(os.environ["QWEN_APP_PORT"])] if os.environ.get(
 SERVER = None                       # resolved by check_server()
 REPEATS = 2
 MAX_TOKENS = 2400          # matches the interface default; 1600 truncated answers
+TEMPERATURE = 0.4          # the interface default; --temp sweeps it
+
+# Whether a fabrication is stable across samples is a separate question from
+# whether it happens. It decides whether asking twice detects anything: a
+# reference that differs between two runs is invented, but nothing says an
+# invented one must differ. Lower temperature should make the same invention
+# recur, which would make it look more solid rather than less.
 
 # A first draft of the mechanical check discussed in section 12. It is scored
 # here before it is shipped anywhere: run it against answers graded by hand and
@@ -212,7 +227,7 @@ def ask(question: str, timeout: int = 300, system: str = None) -> str:
     messages = ([{"role": "system", "content": system}] if system else []) + [
         {"role": "user", "content": question}]
     body = json.dumps({"messages": messages,
-                       "max_tokens": MAX_TOKENS, "temperature": 0.4}).encode("utf-8")
+                       "max_tokens": MAX_TOKENS, "temperature": TEMPERATURE}).encode("utf-8")
     req = urllib.request.Request(SERVER, data=body,
                                  headers={"Content-Type": "application/json"})
     try:
@@ -231,10 +246,15 @@ def main() -> int:
             print(f"{i:2}. [{kind}]\n    {q}\n")
         return 0
 
-    global REPEATS
+    global REPEATS, TEMPERATURE
+    only = None
     for i, a in enumerate(sys.argv):
         if a == "--runs" and i + 1 < len(sys.argv):
             REPEATS = max(1, int(sys.argv[i + 1]))
+        if a == "--temp" and i + 1 < len(sys.argv):
+            TEMPERATURE = float(sys.argv[i + 1])
+        if a == "--only" and i + 1 < len(sys.argv):
+            only = {int(n) for n in sys.argv[i + 1].split(",")}
 
     if not check_server():
         return 2
@@ -249,16 +269,21 @@ def main() -> int:
     out_dir = Path(__file__).resolve().parent.parent / "logs"
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = "-nocite" if system else ""
+    tag += f"-t{TEMPERATURE:g}"
     out = out_dir / f"chat-citations{tag}-{time.strftime('%Y%m%d-%H%M%S')}.md"
 
-    tally = []
+    tally, stability = [], []
     lines = ["# Chat citation probe", "",
+             f"Temperature {TEMPERATURE:g}, {REPEATS} run(s) per question.", "",
              f"Collected: {time.strftime('%Y-%m-%dT%H:%M:%S')}",
              "", "Grade each answer against the five checks in "
              "tests/probe_chat_citations.py.", ""]
-    for i, (kind, q) in enumerate(QUESTIONS, 1):
+    asked = [(i, k, q) for i, (k, q) in enumerate(QUESTIONS, 1)
+             if only is None or i in only]
+    for i, kind, q in asked:
         print(f"[{i}/{len(QUESTIONS)}] {q[:64]}...")
         lines += [f"## {i}. {q}", "", f"*{kind}*", ""]
+        per_run = []
         for run in range(1, REPEATS + 1):
             try:
                 answer = ask(q, system=system)
@@ -269,6 +294,9 @@ def main() -> int:
                 return 2
             marks = citation_marks(answer)
             tally.append(bool(marks))
+            per_run.append(set(re.findall(
+                r"[A-Z][A-Za-z'\u2019-]+(?:\s*(?:,|&|and|et al\.)\s*"
+                r"[A-Z]?[A-Za-z'\u2019-]*)*\s*\(?\d{4}[a-z]?\)?", answer)))
             summary = (", ".join(f"{k} x{v}" for k, v in marks.items())
                        if marks else "none detected")
             lines += [f"### Run {run}", "", answer, "",
@@ -276,6 +304,13 @@ def main() -> int:
                       "- [ ] 1 substance  - [ ] 2 existence  - [ ] 3 metadata  "
                       "- [ ] 4 support  - [ ] 5 quotation  "
                       "- [ ] detector agrees with what is actually there", ""]
+        if len(per_run) > 1:
+            same = per_run[0] == per_run[1]
+            shared = per_run[0] & per_run[1]
+            stability.append(same)
+            lines += [f"*Same references across runs: {'yes' if same else 'no'}"
+                      f" ({len(shared)} shared, "
+                      f"{len(per_run[0] ^ per_run[1])} differing)*", ""]
         out.write_text("\n".join(lines), encoding="utf-8")
 
     cited = sum(1 for x in tally if x)
@@ -284,6 +319,13 @@ def main() -> int:
               "comparison: run the probe with and without --no-cite-prompt and "
               "compare these two counts. Everything else is secondary and only "
               "applies to the answers that did cite.")
+    if stability:
+        stable = sum(1 for s in stability if s)
+        footer += (f"\n\n**Identical reference sets across the two runs: "
+                   f"{stable} of {len(stability)}.** A reference that changes "
+                   "between samples is invented; one that does not may still "
+                   "be. Stability is what decides whether asking twice detects "
+                   "anything at all.")
     lines.append(footer)
     out.write_text("\n".join(lines), encoding="utf-8")
 
