@@ -31,6 +31,7 @@ are the reason the grading below separates them.
 """
 
 import json
+import re
 import sys
 import time
 import urllib.request
@@ -38,6 +39,32 @@ from pathlib import Path
 
 SERVER = "http://127.0.0.1:8080/v1/chat/completions"
 REPEATS = 2
+MAX_TOKENS = 2400          # matches the interface default; 1600 truncated answers
+
+# A first draft of the mechanical check discussed in section 12. It is scored
+# here before it is shipped anywhere: run it against answers graded by hand and
+# see what it misses and what it invents. Detection is deliberately loose --
+# anything citation-shaped counts -- because the cost of a false positive is a
+# label and the cost of a false negative is an unmarked fabrication.
+CITATION_PATTERNS = [
+    ("doi", re.compile(r"\b10\.\d{4,9}/\S+")),
+    ("name-year in brackets", re.compile(
+        r"\([A-Z][A-Za-z'\u2019-]+(?:\s*(?:,|&|and|et al\.)\s*[A-Z]?[A-Za-z'\u2019-]*)*,?\s*\d{4}[a-z]?\)")),
+    ("name-year in prose", re.compile(
+        r"\b[A-Z][A-Za-z'\u2019-]+(?:\s+(?:et al\.|and|&)\s+[A-Z][A-Za-z'\u2019-]+)?\s*\(\d{4}[a-z]?\)")),
+    ("page reference", re.compile(r"\bpp?\.\s*\d+")),
+    ("journal volume(issue), pages", re.compile(r"\b\d{1,3}\(\d{1,3}\),\s*\d{1,4}[-\u2013]\d{1,4}")),
+]
+
+
+def citation_marks(text: str):
+    """Which citation-shaped things appear, and how many of each."""
+    found = {}
+    for label, pattern in CITATION_PATTERNS:
+        n = len(pattern.findall(text or ""))
+        if n:
+            found[label] = n
+    return found
 
 # Grouped by the failure each group is meant to provoke.
 QUESTIONS = [
@@ -141,7 +168,7 @@ def ask(question: str, timeout: int = 300, system: str = None) -> str:
     messages = ([{"role": "system", "content": system}] if system else []) + [
         {"role": "user", "content": question}]
     body = json.dumps({"messages": messages,
-                       "max_tokens": 1600, "temperature": 0.4}).encode("utf-8")
+                       "max_tokens": MAX_TOKENS, "temperature": 0.4}).encode("utf-8")
     req = urllib.request.Request(SERVER, data=body,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -157,6 +184,11 @@ def main() -> int:
             print(f"{i:2}. [{kind}]\n    {q}\n")
         return 0
 
+    global REPEATS
+    for i, a in enumerate(sys.argv):
+        if a == "--runs" and i + 1 < len(sys.argv):
+            REPEATS = max(1, int(sys.argv[i + 1]))
+
     system = None
     if "--no-cite-prompt" in sys.argv:
         system = system_without_citation_line()
@@ -169,6 +201,7 @@ def main() -> int:
     tag = "-nocite" if system else ""
     out = out_dir / f"chat-citations{tag}-{time.strftime('%Y%m%d-%H%M%S')}.md"
 
+    tally = []
     lines = ["# Chat citation probe", "",
              f"Collected: {time.strftime('%Y-%m-%dT%H:%M:%S')}",
              "", "Grade each answer against the five checks in "
@@ -181,13 +214,30 @@ def main() -> int:
                 answer = ask(q, system=system)
             except Exception as exc:
                 answer = f"(request failed: {exc})"
+            marks = citation_marks(answer)
+            tally.append(bool(marks))
+            summary = (", ".join(f"{k} x{v}" for k, v in marks.items())
+                       if marks else "none detected")
             lines += [f"### Run {run}", "", answer, "",
+                      f"*Citation-shaped text: {summary}*", "",
                       "- [ ] 1 substance  - [ ] 2 existence  - [ ] 3 metadata  "
-                      "- [ ] 4 support  - [ ] 5 quotation", ""]
+                      "- [ ] 4 support  - [ ] 5 quotation  "
+                      "- [ ] detector agrees with what is actually there", ""]
         out.write_text("\n".join(lines), encoding="utf-8")
 
+    cited = sum(1 for x in tally if x)
+    footer = (f"\n**Answers containing citation-shaped text: {cited} of "
+              f"{len(tally)}.** This is the primary outcome of the paired "
+              "comparison: run the probe with and without --no-cite-prompt and "
+              "compare these two counts. Everything else is secondary and only "
+              "applies to the answers that did cite.")
+    lines.append(footer)
+    out.write_text("\n".join(lines), encoding="utf-8")
+
     print(f"\nWritten to {out}")
-    print("Grade it by hand. The last two checks are the ones that matter.")
+    print(f"Citation-shaped text in {cited} of {len(tally)} answers.")
+    print("Grade by hand only the ones that cited; the count above is the "
+          "primary outcome.")
     return 0
 
 
