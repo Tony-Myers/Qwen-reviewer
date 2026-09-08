@@ -19,10 +19,18 @@ anything in this repository.
 
 --temp sweeps the sampling temperature, --only restricts to numbered
 questions, and with two or more runs the file reports whether each question
-produced the same references twice. That last figure is the point of a
+produced the same references in every run. That last figure is the point of a
 temperature sweep: fabrication is not obviously a sampling accident, so
 lowering the temperature may not reduce it and may instead make the same
 invention recur, which would look more solid rather than less.
+
+Two quantities are counted per answer: whether it contains citation-shaped
+text, and how often its most repeated segment recurs. The second exists
+because low temperature does not merely change the wording -- at 0.2 this
+model stalled at the point of naming a source and emitted the same fragment
+fifty-six times. Repetition is far noisier than the citation count, so the
+footer prints the spread across runs of one configuration beside it. Do not
+compare that number between configurations without --runs 3 or more.
 
 --ask posts each question twice to a running server and writes the answers to
 logs/chat-citations-<timestamp>.md for grading. Twice matters: a reference that
@@ -91,6 +99,65 @@ def citation_marks(text: str):
         if n:
             found[label] = n
     return found
+
+# The repetition counter was added after a seven-row temperature table was
+# built from single runs and then invalidated by an accidental duplicate: the
+# same configuration produced a worst repeat of 6 in one run and 11 in the
+# next, wider than most of the differences the table was being read for. The
+# count is computed here rather than by eye so that the spread across runs of
+# one configuration sits next to it. Section 12.16a of
+# reports/CHAT-RETRIEVAL-PROBE.md records what that correction cost.
+REPEAT_MIN_CHARS = 12
+_SEGMENT_SPLIT = re.compile(r"[\n\r]+|(?<=[.!?])\s+")
+
+# Segments the pipeline writes itself, not the model. The formula placeholder
+# in review_pipeline.py replaces every expression it cannot render, so an
+# answer with a dozen formulae repeats it a dozen times and scores as
+# degenerate when nothing has degenerated. Six of the ten logs collected
+# during the temperature sweep had this placeholder as their most repeated
+# segment, which would have made the metric a measure of formula density.
+IGNORE_SEGMENTS = [
+    re.compile(r"^\[formula\b"),
+]
+
+
+def repetition(text: str):
+    """How often the most repeated segment recurs, and what it is.
+
+    A degenerate answer stalls and emits one fragment over and over -- "The
+    E-value was introduced by **Sander J." fifty-six times in one observed
+    case -- so the largest multiplicity of any segment measures it directly.
+    Segments are lines or sentences, normalised for case and whitespace.
+    Anything shorter than REPEAT_MIN_CHARS is ignored, because short fragments
+    recur innocently in ordinary prose, and anything matching IGNORE_SEGMENTS
+    is ignored because the pipeline wrote it rather than the model.
+
+    This is not the same instrument as the eye. Figures counted by hand for
+    earlier runs are of the same order but should not be treated as this
+    function's output.
+    """
+    counts = {}
+    for raw in _SEGMENT_SPLIT.split(text or ""):
+        seg = " ".join(raw.split()).lower()
+        if len(seg) < REPEAT_MIN_CHARS:
+            continue
+        if any(p.search(seg) for p in IGNORE_SEGMENTS):
+            continue
+        counts[seg] = counts.get(seg, 0) + 1
+    if not counts:
+        return 0, ""
+    seg, n = max(counts.items(), key=lambda kv: kv[1])
+    return n, seg
+
+
+def median(values):
+    """Median of a list of numbers; 0 for an empty one."""
+    s = sorted(values)
+    if not s:
+        return 0
+    mid = len(s) // 2
+    return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
+
 
 # Grouped by the failure each group is meant to provoke.
 QUESTIONS = [
@@ -288,8 +355,15 @@ def main() -> int:
     out = out_dir / f"chat-citations{tag}-{time.strftime('%Y%m%d-%H%M%S')}.md"
 
     tally, stability = [], []
+    per_run_cited = [0] * REPEATS
+    per_run_repeat = [[] for _ in range(REPEATS)]
+    settings = f"Temperature {TEMPERATURE:g}"
+    if TOP_P is not None:
+        settings += f", top_p {TOP_P:g}"
+    if PRESENCE is not None:
+        settings += f", presence penalty {PRESENCE:g}"
     lines = ["# Chat citation probe", "",
-             f"Temperature {TEMPERATURE:g}, {REPEATS} run(s) per question.", "",
+             f"{settings}, {REPEATS} run(s) per question.", "",
              f"Collected: {time.strftime('%Y-%m-%dT%H:%M:%S')}",
              "", "Grade each answer against the five checks in "
              "tests/probe_chat_citations.py.", ""]
@@ -309,29 +383,41 @@ def main() -> int:
                 return 2
             marks = citation_marks(answer)
             tally.append(bool(marks))
+            if marks:
+                per_run_cited[run - 1] += 1
+            reps, worst = repetition(answer)
+            per_run_repeat[run - 1].append(reps)
             per_run.append(set(re.findall(
                 r"[A-Z][A-Za-z'\u2019-]+(?:\s*(?:,|&|and|et al\.)\s*"
                 r"[A-Z]?[A-Za-z'\u2019-]*)*\s*\(?\d{4}[a-z]?\)?", answer)))
             summary = (", ".join(f"{k} x{v}" for k, v in marks.items())
                        if marks else "none detected")
+            rep_note = f"*Most repeated segment: {reps} time(s)*"
+            if reps >= 5:
+                rep_note = (f"*Most repeated segment: {reps} times -- "
+                            f"\"{worst[:60]}...\"*")
             lines += [f"### Run {run}", "", answer, "",
                       f"*Citation-shaped text: {summary}*", "",
+                      rep_note, "",
                       "- [ ] 1 substance  - [ ] 2 existence  - [ ] 3 metadata  "
                       "- [ ] 4 support  - [ ] 5 quotation  "
                       "- [ ] detector agrees with what is actually there", ""]
         if len(per_run) > 1:
-            # Two runs that both produced no reference are not a stable
-            # citation, and counting them as agreement flatters the figure.
-            if not per_run[0] and not per_run[1]:
-                lines += ["*Neither run cited; stability not applicable*", ""]
+            # Runs that all produced no reference are not a stable citation,
+            # and counting them as agreement flatters the figure.
+            if not any(per_run):
+                lines += ["*No run cited; stability not applicable*", ""]
                 out.write_text("\n".join(lines), encoding="utf-8")
                 continue
-            same = per_run[0] == per_run[1]
-            shared = per_run[0] & per_run[1]
+            same = all(s == per_run[0] for s in per_run)
+            shared = set.intersection(*per_run)
+            union = set.union(*per_run)
+            once = sum(1 for r in union
+                       if sum(1 for s in per_run if r in s) == 1)
             stability.append(same)
-            lines += [f"*Same references across runs: {'yes' if same else 'no'}"
-                      f" ({len(shared)} shared, "
-                      f"{len(per_run[0] ^ per_run[1])} differing)*", ""]
+            lines += [f"*Same references across all {len(per_run)} runs: "
+                      f"{'yes' if same else 'no'} ({len(shared)} in every run, "
+                      f"{once} in one run only)*", ""]
         out.write_text("\n".join(lines), encoding="utf-8")
 
     cited = sum(1 for x in tally if x)
@@ -340,18 +426,47 @@ def main() -> int:
               "comparison: run the probe with and without --no-cite-prompt and "
               "compare these two counts. Everything else is secondary and only "
               "applies to the answers that did cite.")
+    if REPEATS > 1:
+        footer += ("\n\n**Citing answers per run: "
+                   + ", ".join(str(c) for c in per_run_cited)
+                   + f" of {len(asked)}.** These are replicates of one "
+                   "configuration. Their spread is what any comparison with "
+                   "another configuration has to exceed.")
     if stability:
         stable = sum(1 for s in stability if s)
-        footer += (f"\n\n**Identical reference sets across the two runs: "
-                   f"{stable} of {len(stability)}.** A reference that changes "
-                   "between samples is invented; one that does not may still "
-                   "be. Stability is what decides whether asking twice detects "
-                   "anything at all.")
+        footer += (f"\n\n**Identical reference sets across all {REPEATS} "
+                   f"runs: {stable} of {len(stability)}.** A reference that "
+                   "changes between samples is invented; one that does not may "
+                   "still be. Stability is what decides whether asking more "
+                   "than once detects anything at all.")
+    per_run_max = [max(v) for v in per_run_repeat if v]
+    if per_run_max:
+        footer += ("\n\n**Worst repetition per run: "
+                   + ", ".join(str(v) for v in per_run_max)
+                   + f" (median {median(per_run_max):g}).** ")
+        if len(per_run_max) > 1:
+            footer += (f"The spread within this one configuration is "
+                       f"{min(per_run_max)} to {max(per_run_max)}. That is the "
+                       "noise floor for this metric here: a difference between "
+                       "two configurations smaller than the spread within "
+                       "either of them is not a difference. Two runs give only "
+                       "a range; three or more give a median worth comparing.")
+        else:
+            footer += ("A single run has no spread, so this number cannot be "
+                       "compared with the same number from another "
+                       "configuration. Use --runs 3 or more before ranking "
+                       "anything on repetition.")
     lines.append(footer)
     out.write_text("\n".join(lines), encoding="utf-8")
 
     print(f"\nWritten to {out}")
     print(f"Citation-shaped text in {cited} of {len(tally)} answers.")
+    if per_run_max:
+        print("Worst repetition per run: "
+              + ", ".join(str(v) for v in per_run_max)
+              + (f" (spread {min(per_run_max)}-{max(per_run_max)} within this "
+                 "configuration)." if len(per_run_max) > 1 else
+                 " (one run: no spread, so not comparable)."))
     print("Grade by hand only the ones that cited; the count above is the "
           "primary outcome.")
     return 0
