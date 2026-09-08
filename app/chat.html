@@ -112,7 +112,7 @@
     <button class="btn-secondary" id="restartBtn" onclick="restartWithSelectedModel()">Restart</button>
     <span class="restart-note" id="restartNote"></span>
     <label class="field-label" for="maxTokens">Tokens:</label>
-    <input type="number" id="maxTokens" value="1200" min="200" max="8192" step="200"
+    <input type="number" id="maxTokens" value="2400" min="200" max="8192" step="200"
       class="compact-input">
     <button class="btn-secondary" id="clearBtn" onclick="clearChat()">Clear</button>
     <div class="status"><div class="dot" id="statusDot"></div><span id="statusText">Checking...</span></div>
@@ -137,6 +137,11 @@
   </div>
   <div id="input-area">
     <textarea id="userInput" rows="1" placeholder="Type a message..." autofocus></textarea>
+    <label style="font-size:11px; opacity:.75; display:flex; align-items:center; gap:4px; white-space:nowrap;"
+           title="Send this question on its own, with none of the conversation above it.">
+      <input type="checkbox" id="askFresh"> fresh
+      <span id="turnCount" style="opacity:.6;"></span>
+    </label>
     <button class="btn" id="sendBtn" onclick="sendMessage()">Send</button>
   </div>
 </div>
@@ -353,16 +358,38 @@ async function sendMessage() {
   addMsg('user', t); userInput.value = ''; userInput.style.height = 'auto';
   chatHistory.push({ role: 'user', content: t }); addTyping();
   try {
-    const r = await fetch(BASE + '/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: chatHistory, max_tokens: parseInt(document.getElementById('maxTokens').value) || 1200, temperature: 0.4, top_p: 0.9 }) });
+    const r = await fetch(BASE + '/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: outgoingMessages(), max_tokens: parseInt(document.getElementById('maxTokens').value) || 1200, temperature: 0.4, top_p: 0.9 }) });
     rmTyping();
     if (!r.ok) { addMsg('assistant', 'Server error ' + r.status, true); chatHistory.pop(); }
-    else { const d = await r.json(); const reply = d.choices?.[0]?.message?.content || '(empty)'; addMsg('assistant', reply); chatHistory.push({ role: 'assistant', content: reply }); }
+    else { const d = await r.json(); const reply = d.choices?.[0]?.message?.content || '(empty)'; addMsg('assistant', reply); chatHistory.push({ role: 'assistant', content: reply }); updateTurnCount(); }
   } catch (e) { rmTyping(); addMsg('assistant', 'Could not reach server: ' + e.message, true); chatHistory.pop(); }
   isGenerating = false; document.getElementById('sendBtn').disabled = false; userInput.focus();
 }
 
+// Every turn is re-sent with the next question, so the model answers in the
+// presence of everything it has already said -- including anything it got
+// wrong. A reference invented in turn three is treated as established by turn
+// seven. "Fresh" sends the current question alone, which is what an
+// independent methodological question usually wants; leave it off for
+// follow-ups, where the history is the point.
+function outgoingMessages() {
+  const fresh = document.getElementById('askFresh');
+  if (fresh && fresh.checked && chatHistory.length) {
+    return [chatHistory[chatHistory.length - 1]];
+  }
+  return chatHistory;
+}
+
+function updateTurnCount() {
+  const el = document.getElementById('turnCount');
+  if (!el) return;
+  const turns = Math.floor(chatHistory.length / 2);
+  el.textContent = turns ? '(' + turns + ' turn' + (turns === 1 ? '' : 's') + ' in context)' : '';
+}
+
 function clearChat() {
   chatHistory = [];
+  updateTurnCount();
   document.getElementById('chat-container').innerHTML = '<div class="empty-state" id="emptyState"><h2>Ready to chat</h2><p>Type a message below to start.</p></div>';
 }
 
