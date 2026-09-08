@@ -305,6 +305,12 @@ def main() -> int:
                       "- [ ] 4 support  - [ ] 5 quotation  "
                       "- [ ] detector agrees with what is actually there", ""]
         if len(per_run) > 1:
+            # Two runs that both produced no reference are not a stable
+            # citation, and counting them as agreement flatters the figure.
+            if not per_run[0] and not per_run[1]:
+                lines += ["*Neither run cited; stability not applicable*", ""]
+                out.write_text("\n".join(lines), encoding="utf-8")
+                continue
             same = per_run[0] == per_run[1]
             shared = per_run[0] & per_run[1]
             stability.append(same)

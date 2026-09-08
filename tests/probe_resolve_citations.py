@@ -91,6 +91,17 @@ def candidate_references(answer: str):
     return out
 
 
+def query_string(ref: str) -> str:
+    """The claim, with parentheticals dropped.
+
+    Gelman (2006) resolved at 0.85 and 0.87 where the claim was plain, and
+    returned nothing where it carried "(comment on paper by Paul West)" --
+    Crossref's bibliographic search does not cope with an aside inside the
+    title. Two false unmatched from one parenthesis.
+    """
+    return re.sub(r"\([^)]{8,}\)", " ", ref)
+
+
 def crossref(query: str, rows: int = ROWS):
     url = (f"{CROSSREF}?rows={rows}&mailto={urllib.parse.quote(MAILTO)}"
            f"&query.bibliographic={urllib.parse.quote(query[:400])}")
@@ -194,7 +205,7 @@ def main() -> int:
                                     f"{similarity(t, ref):.2f}")
                         resolved += 1
                     else:
-                        items = crossref(ref)
+                        items = crossref(query_string(ref))
                         time.sleep(PAUSE)
                         if not items:
                             unresolved += 1
