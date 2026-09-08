@@ -164,6 +164,32 @@ def system_without_citation_line():
     return default.replace(CITATION_LINE, "")
 
 
+class Unreachable(Exception):
+    """The server did not answer. Not an answer, and not a clean result."""
+
+
+def check_server() -> bool:
+    """Fail before collecting, not after.
+
+    A refused connection produced a file of "(request failed)" strings that
+    the detector scored as containing no citations, so the run reported zero
+    of eleven in both arms of a paired comparison and looked like a finding.
+    A measurement that reports a clean result when it measured nothing is
+    worse than one that crashes.
+    """
+    try:
+        with urllib.request.urlopen(SERVER.replace("/v1/chat/completions",
+                                                   "/v1/models"), timeout=10):
+            return True
+    except Exception as exc:
+        print(f"Cannot reach the server at {SERVER}: {exc}\n")
+        print("Start it first, then re-run:")
+        print("    ./scripts/qwen_service.sh start      # or: status, to check")
+        print("\nNothing has been written. A run against a dead server would")
+        print("report no citations in every answer, which is not a result.")
+        return False
+
+
 def ask(question: str, timeout: int = 300, system: str = None) -> str:
     messages = ([{"role": "system", "content": system}] if system else []) + [
         {"role": "user", "content": question}]
@@ -171,8 +197,11 @@ def ask(question: str, timeout: int = 300, system: str = None) -> str:
                        "max_tokens": MAX_TOKENS, "temperature": 0.4}).encode("utf-8")
     req = urllib.request.Request(SERVER, data=body,
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        raise Unreachable(str(exc)) from exc
     return data["choices"][0]["message"]["content"]
 
 
@@ -188,6 +217,9 @@ def main() -> int:
     for i, a in enumerate(sys.argv):
         if a == "--runs" and i + 1 < len(sys.argv):
             REPEATS = max(1, int(sys.argv[i + 1]))
+
+    if not check_server():
+        return 2
 
     system = None
     if "--no-cite-prompt" in sys.argv:
@@ -212,8 +244,11 @@ def main() -> int:
         for run in range(1, REPEATS + 1):
             try:
                 answer = ask(q, system=system)
-            except Exception as exc:
-                answer = f"(request failed: {exc})"
+            except Unreachable as exc:
+                print(f"\nRequest failed: {exc}")
+                print("Stopping. A partial file would be graded as though the "
+                      "missing answers had cited nothing.")
+                return 2
             marks = citation_marks(answer)
             tally.append(bool(marks))
             summary = (", ".join(f"{k} x{v}" for k, v in marks.items())
