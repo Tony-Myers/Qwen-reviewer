@@ -125,9 +125,32 @@ def describe(item):
     return title, who, year, venue, item.get("DOI", "")
 
 
+def claimed_title(ref: str) -> str:
+    """The title as claimed, not the whole entry.
+
+    Comparing a returned title with the entire claim -- authors, year, journal,
+    volume, pages and all -- drags the ratio down and marks correct citations
+    as unmatched. Cohen (1992), "A power primer", Psychological Bulletin came
+    back from Crossref as exactly itself and scored 0.36 against the full line.
+    """
+    quoted = re.findall(r"[\"\u201c]([^\"\u201d]{12,})[\"\u201d]", ref)
+    if quoted:
+        return max(quoted, key=len)
+    after = YEAR_RE.split(ref)[-1] if YEAR_RE.search(ref) else ref
+    after = after.lstrip(" .:)")
+    venueish = re.compile(r"\d{1,3}\(\d|\d+\s*[-\u2013]\s*\d+|doi|https?://", re.I)
+    for chunk in re.split(r"\.\s+|\.$", after):
+        chunk = chunk.strip()
+        if len(chunk.split()) >= 2 and not venueish.search(chunk):
+            return chunk
+    return after.strip()
+
+
 def similarity(a: str, b: str) -> float:
+    """Title against claimed title."""
     norm = lambda s: re.sub(r"[^a-z0-9 ]", " ", s.lower()).split()
-    return SequenceMatcher(None, " ".join(norm(a)), " ".join(norm(b))).ratio()
+    return SequenceMatcher(None, " ".join(norm(a)),
+                           " ".join(norm(claimed_title(b)))).ratio()
 
 
 def main() -> int:
@@ -182,9 +205,14 @@ def main() -> int:
                             (it.get("title") or [""])[0], ref))
                         t, who, yr, venue, doi = describe(best)
                         s = similarity(t, ref)
-                        verdict = ("looks like the same work" if s > 0.45
+                        # Title against title is a much sharper comparison
+                        # than title against the whole entry, so the threshold
+                        # rises with it: correct citations now score at or near
+                        # 1.00, while the invented Hartung-Knapp-Sidik paper
+                        # scores 0.54 against a real paper on the same subject.
+                        verdict = ("looks like the same work" if s > 0.70
                                    else "**no close match — check by hand**")
-                        if s <= 0.45:
+                        if s <= 0.70:
                             unresolved += 1
                         else:
                             resolved += 1
