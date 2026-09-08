@@ -125,14 +125,31 @@
 </div>
 
 <div class="panel active" id="panel-chat">
-  <div id="chat-provenance" style="font-size:11px; opacity:.7; padding:6px 10px; border-bottom:1px solid var(--border,#ddd);">
-    <strong>Source: model reasoning</strong> &middot; not checked against a manuscript, the reviewer notes, or any verified reference.
-    Useful for orienting yourself in an unfamiliar method, drafting a note you will then correct, or naming something you will recognise.
-    Not for text that will go into a review, and not for a number, a threshold or a citation:
-    across eleven test questions, asked independently, this model gave mostly sound explanations alongside
-    invented papers carrying real-looking DOIs, a four-author paper assembled from the initials of a method,
-    a verbatim quotation that does not exist in the book it was attributed to,
-    and one answer that confidently described an entirely different statistic under the right name.
+  <div id="chat-provenance" style="font-size:11px; opacity:.75; padding:6px 10px; border-bottom:1px solid var(--border,#ddd);">
+    <strong>Source: model reasoning</strong> &middot; not checked against a manuscript, the reviewer notes,
+    or any verified reference. <strong>Ask it how something works, not what the record says.</strong>
+    <details style="margin-top:4px;"><summary style="cursor:pointer; opacity:.8;">why, and what to avoid asking</summary>
+    <div style="margin-top:5px; line-height:1.45;">
+      Explanations are generated and have been reliable here. Particular facts have to be recalled, and this
+      has no way to look anything up, so the questions to avoid are the ones that require a fact rather than
+      an account:
+      <ul style="margin:5px 0 5px 16px; padding:0;">
+        <li><em>Which paper or study established X? Who proposed X?</em> Every such question in testing
+            produced a defective or invented reference.</li>
+        <li><em>What did study Y find?</em> Same, and the invention is harder to spot because the finding
+            is usually about right.</li>
+        <li><em>What is the threshold, the cut-off, the number?</em> The rule for how many imputations to
+            use came back inverted, twice, in opposite directions.</li>
+      </ul>
+      Where a term means different things in different fields, say which you mean: asked about the E-value
+      it described a Bayesian measure of evidence rather than the sensitivity measure used in observational
+      research, confidently and with an invented source.
+      <br><br>
+      Across eleven independent test questions it gave mostly sound explanations alongside invented papers
+      carrying real-looking DOIs, a four-author paper assembled from the initials of a method, a verbatim
+      quotation that does not exist in the book it was attributed to, and the wrong statistic under the
+      right name. Nothing from here belongs in a review unchecked.
+    </div></details>
   </div>
   <div id="chat-container">
     <div class="empty-state" id="emptyState"><h2>Ready to chat</h2><p>Type a message below to start.</p></div>
