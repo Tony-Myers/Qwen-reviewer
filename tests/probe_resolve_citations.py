@@ -54,19 +54,38 @@ BOOKISH = re.compile(
     re.I)
 
 
+# A reference entry, not a sentence that happens to contain a year. The first
+# version of this took any line with a year and forty-five characters, and half
+# of what it extracted was prose -- "This recommendation has been widely
+# adopted... Later work, such as..." -- which then returned no Crossref match
+# and was counted as an unresolved reference. Fifty-five unresolved was not a
+# fabrication count, it was mostly narrative.
+AUTHOR_START = re.compile(
+    r"^(?:\d+\.\s*)?[A-Z][A-Za-z'\u2019-]+,\s*[A-Z]\.")      # Cohen, J.
+AUTHOR_AMP = re.compile(
+    r"^(?:\d+\.\s*)?[A-Z][A-Za-z'\u2019-]+(?:,\s*[A-Z]\.)?(?:,|\s*&|\s+and\s+)"
+    r"\s*[A-Z][A-Za-z'\u2019-]+")                              # Hartung & Knapp
+VOL_PAGES = re.compile(r"\b\d{1,3}\(\d{1,3}\),?\s*\d{1,4}[-\u2013]\d{1,4}")
+
+
 def candidate_references(answer: str):
-    """Lines that look like a reference rather than a mention in passing."""
+    """Lines shaped like a reference entry."""
     out = []
     for raw in answer.splitlines():
-        line = re.sub(r"[*_`>#]", "", raw).strip(" -–\t")
+        line = re.sub(r"[*_`>#]", "", raw).strip(" -\u2013\t")
         if len(line) < 45:
             continue
         if not (YEAR_RE.search(line) or DOI_RE.search(line)):
             continue
-        # a mention in prose is short and has no title; a reference carries
-        # a title-length run of words after the year
+        looks_like_entry = (DOI_RE.search(line)
+                            or VOL_PAGES.search(line)
+                            or AUTHOR_START.match(line)
+                            or AUTHOR_AMP.match(line))
+        if not looks_like_entry:
+            continue
+        # a bare in-text mention carries no title
         after = YEAR_RE.split(line)[-1] if YEAR_RE.search(line) else line
-        if len(after.split()) < 5 and not DOI_RE.search(line):
+        if len(after.split()) < 4 and not DOI_RE.search(line):
             continue
         out.append(line)
     return out
