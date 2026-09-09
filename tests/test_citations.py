@@ -143,6 +143,54 @@ check("a value that is genuinely absent is still caught",
           rp.verify_report_citations("the p-value was 0.0071 here.", _SCI)),
       rp.verify_report_citations("the p-value was 0.0071 here.", _SCI))
 
+print("\n[a paraphrase in quotation marks is not an invention]")
+# On RJSP-2026-0327 the report's best-evidenced concern was demoted to Unquoted
+# because the model paraphrased a sentence the authors state outright. The
+# check was right about the string and wrong about the ranking.
+_PARA_SRC = (
+    "For studies with three or more groups, if multiple intervention or "
+    "control arms met inclusion criteria, each qualifying group was treated as "
+    "an independent sample in the analysis model, following pre-defined "
+    "inclusion and exclusion rules to ensure methodological rigor and "
+    "interpretability of results. An intraclass correlation coefficient (ICC) "
+    "of 0.5 was adopted as a standard assumption representing moderate "
+    "correlation."
+)
+_para = rp.verify_report_citations(
+    'The methods state that "qualifying intervention or control arms were '
+    'treated as independent samples in the analysis model."', _PARA_SRC)
+check("the paraphrase is still reported as not found",
+      _para and "Quotation not found" in _para[0], _para)
+check("but the closest sentence is named",
+      _para and "closest sentence in the manuscript" in _para[0], _para)
+check("and the reader is told a near match is not agreement",
+      _para and "near match is not agreement" in _para[0], _para)
+
+# The guard the appendix prints inside a preview is the pipeline's own text.
+# One model quoted it into a concern; it must not stop the sentence being found.
+_guarded = rp.verify_report_citations(
+    'Page 9 states: "An intraclass correlation coefficient (ICC) of 0.5 was '
+    'adopted as a standard assumption representing [PREVIEW CUT SHORT - DO NOT '
+    'QUOTE FROM HERE]".', _PARA_SRC)
+check("the do-not-quote guard does not hide the sentence behind it",
+      _guarded and "closest sentence in the manuscript" in _guarded[0], _guarded)
+
+# The dangerous case, which is why the wording never says "supported".
+_absent = rp.verify_report_citations(
+    'The authors write that "priors for the between-study variance were '
+    'specified as half-normal with a scale of two point five".', _PARA_SRC)
+check("an invented sentence gets no near match",
+      _absent and "closest sentence" not in _absent[0], _absent)
+
+_conf, _why = rp.concern_confidence(
+    'Evidence: The methods state that "qualifying intervention or control arms '
+    'were treated as independent samples in the analysis model."', _PARA_SRC)
+check("a located paraphrase is Moderate, not Low", _conf == "Moderate", (_conf, _why))
+_conf2, _ = rp.concern_confidence(
+    'Evidence: The authors write that "priors for the between-study variance '
+    'were specified as half-normal with a scale of two point five".', _PARA_SRC)
+check("an unlocatable quotation is still Low", _conf2 == "Low", _conf2)
+
 print()
 if fails: print(f"{len(fails)} FAILURE(S): {fails}"); sys.exit(1)
 print("All citation-check tests passed.")

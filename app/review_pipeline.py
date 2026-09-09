@@ -4094,6 +4094,16 @@ def concern_confidence(group_text: str, source_text: str) -> Tuple[str, str]:
         return ("Low", "one quotation was located in the manuscript and "
                        "another could not be")
     if unverified:
+        # A paraphrase inside quotation marks is a wording fault, not an
+        # absence of evidence. On RJSP-2026-0327 this rule alone put the
+        # concern the authors state outright in their own methods below three
+        # concerns resting on weaker material. Moderate, not High: the
+        # sentence was located, the quotation marks are still wrong, and a
+        # negation or a changed value would match just as closely.
+        if all(mchk.nearest_sentence(q, source_text) for q in unverified):
+            return ("Moderate", "the quotation is the report's wording; a "
+                                "closely matching sentence was located in the "
+                                "manuscript")
         return ("Low", "the quoted evidence could not be located in the "
                        "extracted manuscript")
     if quotes:
@@ -4215,9 +4225,10 @@ def format_action_list(report_text: str) -> str:
            "Ordered by how each item is worded and evidenced, which the "
            "citation check establishes mechanically. Quoted means every "
            "quotation in it was located in the manuscript; Reasoned means it "
-           "argues from the evidence rather than quoting it; Unquoted means a "
-           "quotation could not be located or the evidence cited this "
-           "pipeline's own summary; Question marks a check to settle rather "
+           "argues from the evidence rather than quoting it, or paraphrased a "
+           "sentence that was located while presenting it as a quotation; "
+           "Unquoted means a quotation could not be located anywhere near "
+           "verbatim or the evidence cited this pipeline's own summary; Question marks a check to settle rather "
            "than an established fault. **This orders provenance, not "
            "correctness.** An Unquoted item may be right and a Quoted one "
            "wrong; on four manuscripts in the evaluation set an Unquoted "
@@ -4492,6 +4503,8 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
     # a whole manuscript. Behaviour is unchanged.
     haystack_punct = _strip_punctuation(haystack)
     haystack_nospace = re.sub(r"\s+", "", haystack_punct)
+    # Built once for the whole report rather than per quotation.
+    near_pool = mchk.near_candidates(source_text)
 
     for match in _SELF_CITATION_RE.finditer(report_text):
         line = report_text[: match.start()].split("\n")[-1] + match.group(0)
@@ -4528,11 +4541,14 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
             # most substantive concern was demoted to Unverified because the
             # model had joined a row label to a value from another cell, while
             # every number it cited was present. Say which.
-            note = mchk.numeric_fallback(quoted, source_text)
-            if note:
+            notes = [n for n in (
+                mchk.numeric_fallback(quoted, source_text),
+                mchk.paraphrase_fallback(quoted, source_text, near_pool),
+            ) if n]
+            if notes:
                 problems.append(
                     f"Quotation not found in the manuscript: \"{quoted[:110]}\" "
-                    f"-- {note}"
+                    f"-- {'; '.join(notes)}"
                 )
             else:
                 problems.append(

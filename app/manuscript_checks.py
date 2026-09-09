@@ -687,6 +687,153 @@ def numeric_fallback(quotation: str, source_text: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# 8a. When the wording is wrong but the sentence is there
+# ---------------------------------------------------------------------------
+
+# On RJSP-2026-0327 the report's best-evidenced concern -- that arms from
+# multi-arm trials were treated as independent samples, which the authors state
+# outright in their methods -- was demoted to Unquoted and Low confidence
+# because the model had paraphrased the sentence inside quotation marks. The
+# exact-match check was right about the string and wrong about the ranking, and
+# a near-miss paraphrase was penalised identically to an invention.
+#
+# This locates the closest sentence in the source and prints it. It does NOT
+# decide whether the paraphrase is faithful, and must never be worded as
+# though it did: a negated sentence and a sentence with one number changed both
+# match at high recall, and were checked before this shipped. The reader
+# compares the two. The numeric note above still runs alongside, which is what
+# catches the changed number.
+
+_NEAR_WORD = re.compile(r"[a-z0-9]+")
+_NEAR_GUARD = re.compile(r"\[[^\]]*(?:PREVIEW CUT SHORT|DO NOT QUOTE)[^\]]*\]",
+                         re.IGNORECASE)
+# Function words carry no evidence of a shared source: a long sentence would
+# score well on "the", "of" and "was" alone.
+_NEAR_STOP = {
+    "a", "an", "the", "of", "in", "on", "for", "to", "and", "or", "as", "at",
+    "by", "with", "was", "were", "is", "are", "be", "been", "this", "that",
+    "these", "those", "it", "its", "from", "which", "than", "then", "not",
+    "no", "but", "if", "each", "any", "we", "our", "their", "there", "they",
+    "he", "she", "his", "her", "into", "also",
+}
+# Set on the RJSP-2026-0327 text against four paraphrases known to be faithful
+# and six quotations known to be absent, including one built by shuffling real
+# words of the manuscript. All ten were classified correctly at these values.
+NEAR_MIN_CONTENT = 5      # shorter quotations cannot be judged this way
+NEAR_RECALL_MIN = 0.70    # share of the quotation's content words present
+NEAR_RUN_MIN = 3          # consecutive content words in the same order
+
+
+def _near_stem(token: str) -> str:
+    """Strip a plural s. "samples" against "sample" cost a true match."""
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def _near_tokens(text: str) -> List[str]:
+    return [_near_stem(t) for t in _NEAR_WORD.findall((text or "").lower())]
+
+
+def _near_content(tokens: Sequence[str]) -> List[str]:
+    return [t for t in tokens if t not in _NEAR_STOP and len(t) > 1]
+
+
+def _near_run(a: Sequence[str], b: Sequence[str]) -> int:
+    """Longest run of content words appearing consecutively in both."""
+    if not a or not b:
+        return 0
+    prev = [0] * (len(b) + 1)
+    best = 0
+    for i in range(1, len(a) + 1):
+        cur = [0] * (len(b) + 1)
+        ai = a[i - 1]
+        for j in range(1, len(b) + 1):
+            if ai == b[j - 1]:
+                cur[j] = prev[j - 1] + 1
+                if cur[j] > best:
+                    best = cur[j]
+        prev = cur
+    return best
+
+
+_NEAR_SPLIT = re.compile(r"(?<=[.;:!?])\s+|\n{2,}")
+
+
+def near_candidates(source_text: str) -> List[str]:
+    """
+    Sentences of the source, plus each adjacent pair.
+
+    Built once per report and passed in: a paraphrase often spans a sentence
+    boundary, and rebuilding this per quotation is the difference between a
+    check that costs nothing and one that costs seconds.
+    """
+    sentences = [s for s in _NEAR_SPLIT.split(source_text or "") if s.strip()]
+    out: List[str] = []
+    for i, s in enumerate(sentences):
+        out.append(s)
+        if i + 1 < len(sentences):
+            out.append(s + " " + sentences[i + 1])
+    return out
+
+
+def nearest_sentence(quotation: str, source_text: str,
+                     candidates: Optional[Sequence[str]] = None
+                     ) -> Optional[Tuple[float, int, str]]:
+    """
+    The closest sentence in the source to a quotation that would not match.
+
+    Returns (share of the quotation's content words found, longest consecutive
+    run, the sentence) or None when nothing is close enough. Says nothing about
+    whether the quotation is a fair rendering of what it found.
+    """
+    q = _near_content(_near_tokens(_NEAR_GUARD.sub(" ", quotation or "")))
+    if len(q) < NEAR_MIN_CONTENT:
+        return None
+    q_set = set(q)
+    pool = candidates if candidates is not None else near_candidates(source_text)
+    shortlist = []
+    for c in pool:
+        c_set = set(_near_content(_near_tokens(c)))
+        if not c_set:
+            continue
+        share = len(q_set & c_set) / len(q_set)
+        if share >= NEAR_RECALL_MIN:
+            shortlist.append((share, len(c), c))
+    if not shortlist:
+        return None
+    # Best share first, and the shorter candidate at equal share so the
+    # location reported is as precise as the text allows.
+    shortlist.sort(key=lambda item: (-item[0], item[1]))
+    best: Optional[Tuple[float, int, str]] = None
+    for share, _, c in shortlist[:12]:
+        run = _near_run(q, _near_content(_near_tokens(c)))
+        if run < NEAR_RUN_MIN:
+            continue
+        if best is None or (share, run) > (best[0], best[1]):
+            best = (share, run, c)
+    if best is None:
+        return None
+    share, run, c = best
+    return share, run, " ".join(c.split())
+
+
+def paraphrase_fallback(quotation: str, source_text: str,
+                        candidates: Optional[Sequence[str]] = None,
+                        excerpt: int = 180) -> Optional[str]:
+    """A sentence naming the closest text found, or None."""
+    found = nearest_sentence(quotation, source_text, candidates)
+    if found is None:
+        return None
+    share, run, sentence = found
+    return (f"the closest sentence in the manuscript carries {share:.0%} of the "
+            f"quotation's content words ({run} consecutive): "
+            f"\"{sentence[:excerpt]}\". Compare the two before using either: a "
+            "near match is not agreement, and a negation or a changed value "
+            "matches just as well")
+
+
+# ---------------------------------------------------------------------------
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.;:!?])\s+")
 
