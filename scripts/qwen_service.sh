@@ -34,6 +34,20 @@ PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 # found even though it works perfectly in Terminal.
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
 
+# --- Local settings --------------------------------------------------------
+# Sourced before anything is worked out, so a setting there survives a restart
+# started from the browser: the app server re-launches start_server.sh, and
+# whatever was exported in a shell is long gone by then. The Flash-Next model
+# needs a llama.cpp build the Homebrew one cannot replace, so this is how that
+# choice persists. See local.env.example.
+if [[ -f "$PROJECT_DIR/local.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$PROJECT_DIR/local.env"
+fi
+
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/model_aliases.sh"
+
 # --- Configuration ---------------------------------------------------------
 VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
 APP_PY="$PROJECT_DIR/app/server.py"
@@ -61,9 +75,13 @@ LLAMA_REASONING_EFFORT="${LLAMA_REASONING_EFFORT:-}"
 QWEN_VISION_TABLES="${QWEN_VISION_TABLES:-0}"
 LLAMA_NGL="${LLAMA_SERVER_NGL:-99}"
 
-HF_HUB="${HF_HUB_CACHE:-$HOME/.cache/huggingface/hub}"
-DEFAULT_MODEL="$HF_HUB/models--unsloth--Qwen3.8-27B-GGUF/snapshots/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-Q4_K_XL.gguf"
-MODEL="${QWEN_MODEL:-$DEFAULT_MODEL}"
+# HF_HUB and the model paths come from scripts/model_aliases.sh, sourced above.
+DEFAULT_MODEL="$QWEN38_27B_GGUF"
+# Resolved through the shared table, so "--model flash" and QWEN_MODEL=flash
+# mean the same thing here as on the command line and in the browser. This
+# script used to take the value verbatim, so an alias became a model id that
+# does not end in .gguf, which silently selected the MLX backend.
+MODEL="$(resolve_model "${QWEN_MODEL:-$DEFAULT_MODEL}")" || exit 1
 
 RUN_DIR="$PROJECT_DIR/run"
 LOG_DIR="$PROJECT_DIR/logs"
@@ -361,6 +379,7 @@ start_llama() {
   fi
 
   log_line "Starting llama-server on port $LLAMA_PORT ($(basename "$MODEL"))..."
+  log_line "llama-server binary: $LLAMA_BIN"
   nohup "$LLAMA_BIN" \
     --model "$MODEL" \
     --host "$LLAMA_HOST" \
@@ -707,7 +726,7 @@ while [[ $# -gt 0 ]]; do
     --no-open) OPEN_BROWSER=0; shift ;;
     --port)    APP_PORT="$2"; shift 2 ;;
     --llama-port) LLAMA_PORT="$2"; shift 2 ;;
-    --model)   MODEL="$2"; shift 2 ;;
+    --model)   MODEL="$(resolve_model "$2")" || exit 1; shift 2 ;;
     --passes)  REVIEW_PASSES="$2"; shift 2 ;;
     --effort)  LLAMA_REASONING_EFFORT="$2"; shift 2 ;;
     --vision)  QWEN_VISION_TABLES=1; shift ;;

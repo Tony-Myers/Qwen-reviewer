@@ -28,6 +28,9 @@ benchmarks/
 # --- Nested checkouts of other projects ---
 repos/
 
+# --- Local machine settings (paths, binaries) ---
+local.env
+
 # --- Scratch ---
 research_deck_text.txt
 *.backup

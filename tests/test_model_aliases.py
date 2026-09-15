@@ -4,15 +4,18 @@ The model aliases are listed in three places, and they diverged.
 
 MODEL_ALIASES in app/review_pipeline.py is the canonical table. MODEL_CHOICES
 in app/server.py builds the web UI switcher and folds the canonical table in.
-resolve_model() in start_server.sh keeps its own copy, because aliases are
-resolved while parsing arguments, before the virtual environment is active, so
-there is no Python available to ask.
+resolve_model() in scripts/model_aliases.sh keeps its own copy, sourced by both
+launchers, because aliases are resolved while parsing arguments, before the
+virtual environment is active, so there is no Python available to ask.
 
 That third copy is the problem. "flash" was added to the canonical table and to
 the UI switcher but not to the launcher, so the dropdown offered a model the
 launcher rejected. The failure is worse than a plain error: server.py exits
 immediately after spawning the launcher, so a restart onto an alias the
-launcher does not know leaves nothing running at all.
+launcher does not know leaves nothing running at all. Separately,
+scripts/qwen_service.sh had no table at all and took --model verbatim, so an
+alias there became a model id that does not end in .gguf and silently selected
+the MLX backend.
 
 This test fails if the tables disagree, in either direction.
 
@@ -39,9 +42,9 @@ sys.path.insert(0, str(ROOT / "app"))
 
 import review_pipeline as rp                                   # noqa: E402
 
-LAUNCHER = ROOT / "start_server.sh"
+LAUNCHER = ROOT / "scripts" / "model_aliases.sh"
 
-# Shell variable in start_server.sh -> constant in review_pipeline. Kept
+# Shell variable in scripts/model_aliases.sh -> constant in review_pipeline. Kept
 # explicit so that a model added to the launcher under a new variable name
 # fails here rather than passing unnoticed.
 SHELL_VAR_TO_CONSTANT = {
@@ -92,15 +95,16 @@ def main() -> int:
     unknown_vars = sorted(set(launcher.values()) - set(SHELL_VAR_TO_CONSTANT))
     if unknown_vars:
         failures.append(
-            "start_server.sh resolves aliases to shell variables this test does "
-            f"not know: {', '.join(unknown_vars)}. Add them to "
+            "scripts/model_aliases.sh resolves aliases to shell variables this test "
+            f"does not know: {', '.join(unknown_vars)}. Add them to "
             "SHELL_VAR_TO_CONSTANT so the mapping stays checked.")
 
     missing = sorted(set(canonical) - set(launcher))
     if missing:
         failures.append(
             "These aliases are in MODEL_ALIASES but not in resolve_model() in "
-            f"start_server.sh, so the launcher rejects them: {', '.join(missing)}")
+            f"scripts/model_aliases.sh, so the launchers reject them: "
+            f"{', '.join(missing)}")
 
     extra = sorted(set(launcher) - set(canonical))
     if extra:
@@ -122,13 +126,25 @@ def main() -> int:
                 f"alias {alias!r} points at a different model in each table: "
                 f"launcher ${variable}, canonical {constant}")
 
+    for launcher_path in ("start_server.sh", "scripts/qwen_service.sh"):
+        text = (ROOT / launcher_path).read_text(encoding="utf-8")
+        # A mention in a comment is not a source. Look for the command.
+        sourced = re.search(r"^\s*(?:source|\.)\s+\"?[^\"\n]*model_aliases\.sh",
+                            text, re.M)
+        if not sourced:
+            failures.append(
+                f"{launcher_path} does not source scripts/model_aliases.sh, so it "
+                "has its own idea of what an alias means, or none at all. "
+                "qwen_service.sh took --model verbatim for a while and an "
+                "alias silently selected the MLX backend.")
+
     for alias in sorted(ui_aliases()):
         if alias not in launcher:
             failures.append(
                 f"the web UI can post {alias!r}, which resolve_model() in "
-                "start_server.sh does not know. A restart onto it would leave "
-                "nothing running, because server.py exits before the launcher "
-                "reports the error.")
+                "scripts/model_aliases.sh does not know. A restart onto it "
+                "would leave nothing running, because server.py exits before "
+                "the launcher reports the error.")
 
     if failures:
         print("FAIL: the model alias tables disagree\n")
