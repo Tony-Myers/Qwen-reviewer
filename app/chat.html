@@ -248,8 +248,26 @@ function setControlsDisabled(disabled) {
   document.getElementById('restartBtn').disabled = disabled;
   document.getElementById('modelSelect').disabled = disabled;
   document.getElementById('sendBtn').disabled = disabled || isGenerating;
-  document.getElementById('reviewBtn').disabled = disabled || !selectedFile;
+  refreshReviewButton(disabled);
   document.getElementById('clearBtn').disabled = disabled;
+}
+
+// A review must not start on a model the user did not choose. The dropdown
+// holds a pending choice until Restart is pressed, so between the two the
+// selector names one model and llama-server serves another; a review begun in
+// that window runs on the loaded model, which cost an hour of generation and
+// one invalid arm of a model comparison. The button is disabled until the
+// choice is either loaded or given up.
+function refreshReviewButton(forceDisabled) {
+  const btn = document.getElementById('reviewBtn');
+  if (!btn) return;
+  const blocked = forceDisabled === undefined
+    ? (isRestarting || isGenerating)
+    : forceDisabled;
+  btn.disabled = !!blocked || !selectedFile || modelChoicePending;
+  btn.title = modelChoicePending
+    ? 'Press Restart first: the selected model is not the one that is loaded'
+    : '';
 }
 
 function syncSelectedModel(currentModel) {
@@ -259,7 +277,10 @@ function syncSelectedModel(currentModel) {
   const match = [...select.options].find(o => o.dataset.model === currentModel);
   if (!match || isRestarting) return;
   if (select.value === match.value) {
-    modelChoicePending = false;
+    if (modelChoicePending) {
+      modelChoicePending = false;
+      refreshReviewButton();
+    }
     return;
   }
   if (modelChoicePending) {
@@ -348,6 +369,7 @@ async function waitForRestart(expectedModel) {
   isRestarting = false;
   modelChoicePending = false;
   setControlsDisabled(false);
+  refreshReviewButton();
   if (reached) {
     clearChat();
     setRestartNote('Ready');
@@ -439,6 +461,7 @@ document.getElementById('modelSelect').addEventListener('change', () => {
   setRestartNote(modelChoicePending
     ? 'Press Restart to load ' + opt.textContent
     : '');
+  refreshReviewButton();
 });
 
 fileInput.addEventListener('change', () => { if (fileInput.files.length) pickFile(fileInput.files[0]); });
@@ -449,12 +472,19 @@ dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.
 function pickFile(f) {
   selectedFile = f;
   const el = document.getElementById('fileName'); el.textContent = f.name; el.style.display = 'block';
-  document.getElementById('reviewBtn').disabled = false;
+  refreshReviewButton();
 }
 
 // --- Review ---
 async function startReview() {
   if (!selectedFile) return;
+  if (modelChoicePending) {
+    const opt = document.getElementById('modelSelect').selectedOptions[0];
+    setRestartNote('Press Restart to load '
+      + (opt ? opt.textContent : 'the selected model')
+      + ' before starting a review', true);
+    return;
+  }
   const btn = document.getElementById('reviewBtn'); btn.disabled = true;
   const pa = document.getElementById('progressArea'); pa.classList.add('visible');
   const pb = document.getElementById('progressBar'); pb.style.width = '0%';

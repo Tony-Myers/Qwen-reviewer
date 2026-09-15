@@ -337,6 +337,34 @@ MODEL_ALIAS_MAP.update({
 })
 
 
+def _model_header_lines() -> list:
+    """
+    The Model line, reporting what is loaded rather than what was requested.
+
+    MODEL_NAME is this process's command-line argument. llama-server may hold
+    something else -- a launcher that reused a running server, a server started
+    by hand, a restart that failed after this process had already exited, or a
+    model chosen in the browser without pressing Restart. The header then named
+    a model that had not written a word of the review. When the two disagree
+    the served model is reported, and the discrepancy is stated rather than
+    quietly resolved.
+    """
+    configured = rp.model_display_name(MODEL_NAME)
+    try:
+        served = llm_backend.served_model_name()
+    except Exception:                                           # noqa: BLE001
+        served = ""
+    if not served or served == Path(configured).name:
+        return [f"Model: {configured}"]
+    return [
+        f"Model: {served}",
+        f"WARNING: this app server was started with {Path(configured).name}, "
+        f"but llama-server has {served} loaded, so {served} wrote this review. "
+        f"If the other model was wanted, restart the service rather than "
+        f"choosing it in the browser alone.",
+    ]
+
+
 def _hf_cache_root() -> Path:
     if os.environ.get("HF_HUB_CACHE"):
         return Path(os.environ["HF_HUB_CACHE"]).expanduser()
@@ -773,7 +801,7 @@ def _build_appendix_text(
     lines.append("# Evidence appendix")
     lines.append("")
     lines.append(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
-    lines.append(f"Model: {rp.model_display_name(MODEL_NAME)}")
+    lines.extend(_model_header_lines())
     lines.append(f"Pipeline: {rp.PIPELINE_VERSION}")
     lines.append("")
     lines.append(f"## Input files\n- {file_path.name}")
@@ -1124,8 +1152,8 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         header = (
             f"# Local peer-review report\n\n"
             f"Generated: {datetime.now().isoformat(timespec='seconds')}\n"
-            f"Model: {rp.model_display_name(MODEL_NAME)}\n"
-            f"Pipeline: {rp.PIPELINE_VERSION}\n"
+            + "".join(f"{line}\n" for line in _model_header_lines())
+            + f"Pipeline: {rp.PIPELINE_VERSION}\n"
             # Recorded so reviews accumulated over real use can be grouped by
             # mode afterwards; without it the comparison is unrecoverable.
             # Said out loud, because a silent repair to the text everything

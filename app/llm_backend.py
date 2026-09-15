@@ -95,6 +95,7 @@ __all__ = [
     "reasoning_effort",
     "describe_image",
     "vision_available",
+    "served_model_name",
     "DEFAULT_REASONING_EFFORT",
     "thinking_token_allowance",
     "is_gguf_model",
@@ -808,6 +809,34 @@ class LlamaServerModel:
         self._context_size = found or 0
         return found
 
+    def served_model_name(self, timeout: float = 3.0) -> str:
+        """
+        The model llama-server actually has loaded, as a bare file name.
+
+        The app server is told which model to use on its command line, and that
+        is what the report header recorded. The two can disagree: a launcher
+        that reuses a running server, a server started by hand, a restart that
+        failed after the app server had already exited. The header then named a
+        model that had not written a word of the review, and a comparison
+        between two models was silently invalid. Ask the server instead of
+        trusting the argument. Empty if it will not say.
+        """
+        for path, key in (("/props", "model_path"), ("/v1/models", "id")):
+            try:
+                with urllib.request.urlopen(f"{self.base_url}{path}",
+                                            timeout=timeout) as response:
+                    payload = json.loads(response.read().decode("utf-8", "replace"))
+            except Exception:                                   # noqa: BLE001
+                continue
+            raw = payload.get(key)
+            if raw is None:
+                entries = payload.get("data")
+                if isinstance(entries, list) and entries:
+                    raw = (entries[0] or {}).get(key)
+            if isinstance(raw, str) and raw.strip():
+                return Path(raw.strip()).name
+        return ""
+
     def wait_until_up(self, timeout: Optional[float] = None,
                       interval: float = 2.0, announce: bool = False) -> bool:
         """Block until the server reports ready, or the wait runs out."""
@@ -923,6 +952,22 @@ def vision_available() -> bool:
     """Whether a llama-server with a projector is reachable."""
     model = _LAST_LOADED_MODEL
     return isinstance(model, LlamaServerModel)
+
+
+def served_model_name() -> str:
+    """
+    The model the backend is really serving, or "" when that cannot be known.
+
+    Only the llama-server backend can be asked. MLX loads in process, so what
+    was requested is necessarily what is running.
+    """
+    model = _LAST_LOADED_MODEL
+    if not isinstance(model, LlamaServerModel):
+        return ""
+    try:
+        return model.served_model_name()
+    except Exception:                                           # noqa: BLE001
+        return ""
 
 
 def describe_image(png: bytes, prompt: str, max_tokens: int = 4000) -> str:
