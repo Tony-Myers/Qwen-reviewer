@@ -17,10 +17,12 @@
 HF_HUB="${HF_HUB_CACHE:-$HOME/.cache/huggingface/hub}"
 
 QWEN38_27B_GGUF="$HF_HUB/models--unsloth--Qwen3.8-27B-GGUF/snapshots/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-Q4_K_XL.gguf"
-# 28 shards; llama-server is given the first and finds the rest. Needs a
-# llama.cpp build that knows the qwen3next architecture, which the Homebrew
-# build does not -- set LLAMA_SERVER_BIN, and see local.env.example for how to
-# make that setting survive a restart started from the browser.
+# 28 shards; llama-server is given the first and finds the rest. The GGUF
+# declares the architecture qwen4exp -- not qwen3next, whatever the file name
+# suggests -- and the Homebrew build does not know it: the load fails with
+# "unknown model architecture: 'qwen4exp'". Set LLAMA_SERVER_BIN to a build
+# that has it, and see local.env.example for how to make that setting survive
+# a restart started from the browser.
 QWEN38_FLASH_NEXT_GGUF="$HF_HUB/models--AtomicChat--Qwen3.8-Flash-Next-GGUF/snapshots/142262902a46f7daed19c79d0771534c8106ad59/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00001-of-00028.gguf"
 
 QWEN35_4BIT="mlx-community/Qwen3.6-35B-A3B-4bit"
@@ -65,6 +67,24 @@ resolve_model() {
         echo "MODEL_ALIASES in app/review_pipeline.py. Both need the entry." >&2
         return 1
       fi
+      ;;
+  esac
+}
+
+# Extra llama-server flags a particular model needs, so that they travel with
+# the model when it is chosen in the browser -- local.env cannot make a setting
+# conditional on which model was picked. Empty for everything else.
+#
+# Flash-Next: --lazy-mode auto is in the invocation that is known to load this
+# model on this machine. If it turns out to be unnecessary, this is one line to
+# remove; LLAMA_SERVER_EXTRA_ARGS in local.env adds flags for every model.
+model_extra_args() {
+  case "$(basename "$1")" in
+    Qwen3.8-Flash-Next-*)
+      echo "--lazy-mode auto"
+      ;;
+    *)
+      echo ""
       ;;
   esac
 }

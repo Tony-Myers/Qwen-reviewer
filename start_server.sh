@@ -257,10 +257,10 @@ Install or update llama.cpp, for example:
   brew install llama.cpp      # or: brew upgrade llama.cpp
 
 Each model needs a build that knows its architecture: qwen35 for the 27B,
-qwen3next for Flash-Next. If llama-server loads but reports an unknown
-architecture, the build is too old for that model. Point LLAMA_SERVER_BIN at a
-build that has it:
-  LLAMA_SERVER_BIN=/path/to/llama.cpp/build/bin/llama-server ./start_server.sh
+qwen4exp for Flash-Next. If llama-server loads but reports an unknown
+architecture, the build does not have that model. Point LLAMA_SERVER_BIN at a
+build that does, and put it in local.env so the setting survives a restart
+started from the browser -- see local.env.example.
 
 To use the previous MLX model instead, which needs no llama-server at all:
   ./start_server.sh --model 35b
@@ -317,6 +317,15 @@ EOF
       fi
     fi
 
+    # Flags this model needs, and flags this machine needs. The first travel
+    # with the model so that choosing it in the browser brings them along;
+    # local.env cannot make a setting conditional on the model chosen.
+    LLAMA_MODEL_ARGS=( $(model_extra_args "$MODEL") )
+    LLAMA_EXTRA_ARGS=( ${LLAMA_SERVER_EXTRA_ARGS:-} )
+    if [[ ${#LLAMA_MODEL_ARGS[@]} -gt 0 || ${#LLAMA_EXTRA_ARGS[@]} -gt 0 ]]; then
+      echo "Extra llama-server flags: ${LLAMA_MODEL_ARGS[*]-} ${LLAMA_EXTRA_ARGS[*]-}"
+    fi
+
     "$LLAMA_BIN" \
       --model "$MODEL" \
       --host "$LLAMA_HOST" \
@@ -325,6 +334,8 @@ EOF
       --n-gpu-layers "$LLAMA_NGL" \
       --jinja \
       ${LLAMA_VISION_ARGS[@]+"${LLAMA_VISION_ARGS[@]}"} \
+      ${LLAMA_MODEL_ARGS[@]+"${LLAMA_MODEL_ARGS[@]}"} \
+      ${LLAMA_EXTRA_ARGS[@]+"${LLAMA_EXTRA_ARGS[@]}"} \
       > "$LLAMA_LOG" 2>&1 &
     LLAMA_PID=$!
     trap stop_llama EXIT INT TERM

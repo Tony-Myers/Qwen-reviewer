@@ -73,10 +73,12 @@ QWEN38_27B_GGUF = str(
 )
 
 # Qwen3.8 Flash-Next, a third-party 3.84bpw repack in 28 shards. llama-server
-# is given the first shard and finds the rest. This model uses the qwen3next
-# architecture, so it needs a llama.cpp build that knows it -- the Homebrew
-# build does not; set LLAMA_SERVER_BIN to one that does. No projector ships
-# beside it, so vision is unavailable with this model and the launcher says so.
+# is given the first shard and finds the rest. The GGUF declares the
+# architecture qwen4exp -- not qwen3next, whatever the file name suggests -- so
+# it needs a llama.cpp build that has qwen4exp; the Homebrew build does not,
+# and the load fails with "unknown model architecture". Set LLAMA_SERVER_BIN,
+# and see local.env.example. No projector ships beside it, so vision is
+# unavailable with this model and the launcher says so.
 QWEN38_FLASH_NEXT_GGUF = str(
     Path.home()
     / ".cache" / "huggingface" / "hub"

@@ -380,6 +380,17 @@ start_llama() {
 
   log_line "Starting llama-server on port $LLAMA_PORT ($(basename "$MODEL"))..."
   log_line "llama-server binary: $LLAMA_BIN"
+
+  # Flags this model needs, and flags this machine needs. Logged, because an
+  # argument that silently fails to arrive is how a day goes missing here.
+  local -a model_args=() extra_args=()
+  # shellcheck disable=SC2206
+  model_args=( $(model_extra_args "$MODEL") )
+  # shellcheck disable=SC2206
+  extra_args=( ${LLAMA_SERVER_EXTRA_ARGS:-} )
+  if [[ ${#model_args[@]} -gt 0 || ${#extra_args[@]} -gt 0 ]]; then
+    log_line "extra llama-server flags: ${model_args[*]-} ${extra_args[*]-}"
+  fi
   nohup "$LLAMA_BIN" \
     --model "$MODEL" \
     --host "$LLAMA_HOST" \
@@ -388,6 +399,8 @@ start_llama() {
     --n-gpu-layers "$LLAMA_NGL" \
     --jinja \
     ${vision_args[@]+"${vision_args[@]}"} \
+    ${model_args[@]+"${model_args[@]}"} \
+    ${extra_args[@]+"${extra_args[@]}"} \
     >> "$LLAMA_LOG" 2>&1 < /dev/null &
   echo $! > "$LLAMA_PID_FILE"
   log_line "llama-server pid $(cat "$LLAMA_PID_FILE"), log: $LLAMA_LOG"
@@ -494,6 +507,17 @@ cmd_start() {
   fi
 
   if ! start_llama; then
+    # The commonest cause is the wrong binary: each model needs a llama.cpp
+    # build that knows its architecture, and the message on its own does not
+    # say which binary was tried or where to change it.
+    if grep -q "unknown model architecture" "$LLAMA_LOG" 2>/dev/null; then
+      log_line ""
+      log_line "llama-server does not know this model's architecture."
+      log_line "It was run as: $LLAMA_BIN"
+      log_line "Point LLAMA_SERVER_BIN at a build that has the architecture named"
+      log_line "in the log above, and put it in $PROJECT_DIR/local.env so it"
+      log_line "survives a restart started from the browser. See local.env.example."
+    fi
     notify "Qwen review" "llama-server failed to start. See $LLAMA_LOG"
     return 1
   fi
