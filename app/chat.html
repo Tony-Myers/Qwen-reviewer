@@ -208,6 +208,13 @@
 <script>
 const BASE = window.location.origin;
 let chatHistory = [], isGenerating = false, selectedFile = null, isRestarting = false;
+// Set when the user picks a model themselves. checkServer() polls every 15
+// seconds and used to snap the dropdown back to whatever is loaded, so a
+// choice made and not acted on within 15 seconds silently reverted -- the
+// selector appeared to jump back to the previous model, and a review started
+// afterwards ran on it. A pending choice is now left alone until the user
+// restarts, or picks the loaded model again.
+let modelChoicePending = false;
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === name));
@@ -250,7 +257,16 @@ function syncSelectedModel(currentModel) {
   if (!select.options.length) return;
   select.dataset.currentModel = currentModel;
   const match = [...select.options].find(o => o.dataset.model === currentModel);
-  if (match && select.value !== match.value && !isRestarting) select.value = match.value;
+  if (!match || isRestarting) return;
+  if (select.value === match.value) {
+    modelChoicePending = false;
+    return;
+  }
+  if (modelChoicePending) {
+    setRestartNote('Press Restart to load ' + (select.selectedOptions[0]?.textContent || 'this model'));
+    return;
+  }
+  select.value = match.value;
 }
 
 async function loadModelChoices() {
@@ -330,6 +346,7 @@ async function waitForRestart(expectedModel) {
   }
 
   isRestarting = false;
+  modelChoicePending = false;
   setControlsDisabled(false);
   if (reached) {
     clearChat();
@@ -415,6 +432,15 @@ function clearChat() {
 // --- File upload ---
 const fileInput = document.getElementById('fileInput');
 const dropZone = document.getElementById('dropZone');
+document.getElementById('modelSelect').addEventListener('change', () => {
+  const select = document.getElementById('modelSelect');
+  const opt = select.selectedOptions[0];
+  modelChoicePending = !!opt && opt.dataset.model !== select.dataset.currentModel;
+  setRestartNote(modelChoicePending
+    ? 'Press Restart to load ' + opt.textContent
+    : '');
+});
+
 fileInput.addEventListener('change', () => { if (fileInput.files.length) pickFile(fileInput.files[0]); });
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
