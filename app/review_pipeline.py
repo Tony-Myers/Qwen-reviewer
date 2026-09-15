@@ -72,6 +72,20 @@ QWEN38_27B_GGUF = str(
     / "Qwen3.8-27B-UD-Q4_K_XL.gguf"
 )
 
+# Qwen3.8 Flash-Next, a third-party 3.84bpw repack in 28 shards. llama-server
+# is given the first shard and finds the rest. This model uses the qwen3next
+# architecture, so it needs a llama.cpp build that knows it -- the Homebrew
+# build does not; set LLAMA_SERVER_BIN to one that does. No projector ships
+# beside it, so vision is unavailable with this model and the launcher says so.
+QWEN38_FLASH_NEXT_GGUF = str(
+    Path.home()
+    / ".cache" / "huggingface" / "hub"
+    / "models--AtomicChat--Qwen3.8-Flash-Next-GGUF"
+    / "snapshots" / "142262902a46f7daed19c79d0771534c8106ad59"
+    / "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64"
+    / "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00001-of-00028.gguf"
+)
+
 # Previous MLX models, still selectable with --model.
 QWEN36_35B_MLX = "mlx-community/Qwen3.6-35B-A3B-4bit"
 QWEN36_27B_MLX = "mlx-community/Qwen3.6-27B-6bit"
@@ -88,6 +102,9 @@ MODEL_ALIASES = {
     "qwen38-27b": QWEN38_27B_GGUF,
     "27b-gguf": QWEN38_27B_GGUF,
     "gguf": QWEN38_27B_GGUF,
+    "flash": QWEN38_FLASH_NEXT_GGUF,
+    "flash-next": QWEN38_FLASH_NEXT_GGUF,
+    "qwen38-flash": QWEN38_FLASH_NEXT_GGUF,
     "35b": QWEN36_35B_MLX,
     "35b-4bit": QWEN36_35B_MLX,
     "qwen35": QWEN36_35B_MLX,

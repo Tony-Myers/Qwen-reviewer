@@ -204,6 +204,65 @@ stop_llama() {
   fi
 }
 
+# Which model does the llama-server on this port actually have loaded?
+#
+# Reusing a running server is normally what you want: the model stays resident
+# between runs. But it was reused without checking which model it held, so
+# switching model from the web UI restarted the app server with the new path
+# while llama-server carried on serving the old one. The report header takes
+# its Model line from the app server, so it named a model that had not written
+# a word of the review. Any comparison between two GGUF models was silently
+# invalid. Empty means the server did not say, and then reuse is reported as
+# unverified rather than claimed as a match.
+served_llama_model() {
+  local raw=""
+  raw="$(curl -s -m 3 "$LLAMA_URL/v1/models" 2>/dev/null \
+         | tr ',' '\n' \
+         | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+         | head -1)"
+  if [[ -z "$raw" ]]; then
+    raw="$(curl -s -m 3 "$LLAMA_URL/props" 2>/dev/null \
+           | tr ',' '\n' \
+           | sed -n 's/.*"model_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+           | head -1)"
+  fi
+  if [[ -n "$raw" ]]; then
+    basename "$raw"
+  fi
+  return 0
+}
+
+# Stop an llama-server this script did not start, so a different model can be
+# loaded. The pid file written by scripts/qwen_service.sh is preferred; the
+# listening process is the fallback for a server started by hand.
+stop_served_llama() {
+  local pid_file="$SCRIPT_DIR/run/llama-server.pid" pid=""
+
+  if [[ -f "$pid_file" ]]; then
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && ! ps -p "$pid" -o command= 2>/dev/null | grep -q llama-server; then
+      pid=""
+    fi
+  fi
+  if [[ -z "$pid" ]] && command -v lsof > /dev/null 2>&1; then
+    pid="$(lsof -ti "tcp:$LLAMA_PORT" -sTCP:LISTEN 2>/dev/null | head -1)"
+  fi
+  [[ -n "$pid" ]] || return 1
+
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    is_llama_up || { rm -f "$pid_file"; return 0; }
+    sleep 0.5
+  done
+  kill -9 "$pid" 2>/dev/null || true
+  sleep 1
+  if is_llama_up; then
+    return 1
+  fi
+  rm -f "$pid_file"
+  return 0
+}
+
 if [[ "$MODEL" == *.gguf ]]; then
   if [[ ! -f "$MODEL" ]]; then
     echo "Model file not found: $MODEL" >&2
@@ -217,20 +276,67 @@ llama-server was not found on PATH (looked for: $LLAMA_BIN).
 Install or update llama.cpp, for example:
   brew install llama.cpp      # or: brew upgrade llama.cpp
 
-This model uses the qwen35 architecture, which needs a recent llama.cpp
-build. If llama-server loads but reports an unknown architecture, upgrade it.
+Each model needs a build that knows its architecture: qwen35 for the 27B,
+qwen3next for Flash-Next. If llama-server loads but reports an unknown
+architecture, the build is too old for that model. Point LLAMA_SERVER_BIN at a
+build that has it:
+  LLAMA_SERVER_BIN=/path/to/llama.cpp/build/bin/llama-server ./start_server.sh
 
-To use the previous MLX model instead:
+To use the previous MLX model instead, which needs no llama-server at all:
   ./start_server.sh --model 35b
 EOF
     exit 1
   fi
 
+  NEEDS_LLAMA_START=1
   if is_llama_up; then
-    echo "Reusing the llama-server already listening on $LLAMA_URL"
-  else
+    SERVED_MODEL="$(served_llama_model)"
+    WANTED_MODEL="$(basename "$MODEL")"
+    if [[ -z "$SERVED_MODEL" ]]; then
+      echo "Reusing the llama-server already listening on $LLAMA_URL."
+      echo "It did not report which model it has loaded, so that was not checked."
+      NEEDS_LLAMA_START=0
+    elif [[ "$SERVED_MODEL" == "$WANTED_MODEL" ]]; then
+      echo "Reusing the llama-server already listening on $LLAMA_URL ($SERVED_MODEL)"
+      NEEDS_LLAMA_START=0
+    else
+      echo "llama-server on $LLAMA_URL has $SERVED_MODEL loaded, but $WANTED_MODEL"
+      echo "was asked for. Stopping it so the requested model can be loaded."
+      if ! stop_served_llama; then
+        cat >&2 <<EOF
+
+Could not stop the llama-server on port $LLAMA_PORT. It is serving
+$SERVED_MODEL, so a review started now would be written by that model
+whatever this launcher was asked for.
+
+Stop it yourself, then start again:
+  ./scripts/qwen_service.sh stop
+EOF
+        exit 1
+      fi
+    fi
+  fi
+
+  if [[ "$NEEDS_LLAMA_START" -eq 1 ]]; then
     mkdir -p "$SCRIPT_DIR/logs"
     echo "Starting llama-server on $LLAMA_URL (log: $LLAMA_LOG)"
+
+    # Vision needs the projector in memory, and the per-review selector in the
+    # browser can only turn vision on if it is. scripts/qwen_service.sh loads
+    # one whenever it sits beside the model; this launcher did not, so a
+    # restart from the web UI silently lost vision. Set QWEN_LOAD_MMPROJ=0 to
+    # keep it out.
+    LLAMA_VISION_ARGS=()
+    if [[ "${QWEN_LOAD_MMPROJ:-1}" == "1" ]]; then
+      MMPROJ_FILE="$(ls "$(dirname "$MODEL")"/*mmproj*.gguf 2>/dev/null | head -1)"
+      if [[ -n "$MMPROJ_FILE" ]]; then
+        LLAMA_VISION_ARGS=(--mmproj "$MMPROJ_FILE" --image-min-tokens 1024)
+        echo "Vision available: $(basename "$MMPROJ_FILE")"
+      else
+        echo "No projector beside this model, so vision is unavailable."
+      fi
+    fi
+
     "$LLAMA_BIN" \
       --model "$MODEL" \
       --host "$LLAMA_HOST" \
@@ -238,6 +344,7 @@ EOF
       --ctx-size "$LLAMA_CTX" \
       --n-gpu-layers "$LLAMA_NGL" \
       --jinja \
+      ${LLAMA_VISION_ARGS[@]+"${LLAMA_VISION_ARGS[@]}"} \
       > "$LLAMA_LOG" 2>&1 &
     LLAMA_PID=$!
     trap stop_llama EXIT INT TERM

@@ -283,6 +283,12 @@ MODEL_CHOICES = [
         "aliases": ["27b-gguf", "gguf", "qwen38-27b"],
     },
     {
+        "id": "flash",
+        "label": "Qwen3.8 Flash-Next 3.84bpw (GGUF, no vision)",
+        "model": rp.QWEN38_FLASH_NEXT_GGUF,
+        "aliases": ["flash-next", "qwen38-flash"],
+    },
+    {
         "id": "35b",
         "label": "Qwen3.6 35B-A3B 4-bit",
         "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
