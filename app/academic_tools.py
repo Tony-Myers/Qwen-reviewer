@@ -56,6 +56,22 @@ class VerificationResult:
         return asdict(self)
 
 
+@dataclass
+class CorroborationResult:
+    status: str
+    crossref: ReferenceCandidate | None
+    openalex: ReferenceCandidate | None
+    same_doi: bool
+    title_similarity: float | None
+    author_agreement: bool | None
+    venue_similarity: float | None
+    year_difference: int | None
+    reasons: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def _get_json(
     url: str,
     timeout: float = 10.0,
@@ -462,6 +478,179 @@ def _candidate_rank(
         author_score,
         year_score,
         publication_score,
+    )
+
+
+def _normalised_author_set(
+    candidate: ReferenceCandidate,
+) -> set[str]:
+    """Return normalised complete author names for cross-source comparison."""
+    return {
+        _normalise_text(author)
+        for author in candidate.authors
+        if _normalise_text(author)
+    }
+
+
+def corroborate_candidates(
+    crossref: ReferenceCandidate | None,
+    openalex: ReferenceCandidate | None,
+) -> CorroborationResult:
+    """
+    Compare bibliographic records returned by Crossref and OpenAlex.
+
+    This assesses cross-database bibliographic corroboration only. It does
+    not establish that the source supports any substantive academic claim.
+    """
+    if crossref is None and openalex is None:
+        return CorroborationResult(
+            status="no_source",
+            crossref=None,
+            openalex=None,
+            same_doi=False,
+            title_similarity=None,
+            author_agreement=None,
+            venue_similarity=None,
+            year_difference=None,
+            reasons=[
+                "No bibliographic record was available from either database."
+            ],
+        )
+
+    if crossref is None or openalex is None:
+        available = crossref if crossref is not None else openalex
+
+        return CorroborationResult(
+            status="single_source",
+            crossref=crossref,
+            openalex=openalex,
+            same_doi=False,
+            title_similarity=None,
+            author_agreement=None,
+            venue_similarity=None,
+            year_difference=None,
+            reasons=[
+                f"A bibliographic record was available from {available.source}, "
+                "but could not be compared across both databases."
+            ],
+        )
+
+    crossref_doi = crossref.doi.strip().lower()
+    openalex_doi = openalex.doi.strip().lower()
+
+    same_doi = bool(
+        crossref_doi
+        and openalex_doi
+        and crossref_doi == openalex_doi
+    )
+
+    title_similarity = (
+        _title_similarity(crossref.title, openalex.title)
+        if crossref.title and openalex.title
+        else None
+    )
+
+    crossref_authors = _normalised_author_set(crossref)
+    openalex_authors = _normalised_author_set(openalex)
+
+    author_agreement = (
+        crossref_authors == openalex_authors
+        if crossref_authors and openalex_authors
+        else None
+    )
+
+    venue_similarity = (
+        _title_similarity(crossref.venue, openalex.venue)
+        if crossref.venue and openalex.venue
+        else None
+    )
+
+    year_difference = (
+        abs(crossref.year - openalex.year)
+        if crossref.year is not None and openalex.year is not None
+        else None
+    )
+
+    reasons = []
+
+    if same_doi:
+        reasons.append(
+            "Crossref and OpenAlex identify the same work by DOI."
+        )
+    else:
+        reasons.append(
+            "Crossref and OpenAlex do not identify the same DOI."
+        )
+
+    if title_similarity is not None:
+        reasons.append(
+            "Cross-source title similarity is "
+            f"{title_similarity:.3f}."
+        )
+
+    if author_agreement is True:
+        reasons.append(
+            "Crossref and OpenAlex report the same normalised author set."
+        )
+    elif author_agreement is False:
+        reasons.append(
+            "Crossref and OpenAlex report different author sets."
+        )
+
+    if venue_similarity is not None:
+        reasons.append(
+            "Cross-source venue similarity is "
+            f"{venue_similarity:.3f}."
+        )
+
+    if year_difference is not None:
+        if year_difference == 0:
+            reasons.append(
+                "Crossref and OpenAlex report the same publication year."
+            )
+        else:
+            unit = "year" if year_difference == 1 else "years"
+            reasons.append(
+                "Crossref and OpenAlex publication years differ by "
+                f"{year_difference} {unit} "
+                f"({crossref.year} vs {openalex.year})."
+            )
+
+    strong_title = (
+        title_similarity is not None
+        and title_similarity >= 0.90
+    )
+    compatible_year = (
+        year_difference is None
+        or year_difference <= 1
+    )
+    compatible_authors = author_agreement is not False
+    compatible_venue = (
+        venue_similarity is None
+        or venue_similarity >= 0.90
+    )
+
+    if (
+        same_doi
+        and strong_title
+        and compatible_authors
+        and compatible_venue
+        and compatible_year
+    ):
+        status = "corroborated"
+    else:
+        status = "cross_source_conflict"
+
+    return CorroborationResult(
+        status=status,
+        crossref=crossref,
+        openalex=openalex,
+        same_doi=same_doi,
+        title_similarity=title_similarity,
+        author_agreement=author_agreement,
+        venue_similarity=venue_similarity,
+        year_difference=year_difference,
+        reasons=reasons,
     )
 
 
