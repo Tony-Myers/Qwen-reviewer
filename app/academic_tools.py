@@ -72,6 +72,19 @@ class CorroborationResult:
         return asdict(self)
 
 
+@dataclass
+class AcademicReferenceResult:
+    crossref_verification: VerificationResult
+    doi_corroboration: CorroborationResult | None
+    related_corroboration: CorroborationResult | None
+    identity_conflict: bool
+    reasons: list[str]
+    claim_verified: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def _get_json(
     url: str,
     timeout: float = 10.0,
@@ -1014,3 +1027,131 @@ def verify_reference(
         reasons=reasons,
         related_candidate=related_candidate,
     )
+
+
+def verify_academic_reference(
+    *,
+    title: str | None = None,
+    author: str | None = None,
+    year: int | None = None,
+    venue: str | None = None,
+    doi: str | None = None,
+) -> AcademicReferenceResult:
+    """
+    Verify a reference with Crossref and add OpenAlex corroboration.
+
+    Bibliographic corroboration does not establish claim support.
+    """
+    verification = verify_reference(
+        title=title,
+        author=author,
+        year=year,
+        venue=venue,
+        doi=doi,
+    )
+
+    doi_corroboration = None
+    related_corroboration = None
+    reasons = []
+
+    if doi:
+        crossref_doi = resolve_doi(doi)
+        openalex_doi = resolve_openalex_doi(doi)
+
+        doi_corroboration = corroborate_candidates(
+            crossref_doi,
+            openalex_doi,
+        )
+
+        reasons.append(
+            "The supplied DOI was checked in both Crossref "
+            "and OpenAlex."
+        )
+
+    if title:
+        crossref_results = search_crossref(
+            title,
+            author=None,
+            rows=5,
+        )
+        openalex_results = search_openalex(
+            title,
+            rows=5,
+        )
+
+        best_crossref = (
+            max(
+                crossref_results,
+                key=lambda candidate: _candidate_rank(
+                    candidate,
+                    author=author,
+                    year=year,
+                ),
+            )
+            if crossref_results
+            else None
+        )
+
+        best_openalex = (
+            max(
+                openalex_results,
+                key=lambda candidate: _candidate_rank(
+                    candidate,
+                    author=author,
+                    year=year,
+                ),
+            )
+            if openalex_results
+            else None
+        )
+
+        related_corroboration = corroborate_candidates(
+            best_crossref,
+            best_openalex,
+        )
+
+        reasons.append(
+            "The supplied title was searched in both Crossref "
+            "and OpenAlex."
+        )
+
+    identity_conflict = False
+
+    if (
+        doi_corroboration is not None
+        and related_corroboration is not None
+        and doi_corroboration.status == "corroborated"
+        and related_corroboration.status == "corroborated"
+        and doi_corroboration.crossref is not None
+        and related_corroboration.crossref is not None
+    ):
+        doi_identity = doi_corroboration.crossref.doi.strip().lower()
+        title_identity = (
+            related_corroboration.crossref.doi.strip().lower()
+        )
+
+        if (
+            doi_identity
+            and title_identity
+            and doi_identity != title_identity
+        ):
+            identity_conflict = True
+            reasons.append(
+                "The supplied DOI and supplied title identify different "
+                "publications across the corroborated database records."
+            )
+
+    if not identity_conflict:
+        reasons.append(
+            "No cross-database DOI-versus-title identity conflict was "
+            "established."
+        )
+
+    return AcademicReferenceResult(
+        crossref_verification=verification,
+        doi_corroboration=doi_corroboration,
+        related_corroboration=related_corroboration,
+        identity_conflict=identity_conflict,
+        reasons=reasons,
+    )
+
