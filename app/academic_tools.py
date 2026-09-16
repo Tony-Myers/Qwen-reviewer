@@ -25,6 +25,7 @@ from urllib.request import Request, urlopen
 
 
 CROSSREF_API = "https://api.crossref.org"
+OPENALEX_API = "https://api.openalex.org"
 USER_AGENT = (
     "QwenReviewer/academic-reference-tools "
     "(https://github.com/Tony-Myers/Qwen-reviewer)"
@@ -165,6 +166,173 @@ def _extract_candidate(
         work_type=work_type,
         title_similarity=similarity,
     )
+
+
+def _get_openalex_json(
+    url: str,
+    timeout: float = 10.0,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    """Retrieve JSON from OpenAlex with bounded HTTP 429 handling."""
+    request = Request(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+        },
+    )
+
+    for attempt in range(max_attempts):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                return json.load(response)
+
+        except HTTPError as exc:
+            if exc.code != 429 or attempt == max_attempts - 1:
+                raise RuntimeError(
+                    f"OpenAlex request failed: {exc}"
+                ) from exc
+
+            retry_after = exc.headers.get("Retry-After")
+            try:
+                delay = float(retry_after) if retry_after else 2 ** attempt
+            except (TypeError, ValueError):
+                delay = 2 ** attempt
+
+            time.sleep(min(delay, 10.0))
+
+        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"OpenAlex request failed: {exc}"
+            ) from exc
+
+    raise RuntimeError("OpenAlex request failed after retries.")
+
+
+def _extract_openalex_candidate(
+    item: dict[str, Any],
+    *,
+    query_title: str | None = None,
+) -> ReferenceCandidate:
+    """Convert an OpenAlex work into the common candidate structure."""
+    title = str(
+        item.get("title")
+        or item.get("display_name")
+        or ""
+    ).strip()
+
+    authors = []
+    for authorship in item.get("authorships") or []:
+        author = authorship.get("author") or {}
+        name = str(author.get("display_name") or "").strip()
+        if name:
+            authors.append(name)
+
+    try:
+        year = (
+            int(item["publication_year"])
+            if item.get("publication_year") is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        year = None
+
+    primary_location = item.get("primary_location") or {}
+    source = primary_location.get("source") or {}
+    venue = str(source.get("display_name") or "").strip()
+
+    doi = str(item.get("doi") or "").strip()
+    doi = re.sub(
+        r"^https?://(?:dx\.)?doi\.org/",
+        "",
+        doi,
+        flags=re.I,
+    ).lower()
+
+    work_type = str(item.get("type") or "").strip()
+
+    similarity = (
+        _title_similarity(query_title, title)
+        if query_title and title
+        else None
+    )
+
+    return ReferenceCandidate(
+        title=title,
+        authors=authors,
+        year=year,
+        venue=venue,
+        doi=doi,
+        work_type=work_type,
+        source="openalex",
+        title_similarity=similarity,
+    )
+
+
+def search_openalex(
+    title: str,
+    *,
+    rows: int = 5,
+) -> list[ReferenceCandidate]:
+    """Search OpenAlex for works by bibliographic title."""
+    cleaned_title = title.strip()
+    if not cleaned_title:
+        return []
+
+    rows = max(1, min(int(rows), 25))
+
+    params = urlencode({
+        "filter": f"title.search:{cleaned_title}",
+        "per-page": rows,
+    })
+    url = f"{OPENALEX_API}/works?{params}"
+
+    data = _get_openalex_json(url)
+    results = data.get("results") or []
+
+    return [
+        _extract_openalex_candidate(
+            item,
+            query_title=cleaned_title,
+        )
+        for item in results
+    ]
+
+
+def resolve_openalex_doi(
+    doi: str,
+) -> ReferenceCandidate | None:
+    """Resolve an exact DOI through OpenAlex."""
+    cleaned = doi.strip()
+    cleaned = re.sub(
+        r"^https?://(?:dx\.)?doi\.org/",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"^doi:\s*", "", cleaned, flags=re.I)
+
+    if not cleaned:
+        return None
+
+    params = urlencode({
+        "filter": f"doi:https://doi.org/{cleaned}",
+        "per-page": 1,
+    })
+    url = f"{OPENALEX_API}/works?{params}"
+
+    try:
+        data = _get_openalex_json(url)
+    except RuntimeError as exc:
+        if "HTTP Error 404" in str(exc):
+            return None
+        raise
+
+    results = data.get("results") or []
+    if not results:
+        return None
+
+    return _extract_openalex_candidate(results[0])
 
 
 def resolve_doi(doi: str) -> ReferenceCandidate | None:
