@@ -314,10 +314,89 @@ def verify_reference(
     if doi:
         candidate = resolve_doi(doi)
         if candidate is None:
+            reasons = ["The supplied DOI was not found in Crossref."]
+            related_candidate = None
+
+            if title:
+                recovery_candidates = search_crossref(
+                    title,
+                    author=None,
+                    rows=5,
+                )
+
+                if recovery_candidates:
+                    best_related = max(
+                        recovery_candidates,
+                        key=lambda item: _candidate_rank(
+                            item,
+                            author=author,
+                            year=year,
+                        ),
+                    )
+
+                    similarity = best_related.title_similarity or 0.0
+
+                    if similarity >= 0.80:
+                        related_candidate = best_related
+                        reasons.append(
+                            "A related Crossref record was found by "
+                            "bibliographic search."
+                        )
+                        reasons.append(
+                            f"Related-record title similarity: "
+                            f"{similarity:.3f}."
+                        )
+
+                        if author:
+                            if _author_matches(best_related, author):
+                                reasons.append(
+                                    "The supplied author matches the "
+                                    "related Crossref record."
+                                )
+                            else:
+                                reasons.append(
+                                    "The supplied author does not match the "
+                                    "related Crossref record."
+                                )
+
+                        if venue:
+                            venue_similarity = _title_similarity(
+                                venue,
+                                best_related.venue,
+                            )
+                            if venue_similarity >= 0.90:
+                                reasons.append(
+                                    "The supplied venue closely matches the "
+                                    "related Crossref record."
+                                )
+                            else:
+                                reasons.append(
+                                    "The supplied venue does not closely "
+                                    "match the related Crossref record "
+                                    f"(similarity {venue_similarity:.3f})."
+                                )
+
+                        if year is not None and best_related.year is not None:
+                            year_difference = abs(
+                                year - best_related.year
+                            )
+                            if year_difference == 0:
+                                reasons.append(
+                                    "The supplied year matches the related "
+                                    "Crossref record."
+                                )
+                            else:
+                                reasons.append(
+                                    "The supplied year differs from the "
+                                    "related Crossref record by "
+                                    f"{year_difference} year(s)."
+                                )
+
             return VerificationResult(
                 status="not_verified",
                 candidate=None,
-                reasons=["The supplied DOI was not found in Crossref."],
+                reasons=reasons,
+                related_candidate=related_candidate,
             )
 
         reasons = ["The supplied DOI resolves in Crossref."]
