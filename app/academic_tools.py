@@ -401,14 +401,26 @@ def verify_reference(
 
         reasons = ["The supplied DOI resolves in Crossref."]
         conflicts = []
+        uncertainties = []
 
         if title:
             similarity = _title_similarity(title, candidate.title)
             candidate.title_similarity = similarity
             if similarity >= 0.90:
-                reasons.append("The supplied title closely matches the Crossref title.")
-            elif similarity < 0.70:
-                conflicts.append("The supplied title does not closely match the DOI record.")
+                reasons.append(
+                    "The supplied title closely matches the Crossref title."
+                )
+            elif similarity >= 0.80:
+                uncertainties.append(
+                    "The supplied title is similar to, but does not closely "
+                    "match, the DOI record "
+                    f"(similarity {similarity:.3f})."
+                )
+            else:
+                conflicts.append(
+                    "The supplied title does not closely match the DOI record "
+                    f"(similarity {similarity:.3f})."
+                )
 
         if author:
             if _author_matches(candidate, author):
@@ -525,10 +537,17 @@ def verify_reference(
                                 f"{related_year_difference} year(s)."
                             )
 
+        if conflicts:
+            status = "metadata_conflict"
+        elif uncertainties:
+            status = "probable"
+        else:
+            status = "verified"
+
         return VerificationResult(
-            status="metadata_conflict" if conflicts else "verified",
+            status=status,
             candidate=candidate,
-            reasons=reasons + conflicts,
+            reasons=reasons + uncertainties + conflicts,
             related_candidate=related_candidate,
         )
 
