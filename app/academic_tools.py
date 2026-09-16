@@ -436,10 +436,100 @@ def verify_reference(
             else:
                 conflicts.append("The supplied year conflicts with the DOI record.")
 
+        related_candidate = None
+
+        if conflicts and title:
+            recovery_candidates = search_crossref(
+                title,
+                author=None,
+                rows=5,
+            )
+
+            alternative_candidates = [
+                item
+                for item in recovery_candidates
+                if item.doi.lower() != candidate.doi.lower()
+            ]
+
+            if alternative_candidates:
+                best_related = max(
+                    alternative_candidates,
+                    key=lambda item: _candidate_rank(
+                        item,
+                        author=author,
+                        year=year,
+                    ),
+                )
+
+                related_similarity = (
+                    best_related.title_similarity or 0.0
+                )
+
+                if related_similarity >= 0.80:
+                    related_candidate = best_related
+                    reasons.append(
+                        "A different related Crossref record was found "
+                        "by bibliographic search."
+                    )
+                    reasons.append(
+                        "Related-record title similarity: "
+                        f"{related_similarity:.3f}."
+                    )
+
+                    if author:
+                        if _author_matches(best_related, author):
+                            reasons.append(
+                                "The supplied author matches the related "
+                                "Crossref record."
+                            )
+                        else:
+                            reasons.append(
+                                "The supplied author does not match the "
+                                "related Crossref record."
+                            )
+
+                    if venue:
+                        related_venue_similarity = _title_similarity(
+                            venue,
+                            best_related.venue,
+                        )
+                        if related_venue_similarity >= 0.90:
+                            reasons.append(
+                                "The supplied venue closely matches the "
+                                "related Crossref record."
+                            )
+                        else:
+                            reasons.append(
+                                "The supplied venue does not closely match "
+                                "the related Crossref record "
+                                f"(similarity "
+                                f"{related_venue_similarity:.3f})."
+                            )
+
+                    if (
+                        year is not None
+                        and best_related.year is not None
+                    ):
+                        related_year_difference = abs(
+                            year - best_related.year
+                        )
+                        if related_year_difference == 0:
+                            reasons.append(
+                                "The supplied year matches the related "
+                                "Crossref record."
+                            )
+                        else:
+                            reasons.append(
+                                "The supplied year differs from the related "
+                                "Crossref record by "
+                                f"{related_year_difference} year(s)."
+                            )
+
         return VerificationResult(
             status="metadata_conflict" if conflicts else "verified",
             candidate=candidate,
             reasons=reasons + conflicts,
+            related_candidate=related_candidate,
         )
 
     if not title:
@@ -449,7 +539,7 @@ def verify_reference(
             reasons=["A title or DOI is required for verification."],
         )
 
-    candidates = search_crossref(title, author=author, rows=3)
+    candidates = search_crossref(title, author=None, rows=5)
     if not candidates:
         return VerificationResult(
             status="not_verified",
@@ -468,6 +558,11 @@ def verify_reference(
 
     similarity = candidate.title_similarity or 0.0
     author_ok = _author_matches(candidate, author) if author else None
+    venue_similarity = (
+        _title_similarity(venue, candidate.venue)
+        if venue
+        else None
+    )
     year_difference = (
         abs(year - candidate.year)
         if year is not None and candidate.year is not None
@@ -478,28 +573,52 @@ def verify_reference(
 
     if author is not None:
         reasons.append(
-            "The supplied author matches the candidate."
+            "The supplied author matches the best Crossref result."
             if author_ok
-            else "The supplied author was not matched in the candidate."
+            else "The supplied author was not matched in the best Crossref result."
+        )
+
+    if venue_similarity is not None:
+        reasons.append(
+            "The supplied venue closely matches the best Crossref result."
+            if venue_similarity >= 0.90
+            else (
+                "The supplied venue does not closely match the best Crossref "
+                f"result (similarity {venue_similarity:.3f})."
+            )
         )
 
     if year_difference is not None:
         reasons.append(
-            "The supplied year matches the candidate."
+            "The supplied year matches the best Crossref result."
             if year_difference == 0
-            else f"The supplied year differs by {year_difference} year(s)."
+            else (
+                "The supplied year differs from the best Crossref result by "
+                f"{year_difference} year(s)."
+            )
         )
 
     strong_title = similarity >= 0.90
     acceptable_year = year_difference is None or year_difference <= 1
     acceptable_author = author_ok is not False
+    acceptable_venue = venue_similarity is None or venue_similarity >= 0.90
 
-    if strong_title and acceptable_author and acceptable_year:
+    if (
+        strong_title
+        and acceptable_author
+        and acceptable_year
+        and acceptable_venue
+    ):
         status = "verified"
         verified_candidate = candidate
         related_candidate = None
 
-    elif similarity >= 0.80 and acceptable_author and acceptable_year:
+    elif (
+        similarity >= 0.80
+        and acceptable_author
+        and acceptable_year
+        and acceptable_venue
+    ):
         status = "probable"
         verified_candidate = candidate
         related_candidate = None
@@ -507,7 +626,11 @@ def verify_reference(
     else:
         status = "not_verified"
         verified_candidate = None
-        related_candidate = candidate
+        related_candidate = (
+            candidate
+            if similarity >= 0.80
+            else None
+        )
 
     return VerificationResult(
         status=status,
