@@ -49,6 +49,7 @@ class VerificationResult:
     candidate: ReferenceCandidate | None
     reasons: list[str]
     claim_verified: bool = False
+    related_candidate: ReferenceCandidate | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -405,15 +406,22 @@ def verify_reference(
 
     if strong_title and acceptable_author and acceptable_year:
         status = "verified"
+        verified_candidate = candidate
+        related_candidate = None
+
     elif similarity >= 0.80 and acceptable_author and acceptable_year:
         status = "probable"
-    elif similarity >= 0.65:
-        status = "ambiguous"
+        verified_candidate = candidate
+        related_candidate = None
+
     else:
         status = "not_verified"
+        verified_candidate = None
+        related_candidate = candidate
 
     return VerificationResult(
         status=status,
-        candidate=candidate,
+        candidate=verified_candidate,
         reasons=reasons,
+        related_candidate=related_candidate,
     )
