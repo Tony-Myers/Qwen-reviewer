@@ -302,6 +302,7 @@ def verify_reference(
     title: str | None = None,
     author: str | None = None,
     year: int | None = None,
+    venue: str | None = None,
     doi: str | None = None,
 ) -> VerificationResult:
     """
@@ -336,6 +337,16 @@ def verify_reference(
             else:
                 conflicts.append("The supplied author was not matched in the DOI record.")
 
+        if venue:
+            venue_similarity = _title_similarity(venue, candidate.venue)
+            if venue_similarity >= 0.90:
+                reasons.append("The supplied venue closely matches the Crossref record.")
+            else:
+                conflicts.append(
+                    "The supplied venue does not closely match the DOI record "
+                    f"(similarity {venue_similarity:.3f})."
+                )
+
         if year is not None and candidate.year is not None:
             if year == candidate.year:
                 reasons.append("The supplied year matches the Crossref record.")
@@ -347,7 +358,7 @@ def verify_reference(
                 conflicts.append("The supplied year conflicts with the DOI record.")
 
         return VerificationResult(
-            status="ambiguous" if conflicts else "verified",
+            status="metadata_conflict" if conflicts else "verified",
             candidate=candidate,
             reasons=reasons + conflicts,
         )
