@@ -83,6 +83,90 @@ _TECHNICAL_CLAIM_FIELDS = {
 }
 
 
+# Per-request constrained decoding for llama-server. This mirrors the parser's
+# structural contract but deliberately leaves semantic validation to the
+# parser below (for example, a reference must contain a title or DOI).
+ACADEMIC_DRAFT_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "academic_draft",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "answer_draft": {
+                    "type": "string",
+                },
+                "references": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {
+                                "type": ["string", "null"],
+                            },
+                            "author": {
+                                "type": ["string", "null"],
+                            },
+                            "year": {
+                                "type": ["integer", "null"],
+                            },
+                            "venue": {
+                                "type": ["string", "null"],
+                            },
+                            "doi": {
+                                "type": ["string", "null"],
+                            },
+                        },
+                        "required": [
+                            "title",
+                            "author",
+                            "year",
+                            "venue",
+                            "doi",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+                "technical_claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                            },
+                            "concept": {
+                                "type": "string",
+                            },
+                            "statement": {
+                                "type": "string",
+                            },
+                            "parameterisation": {
+                                "type": ["string", "null"],
+                            },
+                        },
+                        "required": [
+                            "type",
+                            "concept",
+                            "statement",
+                            "parameterisation",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": [
+                "answer_draft",
+                "references",
+                "technical_claims",
+            ],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 def _strip_json_fence(text: str) -> str:
     """Remove one simple surrounding Markdown JSON fence, if present."""
     stripped = text.strip()
@@ -280,12 +364,32 @@ def parse_academic_draft(text: str) -> AcademicDraft:
 ACADEMIC_DRAFT_SYSTEM_PROMPT = """\
 You are the first-pass reasoning component of Academic Chat.
 
+Your task is to produce a concise provisional proposal for later verification,
+not a polished final answer. References and technical claims will be checked by
+later software stages.
+
 Return exactly one JSON object and no explanatory text outside it.
 
 The object must have exactly these top-level fields:
 - "answer_draft": a non-empty string containing your provisional answer.
 - "references": an array of bibliographic reference proposals.
 - "technical_claims": an array of checkable technical claims.
+
+Keep "answer_draft" concise: no more than 150 words. State each proposition
+once. Do not debate, reconsider, repeatedly correct, or repeat propositions
+inside "answer_draft".
+
+If you are uncertain about a formula, quantitative rule, threshold,
+parameterisation, assumption, or other technical proposition, do not resolve,
+debate, or repeatedly revise it in "answer_draft". Omit the uncertain technical
+detail from "answer_draft" and place the proposed claim once in
+"technical_claims" for later verification. Uncertainty about a technical detail
+is a reason to externalise it for verification, not to reason through competing
+versions inside "answer_draft".
+
+Use plain-text mathematical notation in all JSON strings. Do not use LaTeX
+commands or backslashes. Prefer forms such as lambda, >=, <=, *, /, ^ and
+parentheses.
 
 Each reference object must contain exactly:
 - "title": string or null
@@ -295,6 +399,7 @@ Each reference object must contain exactly:
 - "doi": string or null
 
 A reference must contain at least a title or DOI.
+Propose no more than 3 references.
 
 References are proposals, not verified references. Do not include fields such
 as "verified", "reference_verified", "claim_verified", or confidence scores.
@@ -311,6 +416,7 @@ Technical claims are assertions that may require independent checking. Include
 statistical or mathematical formulae, quantitative rules of thumb, thresholds,
 parameterisations, assumptions with technical consequences, and similar
 checkable methodological statements when they materially support the answer.
+Propose no more than 5 technical claims.
 
 Do not state or imply that a technical claim has been verified. The application,
 not you, controls verification status.
@@ -360,6 +466,7 @@ def generate_academic_draft(
         temp=0.1,
         top_p=0.8,
         top_k=20,
+        response_format=ACADEMIC_DRAFT_RESPONSE_FORMAT,
     )
 
     with llm_backend.thinking(False):

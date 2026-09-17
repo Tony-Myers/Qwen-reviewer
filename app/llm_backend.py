@@ -912,6 +912,13 @@ class LlamaServerModel:
         if sampler.presence_penalty is not None:
             payload["presence_penalty"] = sampler.presence_penalty
 
+        # Optional per-request structured-output constraint. This is deliberately
+        # allow-listed rather than copying sampler.extra wholesale: arbitrary
+        # caller metadata must never silently become llama-server API fields.
+        response_format = sampler.extra.get("response_format")
+        if response_format is not None:
+            payload["response_format"] = response_format
+
         if self.supports_template_kwargs:
             template_kwargs: Dict[str, Any] = {"enable_thinking": bool(enable_thinking)}
             if enable_thinking:
