@@ -269,7 +269,66 @@ check("identity conflict is explained",
       academic.reasons)
 
 
-print("\n[5] bibliographic evidence never becomes claim verification")
+print("\n[5] matching DOI and title identities remain coherent")
+
+try:
+    at.verify_reference = lambda **kwargs: at.VerificationResult(
+        status="verified",
+        candidate=jackson_crossref,
+        reasons=["The supplied citation metadata match the DOI record."],
+        claim_verified=False,
+        related_candidate=None,
+    )
+
+    at.resolve_doi = lambda doi: jackson_crossref
+    at.resolve_openalex_doi = lambda doi: jackson_openalex
+    at.search_crossref = (
+        lambda title, author=None, rows=5: [jackson_crossref]
+    )
+    at.search_openalex = (
+        lambda title, rows=5: [jackson_openalex]
+    )
+
+    coherent = at.verify_academic_reference(
+        title=JACKSON_TITLE,
+        author="Jackson",
+        year=2015,
+        venue="Research Synthesis Methods",
+        doi="10.1002/jrsm.1162",
+    )
+
+finally:
+    at.verify_reference = original_verify
+    at.resolve_doi = original_resolve_doi
+    at.resolve_openalex_doi = original_resolve_openalex_doi
+    at.search_crossref = original_search_crossref
+    at.search_openalex = original_search_openalex
+
+
+check("Crossref verification is verified",
+      coherent.crossref_verification.status == "verified",
+      coherent.crossref_verification.status)
+
+check("matching DOI identity is corroborated",
+      coherent.doi_corroboration is not None
+      and coherent.doi_corroboration.status == "corroborated",
+      coherent.doi_corroboration.status
+      if coherent.doi_corroboration else "None")
+
+check("matching title identity is corroborated",
+      coherent.related_corroboration is not None
+      and coherent.related_corroboration.status == "corroborated",
+      coherent.related_corroboration.status
+      if coherent.related_corroboration else "None")
+
+check("matching DOI and title do not create an identity conflict",
+      coherent.identity_conflict is False)
+
+check("coherent bibliographic identity still does not verify the claim",
+      coherent.claim_verified is False)
+
+
+print("\n[6] bibliographic evidence never becomes claim verification")
 check("orchestration claim_verified remains false",
       academic.claim_verified is False)
 check("Crossref claim_verified remains false",
