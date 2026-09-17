@@ -4,10 +4,12 @@ Unified local server for chat and manuscript review.
 
 Loads the model once (llama.cpp for GGUF, mlx_lm for MLX repo ids) and exposes:
   - GET  /                       → serves the web UI
-  - POST /v1/chat/completions    → OpenAI-compatible chat
-  - POST /api/review             → file upload → review pipeline
-  - GET  /api/review/status/{id} → SSE progress stream
-  - GET  /v1/models              → model info (for status dot)
+  - POST /v1/chat/completions                 → OpenAI-compatible chat
+  - POST /api/chat/academic/draft             → local structured academic draft
+  - POST /api/chat/academic/verify-reference  → bibliographic verification
+  - POST /api/review                          → file upload → review pipeline
+  - GET  /api/review/status/{id}              → SSE progress stream
+  - GET  /v1/models                           → model info (for status dot)
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ import review_pipeline as rp
 import design_expectations as de  # noqa: E402
 import reviewer_notes as notes  # noqa: E402  standard library only, no model
 import llm_backend  # noqa: E402
+import academic_chat  # noqa: E402
 from academic_tools import verify_academic_reference  # noqa: E402
 from llm_backend import (  # noqa: E402
     BackendError,
@@ -579,6 +582,62 @@ async def restart_server(request: dict):
         "status": "restarting",
         "model": resolved_model,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/chat/academic/draft
+# Local first-pass generation for Academic Chat.
+#
+# The complete question is passed to the configured local model only.
+# This endpoint performs no bibliographic or other external lookup.
+# ---------------------------------------------------------------------------
+@app.post("/api/chat/academic/draft")
+async def academic_chat_draft(request: dict):
+    allowed = {"question"}
+    unexpected = set(request) - allowed
+
+    if unexpected:
+        return JSONResponse(
+            {
+                "error": "Unexpected fields in Academic Chat draft request.",
+                "unexpected_fields": sorted(unexpected),
+            },
+            status_code=400,
+        )
+
+    question = request.get("question")
+    if not isinstance(question, str) or not question.strip():
+        return JSONResponse(
+            {"error": "A non-empty question is required."},
+            status_code=400,
+        )
+
+    ensure_model()
+
+    try:
+        draft = academic_chat.generate_academic_draft(
+            model,
+            tokenizer,
+            question,
+        )
+    except academic_chat.AcademicDraftError as exc:
+        return JSONResponse(
+            {
+                "error": "Academic Chat model returned invalid structured output.",
+                "detail": str(exc),
+            },
+            status_code=502,
+        )
+    except BackendError as exc:
+        return JSONResponse(
+            {
+                "error": "Academic Chat local model unavailable.",
+                "detail": str(exc),
+            },
+            status_code=502,
+        )
+
+    return draft.to_dict()
 
 
 # ---------------------------------------------------------------------------
