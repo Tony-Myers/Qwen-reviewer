@@ -44,6 +44,7 @@ import review_pipeline as rp
 import design_expectations as de  # noqa: E402
 import reviewer_notes as notes  # noqa: E402  standard library only, no model
 import llm_backend  # noqa: E402
+from academic_tools import verify_academic_reference  # noqa: E402
 from llm_backend import (  # noqa: E402
     BackendError,
     current_backend,
@@ -578,6 +579,71 @@ async def restart_server(request: dict):
         "status": "restarting",
         "model": resolved_model,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/chat/academic/verify-reference
+# Bibliographic verification for Academic Chat only.
+#
+# This endpoint accepts bibliographic metadata, not manuscript text or
+# arbitrary conversation text. Crossref/OpenAlex corroboration establishes
+# bibliographic identity only; it does not establish support for a claim.
+# ---------------------------------------------------------------------------
+@app.post("/api/chat/academic/verify-reference")
+async def academic_verify_reference(request: dict):
+    allowed = {"title", "author", "year", "venue", "doi"}
+    unexpected = set(request) - allowed
+
+    if unexpected:
+        return JSONResponse(
+            {
+                "error": "Unexpected fields in bibliographic verification request.",
+                "unexpected_fields": sorted(unexpected),
+            },
+            status_code=400,
+        )
+
+    title = str(request.get("title") or "").strip() or None
+    author = str(request.get("author") or "").strip() or None
+    venue = str(request.get("venue") or "").strip() or None
+    doi = str(request.get("doi") or "").strip() or None
+
+    year = request.get("year")
+    if year in ("", None):
+        year = None
+    else:
+        try:
+            year = int(year)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"error": "year must be an integer or null."},
+                status_code=400,
+            )
+
+    if not title and not doi:
+        return JSONResponse(
+            {"error": "A title or DOI is required for reference verification."},
+            status_code=400,
+        )
+
+    try:
+        result = verify_academic_reference(
+            title=title,
+            author=author,
+            year=year,
+            venue=venue,
+            doi=doi,
+        )
+    except RuntimeError as exc:
+        return JSONResponse(
+            {
+                "error": "Academic reference service unavailable.",
+                "detail": str(exc),
+            },
+            status_code=502,
+        )
+
+    return result.to_dict()
 
 
 # ---------------------------------------------------------------------------
