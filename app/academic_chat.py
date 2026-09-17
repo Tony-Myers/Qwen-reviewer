@@ -21,6 +21,8 @@ from dataclasses import asdict, dataclass
 import json
 from typing import Any
 
+import llm_backend
+
 
 class AcademicDraftError(ValueError):
     """Raised when model output does not satisfy the Academic Chat contract."""
@@ -269,3 +271,105 @@ def parse_academic_draft(text: str) -> AcademicDraft:
             for index, value in enumerate(technical_claims)
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Local-model first pass
+# ---------------------------------------------------------------------------
+
+ACADEMIC_DRAFT_SYSTEM_PROMPT = """\
+You are the first-pass reasoning component of Academic Chat.
+
+Return exactly one JSON object and no explanatory text outside it.
+
+The object must have exactly these top-level fields:
+- "answer_draft": a non-empty string containing your provisional answer.
+- "references": an array of bibliographic reference proposals.
+- "technical_claims": an array of checkable technical claims.
+
+Each reference object must contain exactly:
+- "title": string or null
+- "author": string or null
+- "year": integer or null
+- "venue": string or null
+- "doi": string or null
+
+A reference must contain at least a title or DOI.
+
+References are proposals, not verified references. Do not include fields such
+as "verified", "reference_verified", "claim_verified", or confidence scores.
+If you are uncertain about a bibliographic field, use null rather than inventing
+a value. Do not invent a DOI.
+
+Each technical claim object must contain exactly:
+- "type": non-empty string
+- "concept": non-empty string
+- "statement": non-empty string
+- "parameterisation": string or null
+
+Technical claims are assertions that may require independent checking. Include
+statistical or mathematical formulae, quantitative rules of thumb, thresholds,
+parameterisations, assumptions with technical consequences, and similar
+checkable methodological statements when they materially support the answer.
+
+Do not state or imply that a technical claim has been verified. The application,
+not you, controls verification status.
+
+If no references are proposed, return an empty references array.
+If no technical claims require checking, return an empty technical_claims array.
+
+Use null for unknown optional values. Do not use placeholder bibliographic
+details merely to satisfy the schema.
+"""
+
+
+def generate_academic_draft(
+    model: Any,
+    tokenizer: Any,
+    question: str,
+    *,
+    max_tokens: int = 2400,
+) -> AcademicDraft:
+    """
+    Generate and parse Academic Chat's local first pass.
+
+    The complete user question is sent only to the already-configured local
+    model backend. This function performs no bibliographic or other external
+    network lookup.
+
+    Thinking is disabled for this structural pass: the output is a constrained
+    machine-readable proposal that will be checked by later software stages.
+    """
+    if not isinstance(question, str) or not question.strip():
+        raise AcademicDraftError(
+            "Academic Chat question must be non-empty text."
+        )
+
+    messages = [
+        {
+            "role": "system",
+            "content": ACADEMIC_DRAFT_SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": question.strip(),
+        },
+    ]
+
+    sampler = llm_backend.make_sampler(
+        temp=0.1,
+        top_p=0.8,
+        top_k=20,
+    )
+
+    with llm_backend.thinking(False):
+        raw = llm_backend.generate(
+            model,
+            tokenizer,
+            messages,
+            max_tokens=max_tokens,
+            sampler=sampler,
+            verbose=False,
+        )
+
+    return parse_academic_draft(raw)

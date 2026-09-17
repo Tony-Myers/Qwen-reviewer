@@ -208,6 +208,178 @@ check("empty technical claims accepted",
       empty_draft.technical_claims == [])
 
 
+
+print("\n[8] local first pass uses the established model backend")
+original_generate = ac.llm_backend.generate
+original_make_sampler = ac.llm_backend.make_sampler
+original_thinking = ac.llm_backend.thinking
+
+calls = []
+thinking_calls = []
+
+
+class FakeThinking:
+    def __init__(self, enabled):
+        self.enabled = enabled
+
+    def __enter__(self):
+        thinking_calls.append(("enter", self.enabled))
+        return None
+
+    def __exit__(self, exc_type, exc, tb):
+        thinking_calls.append(("exit", self.enabled))
+        return False
+
+
+def fake_thinking(enabled):
+    return FakeThinking(enabled)
+
+
+def fake_sampler(**kwargs):
+    return {"fake_sampler": kwargs}
+
+
+def fake_generate(model, tokenizer, prompt=None, **kwargs):
+    calls.append({
+        "model": model,
+        "tokenizer": tokenizer,
+        "prompt": prompt,
+        "kwargs": kwargs,
+    })
+    return json.dumps(VALID)
+
+
+try:
+    ac.llm_backend.generate = fake_generate
+    ac.llm_backend.make_sampler = fake_sampler
+    ac.llm_backend.thinking = fake_thinking
+
+    local_draft = ac.generate_academic_draft(
+        "fake-model",
+        "fake-tokenizer",
+        "What is the relative efficiency formula for multiple imputation?",
+        max_tokens=1800,
+    )
+
+finally:
+    ac.llm_backend.generate = original_generate
+    ac.llm_backend.make_sampler = original_make_sampler
+    ac.llm_backend.thinking = original_thinking
+
+
+check("local backend called exactly once", len(calls) == 1, calls)
+
+if calls:
+    sent = calls[0]
+    prompt = sent["prompt"]
+
+    check("system and user messages sent",
+          isinstance(prompt, list)
+          and len(prompt) == 2
+          and prompt[0].get("role") == "system"
+          and prompt[1].get("role") == "user",
+          prompt)
+
+    check("complete user question reaches local model",
+          prompt[1].get("content")
+          == "What is the relative efficiency formula for multiple imputation?",
+          prompt[1] if len(prompt) > 1 else prompt)
+
+    system_text = prompt[0].get("content", "")
+    check("system prompt requires structured references",
+          '"references"' in system_text,
+          system_text[:500])
+
+    check("system prompt requires technical claims",
+          '"technical_claims"' in system_text,
+          system_text[:500])
+
+    check("system prompt prohibits model verification status",
+          "application" in system_text.lower()
+          and "verification status" in system_text.lower(),
+          system_text[-500:])
+
+    check("requested token budget passed through",
+          sent["kwargs"].get("max_tokens") == 1800,
+          sent["kwargs"])
+
+check("thinking disabled for structural pass",
+      thinking_calls == [("enter", False), ("exit", False)],
+      thinking_calls)
+
+check("generated structure is parsed",
+      local_draft.references[0].author == "White"
+      and local_draft.technical_claims[0].type == "formula")
+
+
+print("\n[9] malformed local-model output fails conservatively")
+
+
+def bad_generate(model, tokenizer, prompt=None, **kwargs):
+    return '{"answer_draft": "broken"'
+
+
+try:
+    ac.llm_backend.generate = bad_generate
+    ac.llm_backend.make_sampler = fake_sampler
+    ac.llm_backend.thinking = fake_thinking
+
+    try:
+        ac.generate_academic_draft(
+            "fake-model",
+            "fake-tokenizer",
+            "A valid question",
+        )
+    except ac.AcademicDraftError as exc:
+        check("malformed model output is rejected",
+              "not valid JSON" in str(exc),
+              str(exc))
+    else:
+        check("malformed model output is rejected",
+              False,
+              "Expected AcademicDraftError.")
+
+finally:
+    ac.llm_backend.generate = original_generate
+    ac.llm_backend.make_sampler = original_make_sampler
+    ac.llm_backend.thinking = original_thinking
+
+
+print("\n[10] empty questions never reach the model")
+empty_calls = []
+
+
+def should_not_generate(*args, **kwargs):
+    empty_calls.append((args, kwargs))
+    raise AssertionError("Model must not be called for an empty question.")
+
+
+try:
+    ac.llm_backend.generate = should_not_generate
+
+    try:
+        ac.generate_academic_draft(
+            "fake-model",
+            "fake-tokenizer",
+            "   ",
+        )
+    except ac.AcademicDraftError as exc:
+        check("empty question rejected locally",
+              "question must be non-empty" in str(exc),
+              str(exc))
+    else:
+        check("empty question rejected locally",
+              False,
+              "Expected AcademicDraftError.")
+
+finally:
+    ac.llm_backend.generate = original_generate
+
+check("empty question caused no generation call",
+      empty_calls == [],
+      empty_calls)
+
+
 print()
 if fails:
     print(f"{len(fails)} FAILURE(S): {fails}")
