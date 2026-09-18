@@ -328,10 +328,10 @@ def search_openalex(
     ]
 
 
-def resolve_openalex_doi(
+def get_openalex_work_by_doi(
     doi: str,
-) -> ReferenceCandidate | None:
-    """Resolve an exact DOI through OpenAlex."""
+) -> dict[str, Any] | None:
+    """Return the raw OpenAlex work for an exact DOI."""
     cleaned = doi.strip()
     cleaned = re.sub(
         r"^https?://(?:dx\.)?doi\.org/",
@@ -361,7 +361,19 @@ def resolve_openalex_doi(
     if not results:
         return None
 
-    return _extract_openalex_candidate(results[0])
+    return results[0]
+
+
+def resolve_openalex_doi(
+    doi: str,
+) -> ReferenceCandidate | None:
+    """Resolve an exact DOI through OpenAlex."""
+    item = get_openalex_work_by_doi(doi)
+
+    if item is None:
+        return None
+
+    return _extract_openalex_candidate(item)
 
 
 def resolve_doi(doi: str) -> ReferenceCandidate | None:

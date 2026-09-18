@@ -770,6 +770,165 @@ check(
 )
 
 
+
+print("\n[12] OpenAlex DOI resolution preserves existing HTTP-to-candidate behaviour")
+
+openalex_urls = []
+original_get_openalex_json = at._get_openalex_json
+
+
+def fake_get_openalex_json(url):
+    openalex_urls.append(url)
+    return {
+        "results": [
+            {
+                "title": "Synthetic OpenAlex Work",
+                "display_name": "Synthetic OpenAlex Work",
+                "publication_year": 2024,
+                "doi": "https://doi.org/10.1000/synthetic",
+                "type": "article",
+                "authorships": [
+                    {
+                        "author": {
+                            "display_name": "Ada Example"
+                        }
+                    }
+                ],
+                "primary_location": {
+                    "source": {
+                        "display_name": "Synthetic Journal"
+                    }
+                },
+                "best_oa_location": {
+                    "landing_page_url": "https://example.org/article",
+                    "pdf_url": "https://example.org/article.pdf",
+                    "is_oa": True,
+                },
+            }
+        ]
+    }
+
+
+try:
+    at._get_openalex_json = fake_get_openalex_json
+    resolved_openalex = at.resolve_openalex_doi(
+        "10.1000/synthetic"
+    )
+finally:
+    at._get_openalex_json = original_get_openalex_json
+
+
+check(
+    "OpenAlex DOI resolution makes exactly one metadata request",
+    len(openalex_urls) == 1,
+    openalex_urls,
+)
+
+check(
+    "OpenAlex DOI request contains supplied DOI",
+    len(openalex_urls) == 1
+    and "10.1000%2Fsynthetic" in openalex_urls[0],
+    openalex_urls[0] if openalex_urls else "no request",
+)
+
+check(
+    "OpenAlex DOI resolution retains candidate title",
+    resolved_openalex is not None
+    and resolved_openalex.title == "Synthetic OpenAlex Work",
+    resolved_openalex if resolved_openalex else "None",
+)
+
+check(
+    "OpenAlex DOI resolution retains normalised DOI",
+    resolved_openalex is not None
+    and resolved_openalex.doi == "10.1000/synthetic",
+    resolved_openalex if resolved_openalex else "None",
+)
+
+check(
+    "OpenAlex DOI resolution retains author",
+    resolved_openalex is not None
+    and resolved_openalex.authors == ["Ada Example"],
+    resolved_openalex if resolved_openalex else "None",
+)
+
+check(
+    "OpenAlex DOI resolution retains venue",
+    resolved_openalex is not None
+    and resolved_openalex.venue == "Synthetic Journal",
+    resolved_openalex if resolved_openalex else "None",
+)
+
+check(
+    "OpenAlex DOI resolution remains bibliographic rather than source retrieval",
+    resolved_openalex is not None
+    and "pdf_url" not in vars(resolved_openalex)
+    and "landing_page_url" not in vars(resolved_openalex),
+    resolved_openalex if resolved_openalex else "None",
+)
+
+
+print("\n[13] raw OpenAlex DOI lookup preserves source-access metadata")
+
+raw_openalex_urls = []
+original_get_openalex_json = at._get_openalex_json
+
+
+def fake_raw_openalex_json(url):
+    raw_openalex_urls.append(url)
+    return {
+        "results": [
+            {
+                "title": "Synthetic Raw Work",
+                "doi": "https://doi.org/10.1000/raw-work",
+                "best_oa_location": {
+                    "landing_page_url": "https://example.org/raw",
+                    "pdf_url": "https://example.org/raw.pdf",
+                    "is_oa": True,
+                },
+            }
+        ]
+    }
+
+
+try:
+    at._get_openalex_json = fake_raw_openalex_json
+    raw_work = at.get_openalex_work_by_doi(
+        "10.1000/raw-work"
+    )
+finally:
+    at._get_openalex_json = original_get_openalex_json
+
+
+check(
+    "raw OpenAlex getter makes exactly one request",
+    len(raw_openalex_urls) == 1,
+    raw_openalex_urls,
+)
+
+check(
+    "raw OpenAlex getter returns the work object",
+    raw_work is not None
+    and raw_work.get("title") == "Synthetic Raw Work",
+    raw_work,
+)
+
+check(
+    "raw OpenAlex getter preserves OA PDF location",
+    raw_work is not None
+    and raw_work.get("best_oa_location", {}).get("pdf_url")
+    == "https://example.org/raw.pdf",
+    raw_work,
+)
+
+check(
+    "raw OpenAlex getter preserves landing-page location",
+    raw_work is not None
+    and raw_work.get("best_oa_location", {}).get("landing_page_url")
+    == "https://example.org/raw",
+    raw_work,
+)
+
 print()
 if fails:
     print(f"{len(fails)} FAILURE(S): {fails}")
