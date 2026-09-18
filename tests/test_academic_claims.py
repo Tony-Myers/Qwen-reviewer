@@ -406,6 +406,239 @@ check(
     "integrated discovery retains OpenAlex provenance",
 )
 
+
+print("\n[10] substantive retrieval uses discovered source location only")
+
+retrieval_calls = []
+
+
+def fake_text_fetcher(url):
+    retrieval_calls.append(url)
+    return (
+        "Synthetic scholarly article text containing substantive "
+        "methods and results."
+    )
+
+
+retrieval_location = academic_claims.SourceLocation(
+    status="location_found",
+    doi="10.1000/retrieval",
+    source="openalex",
+    landing_page_url="https://example.org/article",
+    pdf_url=None,
+    is_oa=True,
+    reasons=["Synthetic accessible source location."],
+)
+
+retrieved = academic_claims.retrieve_source_from_location(
+    retrieval_location,
+    fetcher=fake_text_fetcher,
+)
+
+check(
+    retrieval_calls == ["https://example.org/article"],
+    "retrieval fetcher receives discovered URL only",
+)
+
+check(
+    retrieved.status == "retrieved",
+    "successful substantive retrieval is explicit",
+)
+
+check(
+    retrieved.doi == "10.1000/retrieval",
+    "retrieved source retains bibliographic identifier",
+)
+
+check(
+    retrieved.source == "openalex",
+    "retrieved source retains discovery provenance",
+)
+
+check(
+    retrieved.text is not None
+    and "substantive methods and results" in retrieved.text,
+    "retrieved substantive text remains inspectable",
+)
+
+check(
+    retrieved.locator == "landing_page",
+    "retrieval type is recorded explicitly",
+)
+
+
+print("\n[11] empty fetched content is not substantive retrieval")
+
+
+def fake_empty_fetcher(url):
+    return ""
+
+
+empty_retrieval = academic_claims.retrieve_source_from_location(
+    retrieval_location,
+    fetcher=fake_empty_fetcher,
+)
+
+check(
+    empty_retrieval.status == "not_retrieved",
+    "empty fetched content is not reported as retrieved",
+)
+
+check(
+    empty_retrieval.text is None,
+    "empty fetched content does not create source text",
+)
+
+check(
+    empty_retrieval.locator is None,
+    "failed substantive retrieval does not claim a source locator",
+)
+
+check(
+    any(
+        "empty" in reason.lower()
+        for reason in empty_retrieval.reasons
+    ),
+    "empty-content retrieval failure is explained",
+)
+
+
+print("\n[12] fetch failure remains an explicit retrieval failure")
+
+
+def fake_failing_fetcher(url):
+    raise academic_claims.SourceRetrievalError("HTTP 403")
+
+
+try:
+    failed_fetch = academic_claims.retrieve_source_from_location(
+        retrieval_location,
+        fetcher=fake_failing_fetcher,
+    )
+except RuntimeError:
+    failed_fetch = None
+
+
+check(
+    failed_fetch is not None,
+    "fetch failure is contained by retrieval layer",
+)
+
+check(
+    failed_fetch is not None
+    and failed_fetch.status == "not_retrieved",
+    "fetch failure is represented as not retrieved",
+)
+
+check(
+    failed_fetch is not None
+    and failed_fetch.doi == "10.1000/retrieval",
+    "fetch failure retains bibliographic identifier",
+)
+
+check(
+    failed_fetch is not None
+    and failed_fetch.source == "openalex",
+    "fetch failure retains discovery provenance",
+)
+
+check(
+    failed_fetch is not None
+    and failed_fetch.text is None,
+    "fetch failure does not invent source text",
+)
+
+check(
+    failed_fetch is not None
+    and failed_fetch.locator is None,
+    "fetch failure does not claim successful retrieval locator",
+)
+
+check(
+    failed_fetch is not None
+    and any("failed" in reason.lower() for reason in failed_fetch.reasons),
+    "fetch failure is explained explicitly",
+)
+
+
+print("\n[13] source without retrievable URL does not invoke fetcher")
+
+no_url_calls = []
+
+
+def should_not_be_called(url):
+    no_url_calls.append(url)
+    raise AssertionError("fetcher must not be called without a source URL")
+
+
+no_url_location = academic_claims.SourceLocation(
+    status="location_not_found",
+    doi="10.1000/no-location",
+    source="openalex",
+    landing_page_url=None,
+    pdf_url=None,
+    is_oa=None,
+    reasons=["OpenAlex supplied no accessible source location."],
+)
+
+no_url_retrieval = academic_claims.retrieve_source_from_location(
+    no_url_location,
+    fetcher=should_not_be_called,
+)
+
+check(
+    no_url_calls == [],
+    "missing source URL never invokes fetcher",
+)
+
+check(
+    no_url_retrieval.status == "not_retrieved",
+    "missing source URL remains not retrieved",
+)
+
+check(
+    no_url_retrieval.doi == "10.1000/no-location",
+    "missing source URL retains bibliographic identifier",
+)
+
+check(
+    no_url_retrieval.source == "openalex",
+    "missing source URL retains discovery provenance",
+)
+
+check(
+    no_url_retrieval.text is None,
+    "missing source URL does not invent source text",
+)
+
+check(
+    no_url_retrieval.locator is None,
+    "missing source URL does not invent retrieval locator",
+)
+
+
+print("\n[14] unexpected fetcher errors are not misclassified as retrieval failure")
+
+
+def buggy_fetcher(url):
+    raise TypeError("synthetic programming error")
+
+
+unexpected_error_escaped = False
+
+try:
+    academic_claims.retrieve_source_from_location(
+        retrieval_location,
+        fetcher=buggy_fetcher,
+    )
+except TypeError:
+    unexpected_error_escaped = True
+
+check(
+    unexpected_error_escaped,
+    "unexpected programming error escapes retrieval-failure handling",
+)
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)

@@ -48,6 +48,10 @@ class ClaimSupportResult:
         }
 
 
+class SourceRetrievalError(RuntimeError):
+    """Expected failure while retrieving or extracting a scholarly source."""
+
+
 @dataclass
 class RetrievedSource:
     """Substantive scholarly text retrieved for a bibliographic identifier."""
@@ -154,4 +158,62 @@ def discover_openalex_source(doi: str, work_getter) -> SourceLocation:
         pdf_url=pdf_url,
         is_oa=is_oa,
         reasons=reasons,
+    )
+
+
+def retrieve_source_from_location(
+    location: SourceLocation,
+    fetcher,
+) -> RetrievedSource:
+    """Retrieve substantive source text from a discovered location.
+
+    The fetcher receives only the discovered source URL. Academic questions,
+    claims, manuscripts, reviewer notes, and other substantive user content
+    do not cross this boundary.
+    """
+    if location.landing_page_url:
+        url = location.landing_page_url
+        locator = "landing_page"
+    elif location.pdf_url:
+        url = location.pdf_url
+        locator = "pdf"
+    else:
+        return RetrievedSource(
+            status="not_retrieved",
+            doi=location.doi,
+            source=location.source,
+            text=None,
+            locator=None,
+            reasons=["No retrievable source URL was available."],
+        )
+
+    try:
+        text = fetcher(url)
+    except SourceRetrievalError:
+        return RetrievedSource(
+            status="not_retrieved",
+            doi=location.doi,
+            source=location.source,
+            text=None,
+            locator=None,
+            reasons=["Source retrieval failed."],
+        )
+
+    if not isinstance(text, str) or not text.strip():
+        return RetrievedSource(
+            status="not_retrieved",
+            doi=location.doi,
+            source=location.source,
+            text=None,
+            locator=None,
+            reasons=["Fetched source content was empty."],
+        )
+
+    return RetrievedSource(
+        status="retrieved",
+        doi=location.doi,
+        source=location.source,
+        text=text,
+        locator=locator,
+        reasons=["Substantive source text was retrieved."],
     )
