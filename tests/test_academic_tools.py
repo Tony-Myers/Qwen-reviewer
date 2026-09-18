@@ -346,6 +346,325 @@ for label, corroboration in (
     )
 
 
+
+print("\n[7] supplied bibliographic metadata disambiguate exact-title works")
+
+little_book = at.ReferenceCandidate(
+    title="Statistical Analysis with Missing Data",
+    authors=["Roderick J. A. Little", "Donald B. Rubin"],
+    year=2002,
+    venue="Wiley series in probability and statistics",
+    doi="10.1002/9781119013563",
+    work_type="book",
+    source="crossref",
+    title_similarity=1.0,
+)
+
+little_review = at.ReferenceCandidate(
+    title="Statistical Analysis With Missing Data",
+    authors=["Nicole A Lazar"],
+    year=2003,
+    venue="Technometrics",
+    doi="10.1198/tech.2003.s167",
+    work_type="journal-article",
+    source="crossref",
+    title_similarity=1.0,
+)
+
+little_author = "Little, R. J. A. and Rubin, D. B."
+
+check(
+    "Little/Rubin book outranks exact-title journal item",
+    at._candidate_rank(
+        little_book,
+        author=little_author,
+        year=2002,
+    )
+    > at._candidate_rank(
+        little_review,
+        author=little_author,
+        year=2002,
+    ),
+    (
+        at._candidate_rank(
+            little_book,
+            author=little_author,
+            year=2002,
+        ),
+        at._candidate_rank(
+            little_review,
+            author=little_author,
+            year=2002,
+        ),
+    ),
+)
+
+
+rubin_book = at.ReferenceCandidate(
+    title="Multiple Imputation for Nonresponse in Surveys",
+    authors=["Donald B. Rubin"],
+    year=1987,
+    venue="Wiley series in probability and statistics",
+    doi="10.1002/9780470316696",
+    work_type="book",
+    source="crossref",
+    title_similarity=1.0,
+)
+
+rubin_review = at.ReferenceCandidate(
+    title="Multiple Imputation for Nonresponse in Surveys.",
+    authors=["Roger A. Sugden", "D. B. Rubin"],
+    year=1988,
+    venue=(
+        "Journal of the Royal Statistical Society. "
+        "Series A (Statistics in Society)"
+    ),
+    doi="10.2307/2983027",
+    work_type="journal-article",
+    source="crossref",
+    title_similarity=1.0,
+)
+
+check(
+    "Rubin book outranks exact-title journal item",
+    at._candidate_rank(
+        rubin_book,
+        author="Rubin, D. B.",
+        year=1987,
+    )
+    > at._candidate_rank(
+        rubin_review,
+        author="Rubin, D. B.",
+        year=1987,
+    ),
+    (
+        at._candidate_rank(
+            rubin_book,
+            author="Rubin, D. B.",
+            year=1987,
+        ),
+        at._candidate_rank(
+            rubin_review,
+            author="Rubin, D. B.",
+            year=1987,
+        ),
+    ),
+)
+
+
+
+print("\n[8] public verification pipeline selects intended exact-title identity")
+
+original_search_crossref = at.search_crossref
+original_search_openalex = at.search_openalex
+
+try:
+    at.search_crossref = (
+        lambda title, author=None, rows=5: [
+            little_review,
+            little_book,
+        ]
+    )
+    at.search_openalex = (
+        lambda title, rows=5: [
+            at.ReferenceCandidate(
+                title="Statistical Analysis with Missing Data",
+                authors=["Roderick J. A. Little", "Donald B. Rubin"],
+                year=2002,
+                venue="Wiley series in probability and statistics",
+                doi="10.1002/9781119013563",
+                work_type="book",
+                source="openalex",
+                title_similarity=1.0,
+            )
+        ]
+    )
+
+    little_verification = at.verify_reference(
+        title="Statistical Analysis with Missing Data",
+        author="Little, R. J. A. and Rubin, D. B.",
+        year=2002,
+        venue="Wiley series in probability and statistics",
+    )
+
+    little_academic = at.verify_academic_reference(
+        title="Statistical Analysis with Missing Data",
+        author="Little, R. J. A. and Rubin, D. B.",
+        year=2002,
+        venue="Wiley series in probability and statistics",
+    )
+
+finally:
+    at.search_crossref = original_search_crossref
+    at.search_openalex = original_search_openalex
+
+
+check(
+    "Crossref verification selects Little/Rubin book",
+    little_verification.candidate is not None
+    and little_verification.candidate.doi
+    == "10.1002/9781119013563",
+    little_verification.to_dict(),
+)
+
+check(
+    "Little/Rubin book is bibliographically verified",
+    little_verification.status == "verified",
+    little_verification.status,
+)
+
+check(
+    "cross-database title search selects same book identity",
+    little_academic.related_corroboration is not None
+    and little_academic.related_corroboration.crossref is not None
+    and little_academic.related_corroboration.openalex is not None
+    and little_academic.related_corroboration.crossref.doi
+    == "10.1002/9781119013563"
+    and little_academic.related_corroboration.openalex.doi
+    == "10.1002/9781119013563",
+    (
+        little_academic.related_corroboration.to_dict()
+        if little_academic.related_corroboration
+        else "None"
+    ),
+)
+
+check(
+    "Little/Rubin title identity is corroborated",
+    little_academic.related_corroboration is not None
+    and little_academic.related_corroboration.status == "corroborated",
+    (
+        little_academic.related_corroboration.status
+        if little_academic.related_corroboration
+        else "None"
+    ),
+)
+
+check(
+    "bibliographic corroboration still does not verify claim support",
+    little_academic.claim_verified is False,
+)
+
+
+
+print("\n[9] abbreviated venue metadata remains compatible")
+
+original_search_crossref = at.search_crossref
+
+try:
+    at.search_crossref = (
+        lambda title, author=None, rows=5: [
+            little_review,
+            little_book,
+        ]
+    )
+
+    abbreviated_venue = at.verify_reference(
+        title="Statistical Analysis with Missing Data",
+        author="Little, R. J. A. and Rubin, D. B.",
+        year=2002,
+        venue="Wiley",
+    )
+
+    incompatible_venue = at.verify_reference(
+        title="Statistical Analysis with Missing Data",
+        author="Little, R. J. A. and Rubin, D. B.",
+        year=2002,
+        venue="Technometrics",
+    )
+
+finally:
+    at.search_crossref = original_search_crossref
+
+
+check(
+    "publisher abbreviation does not reject matching book identity",
+    abbreviated_venue.status == "verified"
+    and abbreviated_venue.candidate is not None
+    and abbreviated_venue.candidate.doi
+    == "10.1002/9781119013563",
+    abbreviated_venue.to_dict(),
+)
+
+check(
+    "unrelated venue still rejects otherwise matching identity",
+    incompatible_venue.status == "not_verified"
+    and incompatible_venue.candidate is None,
+    incompatible_venue.to_dict(),
+)
+
+
+
+print("\n[10] author matching does not accept incidental token overlap")
+
+particle_candidate = at.ReferenceCandidate(
+    title="Synthetic Work",
+    authors=["Jan van der Meer"],
+    year=2020,
+    venue="Example Journal",
+    doi=None,
+    work_type="journal-article",
+)
+
+unrelated_particle_candidate = at.ReferenceCandidate(
+    title="Synthetic Work",
+    authors=["Anna van Dijk"],
+    year=2020,
+    venue="Example Journal",
+    doi=None,
+    work_type="journal-article",
+)
+
+initial_candidate = at.ReferenceCandidate(
+    title="Synthetic Work",
+    authors=["David Brown"],
+    year=2020,
+    venue="Example Journal",
+    doi=None,
+    work_type="journal-article",
+)
+
+check(
+    "matching surname with fuller supplied citation remains accepted",
+    at._author_matches(
+        little_book,
+        "Little, R. J. A. and Rubin, D. B.",
+    ),
+)
+
+check(
+    "Rubin surname remains accepted",
+    at._author_matches(
+        rubin_book,
+        "Rubin, D. B.",
+    ),
+)
+
+check(
+    "shared name particle alone does not establish author match",
+    not at._author_matches(
+        unrelated_particle_candidate,
+        "Jan van der Meer",
+    ),
+)
+
+check(
+    "shared given-name initial alone does not establish author match",
+    not at._author_matches(
+        initial_candidate,
+        "D. Smith",
+    ),
+)
+
+check(
+    "multi-token surname remains matchable",
+    at._author_matches(
+        particle_candidate,
+        "van der Meer, J.",
+    ),
+)
+
+
 print()
 if fails:
     print(f"{len(fails)} FAILURE(S): {fails}")

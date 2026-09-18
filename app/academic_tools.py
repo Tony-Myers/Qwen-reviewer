@@ -439,15 +439,59 @@ def search_crossref(
 
 
 def _author_matches(candidate: ReferenceCandidate, author: str) -> bool:
+    """
+    Match supplied bibliographic author text against candidate authors.
+
+    Candidate authors are individual names, while supplied metadata may be a
+    citation-style string containing several authors. Use the final meaningful
+    token of each candidate name as conservative surname evidence rather than
+    accepting arbitrary token overlap.
+    """
     wanted = _normalise_text(author)
     if not wanted:
         return False
 
-    return any(
-        wanted in _normalise_text(candidate_author)
-        for candidate_author in candidate.authors
-    )
+    wanted_tokens = set(wanted.split())
 
+    for candidate_author in candidate.authors:
+        candidate_name = _normalise_text(candidate_author)
+        if not candidate_name:
+            continue
+
+        if candidate_name in wanted or wanted in candidate_name:
+            return True
+
+        candidate_tokens = candidate_name.split()
+        surname = candidate_tokens[-1]
+
+        if len(surname) > 1 and surname in wanted_tokens:
+            return True
+
+    return False
+
+
+def _venue_matches(supplied: str, candidate: str) -> bool:
+    """
+    Return whether supplied and candidate venue metadata are compatible.
+
+    Exact/near-exact similarity remains the primary rule. A shorter venue or
+    publisher form is also accepted when all of its meaningful normalised
+    tokens occur as complete tokens in the longer form.
+    """
+    if _title_similarity(supplied, candidate) >= 0.90:
+        return True
+
+    supplied_tokens = [
+        token
+        for token in _normalise_text(supplied).split()
+        if len(token) >= 3
+    ]
+    candidate_tokens = set(_normalise_text(candidate).split())
+
+    if not supplied_tokens:
+        return False
+
+    return all(token in candidate_tokens for token in supplied_tokens)
 
 
 def _candidate_rank(
@@ -471,11 +515,17 @@ def _candidate_rank(
     )
 
     year_score = (
-        1
+        2
         if year is not None
         and candidate.year is not None
-        and abs(year - candidate.year) <= 1
-        else 0
+        and year == candidate.year
+        else (
+            1
+            if year is not None
+            and candidate.year is not None
+            and abs(year - candidate.year) == 1
+            else 0
+        )
     )
 
     publication_score = {
@@ -734,7 +784,10 @@ def verify_reference(
                                 venue,
                                 best_related.venue,
                             )
-                            if venue_similarity >= 0.90:
+                            if _venue_matches(
+                                venue,
+                                best_related.venue,
+                            ):
                                 reasons.append(
                                     "The supplied venue closely matches the "
                                     "related Crossref record."
@@ -800,7 +853,7 @@ def verify_reference(
 
         if venue:
             venue_similarity = _title_similarity(venue, candidate.venue)
-            if venue_similarity >= 0.90:
+            if _venue_matches(venue, candidate.venue):
                 reasons.append("The supplied venue closely matches the Crossref record.")
             else:
                 conflicts.append(
@@ -875,7 +928,10 @@ def verify_reference(
                             venue,
                             best_related.venue,
                         )
-                        if related_venue_similarity >= 0.90:
+                        if _venue_matches(
+                            venue,
+                            best_related.venue,
+                        ):
                             reasons.append(
                                 "The supplied venue closely matches the "
                                 "related Crossref record."
@@ -970,7 +1026,7 @@ def verify_reference(
     if venue_similarity is not None:
         reasons.append(
             "The supplied venue closely matches the best Crossref result."
-            if venue_similarity >= 0.90
+            if _venue_matches(venue, candidate.venue)
             else (
                 "The supplied venue does not closely match the best Crossref "
                 f"result (similarity {venue_similarity:.3f})."
@@ -990,7 +1046,10 @@ def verify_reference(
     strong_title = similarity >= 0.90
     acceptable_year = year_difference is None or year_difference <= 1
     acceptable_author = author_ok is not False
-    acceptable_venue = venue_similarity is None or venue_similarity >= 0.90
+    acceptable_venue = (
+        venue_similarity is None
+        or _venue_matches(venue, candidate.venue)
+    )
 
     if (
         strong_title
