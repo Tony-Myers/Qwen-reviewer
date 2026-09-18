@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 import academic_chat
 import academic_orchestrator
+import academic_technical
 from academic_tools import AcademicReferenceResult, VerificationResult
 
 
@@ -30,6 +31,7 @@ question = (
 
 draft_calls = []
 verification_calls = []
+technical_calls = []
 
 
 def fake_draft_generator(model, tokenizer, supplied_question):
@@ -86,6 +88,17 @@ def fake_reference_verifier(**kwargs):
     )
 
 
+def fake_technical_verifier(claim):
+    technical_calls.append(claim)
+
+    return academic_technical.TechnicalVerification(
+        status=academic_technical.TECHNICAL_STATUS_VERIFIED,
+        verifier="synthetic_test_verifier",
+        canonical_claim="x = y / z",
+        reasons=["Synthetic deterministic technical verification."],
+    )
+
+
 model = object()
 tokenizer = object()
 
@@ -95,6 +108,7 @@ result = academic_orchestrator.run_academic_first_stage(
     question,
     draft_generator=fake_draft_generator,
     reference_verifier=fake_reference_verifier,
+    technical_verifier=fake_technical_verifier,
 )
 
 
@@ -133,19 +147,19 @@ expected_fields = {
 
 check(
     all(set(call) == expected_fields for call in verification_calls),
-    "verifier receives exactly the five bibliographic fields",
+    "reference verifier receives exactly the five bibliographic fields",
 )
 
 serialized_verifier_calls = repr(verification_calls)
 
 check(
     SECRET not in serialized_verifier_calls,
-    "full-question confidential marker never reaches verifier",
+    "full-question confidential marker never reaches reference verifier",
 )
 
 check(
     question not in serialized_verifier_calls,
-    "full question never reaches verifier",
+    "full question never reaches reference verifier",
 )
 
 
@@ -180,7 +194,39 @@ check(
 )
 
 
-print("\n[4] technical claims remain explicitly unverified")
+print("\n[4] technical verifier receives structured claim only")
+
+check(
+    len(technical_calls) == 1,
+    "technical verifier called exactly once for each technical claim",
+)
+
+check(
+    isinstance(technical_calls[0], academic_chat.TechnicalClaim),
+    "technical verifier receives a TechnicalClaim object",
+)
+
+check(
+    technical_calls[0].statement == "x = y / z",
+    "technical verifier receives original structured claim",
+)
+
+serialized_technical_calls = repr(
+    [technical_claim.to_dict() for technical_claim in technical_calls]
+)
+
+check(
+    SECRET not in serialized_technical_calls,
+    "full-question confidential marker never reaches technical verifier",
+)
+
+check(
+    question not in serialized_technical_calls,
+    "full question never reaches technical verifier",
+)
+
+
+print("\n[5] technical claim remains auditable beside verification")
 
 check(
     len(result.technical_claims) == 1,
@@ -193,13 +239,25 @@ check(
 )
 
 check(
-    result.technical_claims[0].technical_status
-    == academic_orchestrator.TECHNICAL_STATUS_NOT_VERIFIED,
-    "technical claim explicitly marked not technically verified",
+    result.technical_claims[0].verification.status
+    == academic_technical.TECHNICAL_STATUS_VERIFIED,
+    "technical verification status retained separately",
+)
+
+check(
+    result.technical_claims[0].verification.verifier
+    == "synthetic_test_verifier",
+    "technical verifier identity retained",
+)
+
+check(
+    result.technical_claims[0].verification.canonical_claim
+    == "x = y / z",
+    "canonical technical claim retained",
 )
 
 
-print("\n[5] serialised result preserves the same boundaries")
+print("\n[6] serialised result preserves the same boundaries")
 
 payload = result.to_dict()
 
@@ -215,9 +273,21 @@ check(
 )
 
 check(
-    payload["technical_claims"][0]["technical_status"]
-    == "not_technically_verified",
-    "technical status serialises explicitly",
+    payload["technical_claims"][0]["claim"]["statement"]
+    == "x = y / z",
+    "original technical claim serialises",
+)
+
+check(
+    payload["technical_claims"][0]["verification"]["status"]
+    == "technically_verified",
+    "technical verification status serialises separately",
+)
+
+check(
+    payload["technical_claims"][0]["verification"]["verifier"]
+    == "synthetic_test_verifier",
+    "technical verifier provenance serialises",
 )
 
 
