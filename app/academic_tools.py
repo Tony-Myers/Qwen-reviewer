@@ -438,6 +438,57 @@ def search_crossref(
     ]
 
 
+
+def _crossref_candidates(
+    title: str,
+    *,
+    author: str | None = None,
+    rows: int = 5,
+) -> list[ReferenceCandidate]:
+    """
+    Combine title-only and author-constrained Crossref discovery.
+
+    Title-only discovery remains necessary when supplied author metadata is
+    wrong. When author metadata is available, an additional constrained search
+    can recover the intended work when exact-title reviews or related records
+    crowd it out of the title-only result set.
+
+    Candidates with the same DOI are deduplicated. DOI-less candidates are
+    retained because identical titles alone do not establish identity.
+    """
+    candidates = list(
+        search_crossref(
+            title,
+            author=None,
+            rows=rows,
+        )
+    )
+
+    if author:
+        candidates.extend(
+            search_crossref(
+                title,
+                author=author,
+                rows=rows,
+            )
+        )
+
+    deduplicated = []
+    seen_dois = set()
+
+    for candidate in candidates:
+        doi = candidate.doi.strip().lower() if candidate.doi else None
+
+        if doi:
+            if doi in seen_dois:
+                continue
+            seen_dois.add(doi)
+
+        deduplicated.append(candidate)
+
+    return deduplicated
+
+
 def _author_matches(candidate: ReferenceCandidate, author: str) -> bool:
     """
     Match supplied bibliographic author text against candidate authors.
@@ -984,7 +1035,11 @@ def verify_reference(
             reasons=["A title or DOI is required for verification."],
         )
 
-    candidates = search_crossref(title, author=None, rows=5)
+    candidates = _crossref_candidates(
+        title,
+        author=author,
+        rows=5,
+    )
     if not candidates:
         return VerificationResult(
             status="not_verified",
@@ -1128,9 +1183,9 @@ def verify_academic_reference(
         )
 
     if title:
-        crossref_results = search_crossref(
+        crossref_results = _crossref_candidates(
             title,
-            author=None,
+            author=author,
             rows=5,
         )
         openalex_results = search_openalex(

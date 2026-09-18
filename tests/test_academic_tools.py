@@ -665,6 +665,111 @@ check(
 )
 
 
+
+print("\n[11] author-constrained discovery supplements title-only Crossref results")
+
+little_title_only = [
+    at.ReferenceCandidate(
+        title="Statistical Analysis with Missing Data.",
+        authors=["Martin G. Gibson", "R. J. A. Little", "D. B. Rubin"],
+        year=1989,
+        venue="The Statistician",
+        doi="10.2307/2349029",
+        work_type="journal-article",
+        title_similarity=1.0,
+    ),
+    at.ReferenceCandidate(
+        title="Statistical Analysis With Missing Data",
+        authors=["Nicole A Lazar"],
+        year=2003,
+        venue="Technometrics",
+        doi="10.1198/tech.2003.s167",
+        work_type="journal-article",
+        title_similarity=1.0,
+    ),
+]
+
+little_author_constrained = [
+    little_book,
+    little_title_only[0],
+]
+
+openalex_little_book = at.ReferenceCandidate(
+    title="Statistical Analysis with Missing Data",
+    authors=["Roderick J. A. Little", "Donald B. Rubin"],
+    year=2002,
+    venue="Wiley series in probability and statistics",
+    doi="10.1002/9781119013563",
+    work_type="book",
+    source="openalex",
+    title_similarity=1.0,
+)
+
+original_search_crossref = at.search_crossref
+original_search_openalex = at.search_openalex
+
+try:
+    def search_crossref_live_failure(title, author=None, rows=5):
+        if author:
+            return little_author_constrained
+        return little_title_only
+
+    at.search_crossref = search_crossref_live_failure
+    at.search_openalex = (
+        lambda title, rows=5: [openalex_little_book]
+    )
+
+    little_union_verification = at.verify_reference(
+        title="Statistical Analysis with Missing Data",
+        author="Little, R. J. A., & Rubin, D. B.",
+        year=2002,
+        venue="Wiley",
+    )
+
+    little_union_academic = at.verify_academic_reference(
+        title="Statistical Analysis with Missing Data",
+        author="Little, R. J. A., & Rubin, D. B.",
+        year=2002,
+        venue="Wiley",
+    )
+
+finally:
+    at.search_crossref = original_search_crossref
+    at.search_openalex = original_search_openalex
+
+
+check(
+    "author-constrained discovery recovers book omitted by title-only search",
+    little_union_verification.status == "verified"
+    and little_union_verification.candidate is not None
+    and little_union_verification.candidate.doi
+    == "10.1002/9781119013563",
+    little_union_verification.to_dict(),
+)
+
+check(
+    "corroboration uses recovered Crossref book identity",
+    little_union_academic.related_corroboration is not None
+    and little_union_academic.related_corroboration.status == "corroborated"
+    and little_union_academic.related_corroboration.crossref is not None
+    and little_union_academic.related_corroboration.crossref.doi
+    == "10.1002/9781119013563"
+    and little_union_academic.related_corroboration.openalex is not None
+    and little_union_academic.related_corroboration.openalex.doi
+    == "10.1002/9781119013563",
+    (
+        little_union_academic.related_corroboration.to_dict()
+        if little_union_academic.related_corroboration
+        else "None"
+    ),
+)
+
+check(
+    "recovered bibliographic identity still does not verify claim support",
+    little_union_academic.claim_verified is False,
+)
+
+
 print()
 if fails:
     print(f"{len(fails)} FAILURE(S): {fails}")
