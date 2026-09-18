@@ -291,6 +291,79 @@ check(
 )
 
 
+
+print("\n[7] orchestration includes release assessment")
+
+check(
+    result.release.status == "release_allowed",
+    "verified technical claims produce release-allowed status",
+)
+
+check(
+    result.release.safe_to_present is True,
+    "verified technical claims are safe to present",
+)
+
+payload = result.to_dict()
+
+check(
+    payload["release"]["status"] == "release_allowed",
+    "release status serialises with orchestration result",
+)
+
+check(
+    payload["release"]["safe_to_present"] is True,
+    "safe-to-present flag serialises with orchestration result",
+)
+
+print("\n[8] technical conflict propagates to blocked release")
+
+def conflicting_technical_verifier(claim):
+    return academic_technical.TechnicalVerification(
+        status=academic_technical.TECHNICAL_STATUS_CONFLICT,
+        verifier="synthetic_conflict_verifier",
+        canonical_claim="x = z",
+        reasons=["Synthetic deterministic technical conflict."],
+    )
+
+
+conflict_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=fake_reference_verifier,
+    technical_verifier=conflicting_technical_verifier,
+)
+
+check(
+    conflict_result.release.status == "blocked_technical_conflict",
+    "technical conflict propagates to blocked release",
+)
+
+check(
+    conflict_result.release.safe_to_present is False,
+    "technical conflict prevents presentation",
+)
+
+conflict_payload = conflict_result.to_dict()
+
+check(
+    conflict_payload["release"]["status"] == "blocked_technical_conflict",
+    "blocked release status serialises",
+)
+
+check(
+    conflict_payload["release"]["safe_to_present"] is False,
+    "blocked safe-to-present flag serialises",
+)
+
+check(
+    conflict_payload["answer_draft"] == "A provisional local answer.",
+    "blocked draft remains available for auditability",
+)
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)

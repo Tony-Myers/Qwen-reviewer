@@ -36,6 +36,13 @@ class FakeResult:
             "answer_draft": "Synthetic provisional answer.",
             "references": [],
             "technical_claims": [],
+            "release": {
+                "status": "blocked_technical_conflict",
+                "safe_to_present": False,
+                "reasons": [
+                    "Synthetic deterministic technical conflict."
+                ],
+            },
         }
 
 
@@ -104,6 +111,22 @@ try:
     check(
         response["answer_draft"] == "Synthetic provisional answer.",
         "combined structured result returned",
+    )
+
+
+    check(
+        response["release"]["status"] == "blocked_technical_conflict",
+        "blocked release status survives HTTP boundary",
+    )
+
+    check(
+        response["release"]["safe_to_present"] is False,
+        "unsafe-to-present flag survives HTTP boundary",
+    )
+
+    check(
+        response["answer_draft"] == "Synthetic provisional answer.",
+        "blocked draft remains available through endpoint for auditability",
     )
 
 

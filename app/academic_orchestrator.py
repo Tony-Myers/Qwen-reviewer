@@ -49,10 +49,69 @@ class TechnicalClaimResult:
 
 
 @dataclass
+class AcademicReleaseAssessment:
+    status: str
+    safe_to_present: bool
+    reasons: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "safe_to_present": self.safe_to_present,
+            "reasons": self.reasons,
+        }
+
+
+def assess_academic_release(
+    technical_claims: list[TechnicalClaimResult],
+) -> AcademicReleaseAssessment:
+    """Assess whether a technically checked draft may be presented.
+
+    A recognised deterministic technical conflict blocks release.
+    Claims outside deterministic verifier coverage remain visible but do not
+    by themselves establish that the draft is incorrect.
+    """
+    statuses = [
+        claim.verification.status
+        for claim in technical_claims
+    ]
+
+    if academic_technical.TECHNICAL_STATUS_CONFLICT in statuses:
+        return AcademicReleaseAssessment(
+            status="blocked_technical_conflict",
+            safe_to_present=False,
+            reasons=[
+                "At least one structured technical claim conflicts with "
+                "deterministic technical verification."
+            ],
+        )
+
+    if academic_technical.TECHNICAL_STATUS_NOT_VERIFIED in statuses:
+        return AcademicReleaseAssessment(
+            status="release_allowed_with_unverified_claims",
+            safe_to_present=True,
+            reasons=[
+                "At least one structured technical claim was not technically "
+                "verified; absence of deterministic verification is not "
+                "treated as a technical conflict."
+            ],
+        )
+
+    return AcademicReleaseAssessment(
+        status="release_allowed",
+        safe_to_present=True,
+        reasons=[
+            "No deterministic technical conflict was identified."
+        ],
+    )
+
+
+@dataclass
 class AcademicFirstStageResult:
     answer_draft: str
     references: list[VerifiedReferenceProposal]
     technical_claims: list[TechnicalClaimResult]
+    release: AcademicReleaseAssessment
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,6 +124,7 @@ class AcademicFirstStageResult:
                 claim.to_dict()
                 for claim in self.technical_claims
             ],
+            "release": self.release.to_dict(),
         }
 
 
@@ -134,8 +194,11 @@ def run_academic_first_stage(
             )
         )
 
+    release = assess_academic_release(technical_claims)
+
     return AcademicFirstStageResult(
         answer_draft=draft.answer_draft,
         references=verified_references,
         technical_claims=technical_claims,
+        release=release,
     )
