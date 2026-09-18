@@ -320,3 +320,45 @@ def safe_http_fetch(url: str, http_get, resolver=None) -> DownloadedSource:
     _validate_http_url(downloaded.final_url, resolver=resolver)
 
     return downloaded
+
+
+def fetch_validated_http_source(
+    url: str,
+    hostname: str,
+    validated_addresses: list[str],
+    connection_adapter,
+) -> DownloadedSource:
+    """Delegate HTTP transfer using an explicitly validated destination.
+
+    This boundary independently requires every supplied destination address
+    to be a canonical public IP address before invoking the connection
+    adapter. It does not itself perform DNS resolution or network access.
+    """
+    if not validated_addresses:
+        raise SourceRetrievalError(
+            "Validated HTTP connection requires at least one network address."
+        )
+
+    for supplied_address in validated_addresses:
+        try:
+            address = ipaddress.ip_address(supplied_address)
+        except ValueError as exc:
+            raise SourceRetrievalError(
+                "Validated HTTP connection received an invalid network address."
+            ) from exc
+
+        if not address.is_global:
+            raise SourceRetrievalError(
+                "Validated HTTP connection received a non-public network address."
+            )
+
+    downloaded = connection_adapter(
+        url,
+        hostname,
+        validated_addresses,
+    )
+
+    if not isinstance(downloaded, DownloadedSource):
+        raise TypeError("Connection adapter must return DownloadedSource.")
+
+    return downloaded

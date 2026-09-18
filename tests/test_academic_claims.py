@@ -968,6 +968,89 @@ check(
     "mixed DNS resolution never reaches HTTP client",
 )
 
+
+print("\n[22] connection boundary receives validated network destination")
+
+connection_calls = []
+
+
+def fake_connection_adapter(url, hostname, validated_addresses):
+    connection_calls.append(
+        (url, hostname, tuple(validated_addresses))
+    )
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url=url,
+        content_type="application/pdf",
+        content=b"%PDF-synthetic",
+        reasons=["Synthetic validated-address connection."],
+    )
+
+
+connected = academic_claims.fetch_validated_http_source(
+    "https://journal.example/article.pdf",
+    hostname="journal.example",
+    validated_addresses=["8.8.8.8", "1.1.1.1"],
+    connection_adapter=fake_connection_adapter,
+)
+
+check(
+    connection_calls == [
+        (
+            "https://journal.example/article.pdf",
+            "journal.example",
+            ("8.8.8.8", "1.1.1.1"),
+        )
+    ],
+    "connection adapter receives URL, hostname, and validated addresses",
+)
+
+check(
+    connected.status == "downloaded",
+    "validated connection returns downloaded resource",
+)
+
+check(
+    connected.content == b"%PDF-synthetic",
+    "validated connection preserves downloaded bytes",
+)
+
+
+print("\n[23] connection boundary independently rejects non-public addresses")
+
+direct_connection_calls = []
+
+
+def should_not_connect_non_public(url, hostname, validated_addresses):
+    direct_connection_calls.append(
+        (url, hostname, tuple(validated_addresses))
+    )
+    raise AssertionError("non-public destination must not reach connection adapter")
+
+
+non_public_connection_rejected = False
+
+try:
+    academic_claims.fetch_validated_http_source(
+        "https://journal.example/article.pdf",
+        hostname="journal.example",
+        validated_addresses=["8.8.8.8", "10.0.0.7"],
+        connection_adapter=should_not_connect_non_public,
+    )
+except academic_claims.SourceRetrievalError:
+    non_public_connection_rejected = True
+
+check(
+    non_public_connection_rejected,
+    "connection boundary rejects mixed public/private addresses",
+)
+
+check(
+    direct_connection_calls == [],
+    "non-public address never reaches connection adapter",
+)
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
