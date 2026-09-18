@@ -8,6 +8,8 @@ that an academic claim is false or unsupported.
 """
 
 from dataclasses import asdict, dataclass
+
+import httpcore
 import ipaddress
 from typing import Any
 from urllib.parse import urlparse
@@ -362,3 +364,57 @@ def fetch_validated_http_source(
         raise TypeError("Connection adapter must return DownloadedSource.")
 
     return downloaded
+
+
+class PinnedSyncBackend(httpcore.SyncBackend):
+    """Pin HTTP TCP connections to a validated public IP address.
+
+    The HTTP origin hostname is resolved and validated here, but the parent
+    httpcore backend receives a numeric IP address as the TCP destination.
+    This prevents an independent hostname resolution at connection time while
+    leaving httpcore responsible for socket handling and TLS streams.
+    """
+
+    def __init__(self, resolver):
+        super().__init__()
+        self._resolver = resolver
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options=None,
+    ):
+        resolved_addresses = self._resolver(host)
+
+        if not resolved_addresses:
+            raise SourceRetrievalError(
+                "Source hostname did not resolve to an eligible address."
+            )
+
+        validated_addresses = []
+
+        for supplied_address in resolved_addresses:
+            try:
+                address = ipaddress.ip_address(supplied_address)
+            except ValueError as exc:
+                raise SourceRetrievalError(
+                    "Source hostname resolved to an invalid network address."
+                ) from exc
+
+            if not address.is_global:
+                raise SourceRetrievalError(
+                    "Source hostname resolves to a non-public network destination."
+                )
+
+            validated_addresses.append(str(address))
+
+        return super().connect_tcp(
+            host=validated_addresses[0],
+            port=port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )

@@ -1056,3 +1056,200 @@ if fails:
     raise SystemExit(1)
 
 print("\nAll Academic Chat claim-support contract checks passed.")
+
+print("\n[24] pinned network backend delegates validated IP to httpcore")
+
+import httpcore
+
+resolved_hosts = []
+parent_calls = []
+sentinel_stream = object()
+
+original_connect_tcp = httpcore.SyncBackend.connect_tcp
+
+def fake_parent_connect_tcp(
+    self,
+    host,
+    port,
+    timeout=None,
+    local_address=None,
+    socket_options=None,
+):
+    parent_calls.append(
+        {
+            "host": host,
+            "port": port,
+            "timeout": timeout,
+            "local_address": local_address,
+            "socket_options": socket_options,
+        }
+    )
+    return sentinel_stream
+
+def fake_resolver(hostname):
+    resolved_hosts.append(hostname)
+    return ["8.8.8.8"]
+
+httpcore.SyncBackend.connect_tcp = fake_parent_connect_tcp
+
+try:
+    backend = academic_claims.PinnedSyncBackend(
+        resolver=fake_resolver,
+    )
+
+    stream = backend.connect_tcp(
+        host="journal.example",
+        port=443,
+        timeout=5.0,
+        local_address=None,
+        socket_options=[(6, 1, 1)],
+    )
+finally:
+    httpcore.SyncBackend.connect_tcp = original_connect_tcp
+
+assert resolved_hosts == ["journal.example"]
+assert parent_calls == [
+    {
+        "host": "8.8.8.8",
+        "port": 443,
+        "timeout": 5.0,
+        "local_address": None,
+        "socket_options": [(6, 1, 1)],
+    }
+]
+assert stream is sentinel_stream
+
+print("PASS: hostname is resolved exactly once by pinned backend")
+print("PASS: httpcore receives validated IP rather than hostname")
+print("PASS: connection arguments are preserved")
+
+print("\n[25] pinned network backend rejects mixed public/private DNS results")
+
+mixed_parent_calls = []
+
+def mixed_resolver(hostname):
+    assert hostname == "journal.example"
+    return ["8.8.8.8", "10.0.0.7"]
+
+original_connect_tcp = httpcore.SyncBackend.connect_tcp
+
+def forbidden_parent_connect_tcp(
+    self,
+    host,
+    port,
+    timeout=None,
+    local_address=None,
+    socket_options=None,
+):
+    mixed_parent_calls.append(host)
+    raise AssertionError(
+        "httpcore parent backend must not receive mixed DNS results."
+    )
+
+httpcore.SyncBackend.connect_tcp = forbidden_parent_connect_tcp
+
+try:
+    mixed_backend = academic_claims.PinnedSyncBackend(
+        resolver=mixed_resolver,
+    )
+
+    try:
+        mixed_backend.connect_tcp(
+            host="journal.example",
+            port=443,
+            timeout=5.0,
+        )
+    except academic_claims.SourceRetrievalError:
+        pass
+    else:
+        raise AssertionError(
+            "Mixed public/private DNS results must be rejected."
+        )
+finally:
+    httpcore.SyncBackend.connect_tcp = original_connect_tcp
+
+assert mixed_parent_calls == []
+
+print("PASS: pinned backend rejects mixed public/private DNS results")
+print("PASS: rejected DNS result never reaches httpcore connection backend")
+
+print("\n[26] httpcore preserves original hostname for TLS authentication")
+
+connection_hosts = []
+tls_hostnames = []
+
+class RecordingStream(httpcore.NetworkStream):
+    def read(self, max_bytes, timeout=None):
+        return b""
+
+    def write(self, buffer, timeout=None):
+        pass
+
+    def close(self):
+        pass
+
+    def start_tls(
+        self,
+        ssl_context,
+        server_hostname=None,
+        timeout=None,
+    ):
+        tls_hostnames.append(server_hostname)
+        return self
+
+    def get_extra_info(self, info):
+        return None
+
+class RecordingBackend(httpcore.NetworkBackend):
+    def connect_tcp(
+        self,
+        host,
+        port,
+        timeout=None,
+        local_address=None,
+        socket_options=None,
+    ):
+        connection_hosts.append(host)
+        return RecordingStream()
+
+    def connect_unix_socket(
+        self,
+        path,
+        timeout=None,
+        socket_options=None,
+    ):
+        raise AssertionError("Unix socket must not be used.")
+
+    def sleep(self, seconds):
+        pass
+
+origin = httpcore.Origin(
+    scheme=b"https",
+    host=b"journal.example",
+    port=443,
+)
+
+connection = httpcore.HTTPConnection(
+    origin=origin,
+    network_backend=RecordingBackend(),
+    http1=True,
+    http2=False,
+)
+
+request = httpcore.Request(
+    method="GET",
+    url="https://journal.example/article.pdf",
+)
+
+try:
+    connection.handle_request(request)
+except Exception:
+    # The synthetic stream does not implement an HTTP response.
+    # We only need connection and TLS setup for this contract.
+    pass
+
+assert connection_hosts == ["journal.example"]
+assert tls_hostnames == ["journal.example"]
+
+print("PASS: httpcore sends original origin hostname to network backend")
+print("PASS: httpcore preserves original hostname as TLS server_hostname")
