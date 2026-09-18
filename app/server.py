@@ -47,6 +47,7 @@ import design_expectations as de  # noqa: E402
 import reviewer_notes as notes  # noqa: E402  standard library only, no model
 import llm_backend  # noqa: E402
 import academic_chat  # noqa: E402
+import academic_orchestrator  # noqa: E402
 from academic_tools import verify_academic_reference  # noqa: E402
 from llm_backend import (  # noqa: E402
     BackendError,
@@ -582,6 +583,71 @@ async def restart_server(request: dict):
         "status": "restarting",
         "model": resolved_model,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/chat/academic
+# First-stage Academic Chat orchestration.
+#
+# The complete question is passed to the local model. External bibliographic
+# services receive only reference metadata proposed by that local model.
+# Bibliographic verification does not establish support for technical claims.
+# ---------------------------------------------------------------------------
+@app.post("/api/chat/academic")
+async def academic_chat_first_stage(request: dict):
+    allowed = {"question"}
+    unexpected = set(request) - allowed
+
+    if unexpected:
+        return JSONResponse(
+            {
+                "error": "Unexpected fields in Academic Chat request.",
+                "unexpected_fields": sorted(unexpected),
+            },
+            status_code=400,
+        )
+
+    question = request.get("question")
+    if not isinstance(question, str) or not question.strip():
+        return JSONResponse(
+            {"error": "A non-empty question is required."},
+            status_code=400,
+        )
+
+    ensure_model()
+
+    try:
+        result = academic_orchestrator.run_academic_first_stage(
+            model,
+            tokenizer,
+            question,
+        )
+    except academic_chat.AcademicDraftError as exc:
+        return JSONResponse(
+            {
+                "error": "Academic Chat model returned invalid structured output.",
+                "detail": str(exc),
+            },
+            status_code=502,
+        )
+    except BackendError as exc:
+        return JSONResponse(
+            {
+                "error": "Academic Chat local model unavailable.",
+                "detail": str(exc),
+            },
+            status_code=502,
+        )
+    except RuntimeError as exc:
+        return JSONResponse(
+            {
+                "error": "Academic reference service unavailable.",
+                "detail": str(exc),
+            },
+            status_code=502,
+        )
+
+    return result.to_dict()
 
 
 # ---------------------------------------------------------------------------
