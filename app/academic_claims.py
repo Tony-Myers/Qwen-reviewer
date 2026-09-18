@@ -8,7 +8,9 @@ that an academic claim is false or unsupported.
 """
 
 from dataclasses import asdict, dataclass
+import ipaddress
 from typing import Any
+from urllib.parse import urlparse
 
 
 @dataclass
@@ -50,6 +52,25 @@ class ClaimSupportResult:
 
 class SourceRetrievalError(RuntimeError):
     """Expected failure while retrieving or extracting a scholarly source."""
+
+
+@dataclass
+class DownloadedSource:
+    """Raw resource obtained from a discovered scholarly source location.
+
+    A successful download does not imply that substantive scholarly text
+    has been extracted or that any academic claim has been supported.
+    """
+
+    status: str
+    requested_url: str
+    final_url: str
+    content_type: str | None
+    content: bytes
+    reasons: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass
@@ -217,3 +238,85 @@ def retrieve_source_from_location(
         locator=locator,
         reasons=["Substantive source text was retrieved."],
     )
+
+
+
+def _validate_http_url(url: str, resolver=None) -> None:
+    """Reject URLs that are not eligible public HTTP(S) source locations."""
+    parsed = urlparse(url)
+
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise SourceRetrievalError("Source URL is not an eligible HTTP(S) URL.")
+
+    hostname = parsed.hostname
+
+    if not hostname:
+        raise SourceRetrievalError("Source URL has no eligible hostname.")
+
+    hostname = hostname.rstrip(".").lower()
+
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        raise SourceRetrievalError("Source URL targets a local network destination.")
+
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        # Numeric-looking non-canonical hosts such as 127.1 may be interpreted
+        # as IP addresses by lower networking layers. Reject them rather than
+        # allowing them to fall through as ordinary DNS hostnames.
+        if all(character in "0123456789." for character in hostname):
+            raise SourceRetrievalError(
+                "Source URL contains a non-canonical numeric network destination."
+            )
+
+        if resolver is not None:
+            try:
+                resolved_addresses = resolver(hostname)
+            except SourceRetrievalError:
+                raise
+            except Exception as exc:
+                raise SourceRetrievalError(
+                    "Source hostname could not be resolved safely."
+                ) from exc
+
+            if not resolved_addresses:
+                raise SourceRetrievalError(
+                    "Source hostname did not resolve to an eligible address."
+                )
+
+            for resolved in resolved_addresses:
+                try:
+                    resolved_address = ipaddress.ip_address(resolved)
+                except ValueError as exc:
+                    raise SourceRetrievalError(
+                        "Source hostname resolved to an invalid network address."
+                    ) from exc
+
+                if not resolved_address.is_global:
+                    raise SourceRetrievalError(
+                        "Source hostname resolves to a non-public network destination."
+                    )
+    else:
+        if not address.is_global:
+            raise SourceRetrievalError(
+                "Source URL targets a non-public network destination."
+            )
+
+
+def safe_http_fetch(url: str, http_get, resolver=None) -> DownloadedSource:
+    """Validate source URLs around delegation to an HTTP client.
+
+    Both requested and final URLs must be eligible HTTP(S) locations. When a
+    resolver is supplied, hostname resolutions must contain only public IP
+    addresses before HTTP delegation.
+    """
+    _validate_http_url(url, resolver=resolver)
+
+    downloaded = http_get(url)
+
+    if not isinstance(downloaded, DownloadedSource):
+        raise TypeError("HTTP client must return DownloadedSource.")
+
+    _validate_http_url(downloaded.final_url, resolver=resolver)
+
+    return downloaded

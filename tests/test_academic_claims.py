@@ -639,6 +639,335 @@ check(
     "unexpected programming error escapes retrieval-failure handling",
 )
 
+
+print("\n[15] downloaded source remains distinct from retrieved scholarly text")
+
+downloaded = academic_claims.DownloadedSource(
+    status="downloaded",
+    requested_url="https://example.org/article",
+    final_url="https://publisher.example.org/article",
+    content_type="text/html; charset=utf-8",
+    content=b"<html><body>Publisher page</body></html>",
+    reasons=["Synthetic HTTP download."],
+)
+
+check(
+    downloaded.status == "downloaded",
+    "successful HTTP transfer has explicit downloaded status",
+)
+
+check(
+    downloaded.requested_url == "https://example.org/article",
+    "download preserves requested URL",
+)
+
+check(
+    downloaded.final_url == "https://publisher.example.org/article",
+    "download preserves final URL after redirect",
+)
+
+check(
+    downloaded.content_type == "text/html; charset=utf-8",
+    "download preserves response content type",
+)
+
+check(
+    downloaded.content == b"<html><body>Publisher page</body></html>",
+    "download preserves raw response bytes",
+)
+
+check(
+    not hasattr(downloaded, "text"),
+    "downloaded bytes are not prematurely represented as scholarly text",
+)
+
+
+print("\n[16] downloader rejects non-HTTP source URLs before network access")
+
+unsafe_http_calls = []
+
+
+def should_not_fetch_unsafe(url):
+    unsafe_http_calls.append(url)
+    raise AssertionError("HTTP client must not receive unsafe URL")
+
+
+unsafe_urls = [
+    "file:///etc/passwd",
+    "ftp://example.org/article.pdf",
+    "javascript:alert(1)",
+    "/local/path/article.pdf",
+    "not-a-url",
+]
+
+unsafe_results = []
+
+for unsafe_url in unsafe_urls:
+    try:
+        result = academic_claims.safe_http_fetch(
+            unsafe_url,
+            http_get=should_not_fetch_unsafe,
+        )
+    except academic_claims.SourceRetrievalError:
+        unsafe_results.append(True)
+    else:
+        unsafe_results.append(False)
+
+check(
+    all(unsafe_results),
+    "non-HTTP source URLs are rejected as retrieval errors",
+)
+
+check(
+    unsafe_http_calls == [],
+    "unsafe source URLs never reach HTTP client",
+)
+
+
+print("\n[17] eligible HTTP source URLs reach downloader unchanged")
+
+eligible_http_calls = []
+
+
+def fake_http_get(url):
+    eligible_http_calls.append(url)
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url=url,
+        content_type="application/pdf",
+        content=b"%PDF-synthetic",
+        reasons=["Synthetic successful HTTP response."],
+    )
+
+
+https_download = academic_claims.safe_http_fetch(
+    "https://example.org/article.pdf",
+    http_get=fake_http_get,
+)
+
+http_download = academic_claims.safe_http_fetch(
+    "http://example.org/article.pdf",
+    http_get=fake_http_get,
+)
+
+check(
+    eligible_http_calls == [
+        "https://example.org/article.pdf",
+        "http://example.org/article.pdf",
+    ],
+    "eligible HTTP(S) URLs reach HTTP client unchanged",
+)
+
+check(
+    https_download.status == "downloaded",
+    "eligible HTTPS source returns downloaded resource",
+)
+
+check(
+    https_download.content_type == "application/pdf",
+    "download preserves HTTP content type",
+)
+
+check(
+    https_download.content == b"%PDF-synthetic",
+    "download preserves raw HTTP bytes",
+)
+
+check(
+    http_download.requested_url == "http://example.org/article.pdf",
+    "eligible HTTP source remains supported",
+)
+
+
+print("\n[18] downloader rejects ineligible final URL after redirect")
+
+
+def fake_unsafe_redirect(url):
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url="file:///etc/passwd",
+        content_type="text/plain",
+        content=b"synthetic unsafe redirect content",
+        reasons=["Synthetic redirect."],
+    )
+
+
+unsafe_redirect_rejected = False
+
+try:
+    academic_claims.safe_http_fetch(
+        "https://example.org/article",
+        http_get=fake_unsafe_redirect,
+    )
+except academic_claims.SourceRetrievalError:
+    unsafe_redirect_rejected = True
+
+check(
+    unsafe_redirect_rejected,
+    "ineligible final URL is rejected after HTTP delegation",
+)
+
+
+print("\n[19] downloader rejects local and non-public network destinations")
+
+blocked_network_calls = []
+
+
+def should_not_fetch_local(url):
+    blocked_network_calls.append(url)
+    raise AssertionError("HTTP client must not receive local/private URL")
+
+
+blocked_urls = [
+    "http://localhost/article",
+    "http://127.0.0.1/article",
+    "http://127.1/article",
+    "http://0.0.0.0/article",
+    "http://[::1]/article",
+    "http://169.254.169.254/article",
+    "http://10.0.0.1/article",
+    "http://172.16.0.1/article",
+    "http://192.168.1.1/article",
+]
+
+blocked_results = []
+
+for blocked_url in blocked_urls:
+    try:
+        academic_claims.safe_http_fetch(
+            blocked_url,
+            http_get=should_not_fetch_local,
+        )
+    except academic_claims.SourceRetrievalError:
+        blocked_results.append(True)
+    else:
+        blocked_results.append(False)
+
+check(
+    all(blocked_results),
+    "local/private source destinations are rejected",
+)
+
+check(
+    blocked_network_calls == [],
+    "local/private destinations never reach HTTP client",
+)
+
+
+print("\n[20] downloader rejects hostname resolving to non-public address")
+
+dns_http_calls = []
+dns_resolver_calls = []
+
+
+def fake_private_resolver(hostname):
+    dns_resolver_calls.append(hostname)
+    return ["10.23.45.67"]
+
+
+def should_not_fetch_private_dns(url):
+    dns_http_calls.append(url)
+    raise AssertionError("HTTP client must not receive privately resolved hostname")
+
+
+private_dns_rejected = False
+
+try:
+    academic_claims.safe_http_fetch(
+        "https://apparently-public.example/article",
+        http_get=should_not_fetch_private_dns,
+        resolver=fake_private_resolver,
+    )
+except academic_claims.SourceRetrievalError:
+    private_dns_rejected = True
+
+check(
+    dns_resolver_calls == ["apparently-public.example"],
+    "hostname is resolved before HTTP delegation",
+)
+
+check(
+    private_dns_rejected,
+    "hostname resolving to non-public address is rejected",
+)
+
+check(
+    dns_http_calls == [],
+    "privately resolved hostname never reaches HTTP client",
+)
+
+
+print("\n[21] DNS policy requires every resolved address to be public")
+
+public_http_calls = []
+mixed_http_calls = []
+
+
+def fake_public_resolver(hostname):
+    return ["8.8.8.8", "1.1.1.1"]
+
+
+def fake_public_http_get(url):
+    public_http_calls.append(url)
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url=url,
+        content_type="text/html",
+        content=b"<html>synthetic public source</html>",
+        reasons=["Synthetic public download."],
+    )
+
+
+public_download = academic_claims.safe_http_fetch(
+    "https://public-source.example/article",
+    http_get=fake_public_http_get,
+    resolver=fake_public_resolver,
+)
+
+check(
+    public_http_calls == ["https://public-source.example/article"],
+    "hostname resolving only to public addresses reaches HTTP client",
+)
+
+check(
+    public_download.status == "downloaded",
+    "public-only DNS resolution permits download",
+)
+
+
+def fake_mixed_resolver(hostname):
+    return ["8.8.8.8", "10.0.0.4"]
+
+
+def should_not_fetch_mixed(url):
+    mixed_http_calls.append(url)
+    raise AssertionError("mixed public/private resolution must not reach HTTP client")
+
+
+mixed_resolution_rejected = False
+
+try:
+    academic_claims.safe_http_fetch(
+        "https://mixed-source.example/article",
+        http_get=should_not_fetch_mixed,
+        resolver=fake_mixed_resolver,
+    )
+except academic_claims.SourceRetrievalError:
+    mixed_resolution_rejected = True
+
+check(
+    mixed_resolution_rejected,
+    "mixed public/private DNS resolution is rejected",
+)
+
+check(
+    mixed_http_calls == [],
+    "mixed DNS resolution never reaches HTTP client",
+)
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
