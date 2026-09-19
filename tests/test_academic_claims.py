@@ -2287,3 +2287,88 @@ assert canonical_connections == [
 print("PASS: hostname comparison tolerates case and trailing root dot")
 print("PASS: canonical validated hostname remains the HTTP/TLS origin")
 print("PASS: validated address remains the only TCP destination")
+
+print("\n[44] source URLs with embedded credentials are rejected before resolution")
+
+credential_resolutions = []
+
+def credential_resolver(hostname):
+    credential_resolutions.append(hostname)
+    return ["8.8.8.8"]
+
+credential_urls = [
+    "https://user@journal.example/article",
+    "https://user:password@journal.example/article",
+]
+
+for credential_url in credential_urls:
+    try:
+        academic_claims.resolve_validated_http_destination(
+            credential_url,
+            resolver=credential_resolver,
+        )
+    except academic_claims.SourceRetrievalError:
+        pass
+    else:
+        raise AssertionError(
+            f"Credential-bearing source URL must be rejected: {credential_url}"
+        )
+
+assert credential_resolutions == []
+
+print("PASS: username-bearing source URL is rejected")
+print("PASS: username/password source URL is rejected")
+print("PASS: credential-bearing URLs are rejected before DNS resolution")
+
+print("\n[45] malformed source URL ports are rejected before resolution")
+
+malformed_port_resolutions = []
+
+def malformed_port_resolver(hostname):
+    malformed_port_resolutions.append(hostname)
+    return ["8.8.8.8"]
+
+malformed_port_urls = [
+    "https://journal.example:abc/article",
+    "https://journal.example:99999/article",
+]
+
+for malformed_port_url in malformed_port_urls:
+    try:
+        academic_claims.resolve_validated_http_destination(
+            malformed_port_url,
+            resolver=malformed_port_resolver,
+        )
+    except academic_claims.SourceRetrievalError:
+        pass
+    else:
+        raise AssertionError(
+            f"Malformed source URL port must be rejected: {malformed_port_url}"
+        )
+
+assert malformed_port_resolutions == []
+
+print("PASS: non-numeric source URL port is rejected")
+print("PASS: out-of-range source URL port is rejected")
+print("PASS: malformed ports are rejected before DNS resolution")
+
+print("\n[46] valid non-default source URL ports remain permitted")
+
+nondefault_port_resolutions = []
+
+def nondefault_port_resolver(hostname):
+    nondefault_port_resolutions.append(hostname)
+    return ["8.8.8.8"]
+
+nondefault_destination = academic_claims.resolve_validated_http_destination(
+    "https://journal.example:8443/article",
+    resolver=nondefault_port_resolver,
+)
+
+assert nondefault_destination.hostname == "journal.example"
+assert nondefault_destination.addresses == ["8.8.8.8"]
+assert nondefault_port_resolutions == ["journal.example"]
+
+print("PASS: valid non-default HTTPS port is accepted")
+print("PASS: hostname is resolved normally for valid non-default port")
+print("PASS: validated destination retains the approved network address")

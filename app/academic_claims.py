@@ -271,6 +271,18 @@ def resolve_validated_http_destination(
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         raise SourceRetrievalError("Source URL is not an eligible HTTP(S) URL.")
 
+    if parsed.username is not None or parsed.password is not None:
+        raise SourceRetrievalError(
+            "Source URL must not contain embedded credentials."
+        )
+
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise SourceRetrievalError(
+            "Source URL contains an invalid port."
+        ) from exc
+
     hostname = parsed.hostname
 
     if not hostname:
