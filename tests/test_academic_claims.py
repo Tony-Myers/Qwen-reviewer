@@ -2857,3 +2857,64 @@ print("PASS: unretrieved source cannot produce candidate evidence")
 print("PASS: empty claim cannot produce candidate evidence")
 print("PASS: stop-word-only claim cannot produce candidate evidence")
 print("PASS: non-positive passage limit returns no evidence")
+
+print("\n[56] passage locator recognises decimals and paragraph boundaries")
+
+decimal_source = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/decimal",
+    source="openalex",
+    text=(
+        "Background\n"
+        "Jump height was measured before and after training.\n\n"
+        "Results\n"
+        "The observed change was 2.4 cm.\n\n"
+        "Discussion\n"
+        "Jump height findings require cautious interpretation."
+    ),
+    locator="https://cdn.example/decimal.pdf",
+    reasons=["Test retrieved source."],
+)
+
+decimal_evidence = academic_claims.locate_claim_passages(
+    decimal_source,
+    "The observed change was 2.4 cm.",
+    max_passages=1,
+)
+
+assert len(decimal_evidence) == 1
+assert decimal_evidence[0].text == (
+    "Results\n"
+    "The observed change was 2.4 cm."
+)
+
+print("PASS: paragraph boundaries restrict candidate evidence")
+print("PASS: decimal-bearing result paragraph ranks independently")
+
+
+decimal_discriminator_source = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/decimal-discriminator",
+    source="openalex",
+    text=(
+        "Results A\n"
+        "The observed change was 3.7 cm.\n\n"
+        "Results B\n"
+        "The observed change was 2.4 cm."
+    ),
+    locator="https://cdn.example/decimal-discriminator.pdf",
+    reasons=["Test retrieved source."],
+)
+
+decimal_discriminator_evidence = academic_claims.locate_claim_passages(
+    decimal_discriminator_source,
+    "The observed change was 2.4 cm.",
+    max_passages=1,
+)
+
+assert decimal_discriminator_evidence[0].text == (
+    "Results B\n"
+    "The observed change was 2.4 cm."
+)
+
+print("PASS: decimal value itself discriminates otherwise similar passages")

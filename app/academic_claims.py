@@ -125,7 +125,7 @@ def locate_claim_passages(
     }
 
     def terms(value: str) -> set[str]:
-        tokens = re.findall(r"[A-Za-z0-9]+(?:\\.[0-9]+)?", value.lower())
+        tokens = re.findall(r"[A-Za-z0-9]+(?:\.[0-9]+)?", value.lower())
         return {
             token
             for token in tokens
@@ -138,7 +138,7 @@ def locate_claim_passages(
 
     passages = [
         passage.strip()
-        for passage in re.split(r"\\n\\s*\\n", retrieved.text)
+        for passage in re.split(r"\n\s*\n", retrieved.text)
         if passage.strip()
     ]
 
