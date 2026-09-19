@@ -26,6 +26,7 @@ class ClaimEvidence:
     text: str
     locator: str
     source: str
+    page_number: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -129,6 +130,22 @@ def _claim_terms(value: str) -> set[str]:
     }
 
 
+def _is_candidate_overlap(
+    claim_terms: set[str],
+    passage_terms: set[str],
+) -> bool:
+    """Return whether lexical overlap is sufficient for candidate location."""
+    if not claim_terms:
+        return False
+
+    overlap = claim_terms & passage_terms
+
+    if len(overlap) < 2:
+        return False
+
+    return len(overlap) / len(claim_terms) >= 0.25
+
+
 def locate_claim_passages(
     retrieved: RetrievedSource,
     claim: str,
@@ -157,7 +174,7 @@ def locate_claim_passages(
     for index, passage in enumerate(passages):
         passage_terms = _claim_terms(passage)
         overlap = claim_terms & passage_terms
-        if not overlap:
+        if not _is_candidate_overlap(claim_terms, passage_terms):
             continue
 
         numeric_matches = sum(
@@ -177,6 +194,73 @@ def locate_claim_passages(
             source=retrieved.source,
         )
         for _, passage in ranked[:max_passages]
+    ]
+
+
+def locate_claim_passages_in_pages(
+    pages: list[ExtractedPage],
+    claim: str,
+    locator: str,
+    source: str,
+    max_passages: int = 3,
+) -> list[ClaimEvidence]:
+    """Locate candidate passages while preserving physical page provenance."""
+    if not locator or max_passages <= 0:
+        return []
+
+    claim_terms = _claim_terms(claim)
+    if not claim_terms:
+        return []
+
+    ranked = []
+
+    for page_index, page in enumerate(pages):
+        if not page.text:
+            continue
+
+        passages = [
+            passage.strip()
+            for passage in re.split(r"\n\s*\n", page.text)
+            if passage.strip()
+        ]
+
+        for passage_index, passage in enumerate(passages):
+            passage_terms = _claim_terms(passage)
+            overlap = claim_terms & passage_terms
+            if not _is_candidate_overlap(claim_terms, passage_terms):
+                continue
+
+            numeric_matches = sum(
+                1
+                for token in overlap
+                if any(char.isdigit() for char in token)
+            )
+
+            score = (
+                numeric_matches,
+                len(overlap),
+                -page_index,
+                -passage_index,
+            )
+
+            ranked.append(
+                (
+                    score,
+                    page.page_number,
+                    passage,
+                )
+            )
+
+    ranked.sort(reverse=True)
+
+    return [
+        ClaimEvidence(
+            text=passage,
+            locator=locator,
+            source=source,
+            page_number=page_number,
+        )
+        for _, page_number, passage in ranked[:max_passages]
     ]
 
 

@@ -3174,3 +3174,156 @@ else:
 
 print("PASS: unexpected page-aware extraction failure propagates")
 print("PASS: page-aware extraction catches only expected PDF processing errors")
+
+print("\n[61] claim evidence carries optional page provenance")
+
+paged_evidence = academic_claims.ClaimEvidence(
+    text="Mean jump height increased by 2.4 cm.",
+    locator="https://cdn.example/article.pdf",
+    source="openalex",
+    page_number=7,
+)
+
+assert paged_evidence.page_number == 7
+
+paged_payload = paged_evidence.to_dict()
+assert paged_payload["page_number"] == 7
+assert paged_payload["locator"] == "https://cdn.example/article.pdf"
+assert paged_payload["source"] == "openalex"
+
+print("PASS: ClaimEvidence can preserve physical page number")
+print("PASS: page provenance survives serialisation")
+
+
+unpaged_evidence = academic_claims.ClaimEvidence(
+    text="Relevant HTML passage.",
+    locator="https://example.org/article",
+    source="publisher",
+)
+
+assert unpaged_evidence.page_number is None
+assert unpaged_evidence.to_dict()["page_number"] is None
+
+print("PASS: non-paginated evidence remains valid")
+print("PASS: page provenance is optional rather than fabricated")
+
+print("\n[62] page-aware claim location preserves physical page provenance")
+
+page_source = [
+    academic_claims.ExtractedPage(
+        page_number=1,
+        text="Background\nJump performance is commonly assessed in basketball.",
+    ),
+    academic_claims.ExtractedPage(
+        page_number=2,
+        text="",
+    ),
+    academic_claims.ExtractedPage(
+        page_number=3,
+        text=(
+            "Results\n"
+            "Mean jump height increased by 2.4 cm after the intervention."
+        ),
+    ),
+]
+
+page_evidence = academic_claims.locate_claim_passages_in_pages(
+    page_source,
+    "Mean jump height increased by 2.4 cm after the intervention.",
+    locator="https://cdn.example/page-aware.pdf",
+    source="openalex",
+    max_passages=2,
+)
+
+assert page_evidence
+assert isinstance(page_evidence[0], academic_claims.ClaimEvidence)
+assert page_evidence[0].page_number == 3
+assert "2.4 cm" in page_evidence[0].text
+assert page_evidence[0].locator == "https://cdn.example/page-aware.pdf"
+assert page_evidence[0].source == "openalex"
+
+print("PASS: relevant passage retains physical page number")
+print("PASS: empty preceding page does not shift evidence provenance")
+print("PASS: PDF locator survives page-aware claim location")
+print("PASS: scholarly source provenance survives page-aware claim location")
+
+
+no_match_page_evidence = academic_claims.locate_claim_passages_in_pages(
+    page_source,
+    "Sprint velocity increased by 1.8 metres per second.",
+    locator="https://cdn.example/page-aware.pdf",
+    source="openalex",
+)
+
+assert no_match_page_evidence == []
+
+print("PASS: page-aware location returns no evidence when no candidate is located")
+
+print("\n[63] claim location rejects incidental lexical overlap")
+
+incidental_source = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/incidental",
+    source="openalex",
+    text=(
+        "Results\n"
+        "Mean jump height increased by 2.4 cm after the intervention."
+    ),
+    locator="https://cdn.example/incidental.pdf",
+    reasons=["Test retrieved source."],
+)
+
+incidental_claim = "Sprint velocity increased by 1.8 metres per second."
+
+assert academic_claims.locate_claim_passages(
+    incidental_source,
+    incidental_claim,
+) == []
+
+print("PASS: flattened locator rejects one-word incidental overlap")
+
+
+incidental_pages = [
+    academic_claims.ExtractedPage(
+        page_number=3,
+        text=(
+            "Results\n"
+            "Mean jump height increased by 2.4 cm after the intervention."
+        ),
+    ),
+]
+
+assert academic_claims.locate_claim_passages_in_pages(
+    incidental_pages,
+    incidental_claim,
+    locator="https://cdn.example/incidental.pdf",
+    source="openalex",
+) == []
+
+print("PASS: page-aware locator rejects one-word incidental overlap")
+
+
+meaningful_source = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/meaningful",
+    source="openalex",
+    text=(
+        "Results\n"
+        "Sprint velocity increased following the intervention."
+    ),
+    locator="https://cdn.example/meaningful.pdf",
+    reasons=["Test retrieved source."],
+)
+
+meaningful_claim = "Sprint velocity increased after training."
+
+meaningful_evidence = academic_claims.locate_claim_passages(
+    meaningful_source,
+    meaningful_claim,
+)
+
+assert meaningful_evidence
+assert "Sprint velocity increased" in meaningful_evidence[0].text
+
+print("PASS: multiple substantive overlapping terms remain candidate evidence")
+print("PASS: lexical threshold remains a location heuristic, not support assessment")
