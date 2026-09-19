@@ -2372,3 +2372,76 @@ assert nondefault_port_resolutions == ["journal.example"]
 print("PASS: valid non-default HTTPS port is accepted")
 print("PASS: hostname is resolved normally for valid non-default port")
 print("PASS: validated destination retains the approved network address")
+
+print("\n[47] validated HTTP download preserves requested and final source URLs")
+
+download_resolutions = []
+download_requests = []
+
+def download_resolver(hostname):
+    download_resolutions.append(hostname)
+    if hostname == "journal.example":
+        return ["8.8.8.8"]
+    if hostname == "cdn.example":
+        return ["1.1.1.1"]
+    raise AssertionError(f"Unexpected hostname: {hostname}")
+
+def download_requester(url, destination):
+    download_requests.append(
+        (url, destination.hostname, list(destination.addresses))
+    )
+
+    if url == "https://journal.example/article":
+        return academic_claims.HTTPHopResponse(
+            status_code=302,
+            location="https://cdn.example/article.pdf",
+            content_type="text/html",
+            content=b"",
+        )
+
+    if url == "https://cdn.example/article.pdf":
+        return academic_claims.HTTPHopResponse(
+            status_code=200,
+            location=None,
+            content_type="application/pdf",
+            content=b"pdf-content",
+        )
+
+    raise AssertionError(f"Unexpected URL: {url}")
+
+downloaded = academic_claims.download_validated_http_source(
+    "https://journal.example/article",
+    requester=download_requester,
+    resolver=download_resolver,
+)
+
+assert isinstance(downloaded, academic_claims.DownloadedSource)
+assert downloaded.status == "downloaded"
+assert downloaded.requested_url == "https://journal.example/article"
+assert downloaded.final_url == "https://cdn.example/article.pdf"
+assert downloaded.content_type == "application/pdf"
+assert downloaded.content == b"pdf-content"
+
+assert download_resolutions == [
+    "journal.example",
+    "cdn.example",
+]
+
+assert download_requests == [
+    (
+        "https://journal.example/article",
+        "journal.example",
+        ["8.8.8.8"],
+    ),
+    (
+        "https://cdn.example/article.pdf",
+        "cdn.example",
+        ["1.1.1.1"],
+    ),
+]
+
+print("PASS: secure download returns DownloadedSource")
+print("PASS: original requested URL is preserved")
+print("PASS: final redirected URL is preserved")
+print("PASS: final content type and bytes are preserved")
+print("PASS: every download hop uses its independently validated destination")

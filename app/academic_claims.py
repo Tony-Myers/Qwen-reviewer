@@ -667,13 +667,13 @@ def request_validated_http_hop(
         connection.close()
 
 
-def fetch_with_validated_destinations(
+def _fetch_with_validated_destinations_and_final_url(
     url: str,
     requester,
     max_redirects: int = 5,
     resolver=None,
 ):
-    """Follow redirects using the exact destination validated for each hop."""
+    """Follow validated redirects and retain the final requested URL."""
     current_url = url
     redirects_followed = 0
 
@@ -682,7 +682,6 @@ def fetch_with_validated_destinations(
             current_url,
             resolver=resolver,
         )
-
         response = requester(
             current_url,
             destination,
@@ -691,7 +690,7 @@ def fetch_with_validated_destinations(
         status_code = response.status_code
 
         if status_code not in {301, 302, 303, 307, 308}:
-            return response
+            return response, current_url
 
         location = response.location
 
@@ -707,3 +706,43 @@ def fetch_with_validated_destinations(
 
         current_url = urljoin(current_url, location)
         redirects_followed += 1
+
+
+def fetch_with_validated_destinations(
+    url: str,
+    requester,
+    max_redirects: int = 5,
+    resolver=None,
+):
+    """Follow redirects using the exact destination validated for each hop."""
+    response, _ = _fetch_with_validated_destinations_and_final_url(
+        url,
+        requester=requester,
+        max_redirects=max_redirects,
+        resolver=resolver,
+    )
+    return response
+
+
+def download_validated_http_source(
+    url: str,
+    requester=request_validated_http_hop,
+    max_redirects: int = 5,
+    resolver=None,
+) -> DownloadedSource:
+    """Download a source through the validated HTTP retrieval path."""
+    response, final_url = _fetch_with_validated_destinations_and_final_url(
+        url,
+        requester=requester,
+        max_redirects=max_redirects,
+        resolver=resolver,
+    )
+
+    return DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url=final_url,
+        content_type=response.content_type,
+        content=response.content,
+        reasons=["Source bytes were downloaded through validated HTTP retrieval."],
+    )
