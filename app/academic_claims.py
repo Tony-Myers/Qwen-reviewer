@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 import httpcore
 import ipaddress
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 
 @dataclass
@@ -73,6 +73,16 @@ class DownloadedSource:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class HTTPHopResponse:
+    """One HTTP response before redirect handling or source interpretation."""
+
+    status_code: int
+    location: str | None
+    content_type: str | None
+    content: bytes
 
 
 @dataclass
@@ -243,8 +253,19 @@ def retrieve_source_from_location(
 
 
 
-def _validate_http_url(url: str, resolver=None) -> None:
-    """Reject URLs that are not eligible public HTTP(S) source locations."""
+@dataclass
+class ValidatedHTTPDestination:
+    """Canonical hostname and network addresses approved for one HTTP hop."""
+
+    hostname: str
+    addresses: list[str]
+
+
+def resolve_validated_http_destination(
+    url: str,
+    resolver=None,
+) -> ValidatedHTTPDestination:
+    """Validate an HTTP(S) URL and retain its approved network destination."""
     parsed = urlparse(url)
 
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
@@ -271,39 +292,65 @@ def _validate_http_url(url: str, resolver=None) -> None:
                 "Source URL contains a non-canonical numeric network destination."
             )
 
-        if resolver is not None:
-            try:
-                resolved_addresses = resolver(hostname)
-            except SourceRetrievalError:
-                raise
-            except Exception as exc:
-                raise SourceRetrievalError(
-                    "Source hostname could not be resolved safely."
-                ) from exc
-
-            if not resolved_addresses:
-                raise SourceRetrievalError(
-                    "Source hostname did not resolve to an eligible address."
-                )
-
-            for resolved in resolved_addresses:
-                try:
-                    resolved_address = ipaddress.ip_address(resolved)
-                except ValueError as exc:
-                    raise SourceRetrievalError(
-                        "Source hostname resolved to an invalid network address."
-                    ) from exc
-
-                if not resolved_address.is_global:
-                    raise SourceRetrievalError(
-                        "Source hostname resolves to a non-public network destination."
-                    )
-    else:
-        if not address.is_global:
-            raise SourceRetrievalError(
-                "Source URL targets a non-public network destination."
+        if resolver is None:
+            return ValidatedHTTPDestination(
+                hostname=hostname,
+                addresses=[],
             )
 
+        try:
+            resolved_addresses = resolver(hostname)
+        except SourceRetrievalError:
+            raise
+        except Exception as exc:
+            raise SourceRetrievalError(
+                "Source hostname could not be resolved safely."
+            ) from exc
+
+        if not resolved_addresses:
+            raise SourceRetrievalError(
+                "Source hostname did not resolve to an eligible address."
+            )
+
+        validated_addresses = []
+
+        for resolved in resolved_addresses:
+            try:
+                resolved_address = ipaddress.ip_address(resolved)
+            except ValueError as exc:
+                raise SourceRetrievalError(
+                    "Source hostname resolved to an invalid network address."
+                ) from exc
+
+            if not resolved_address.is_global:
+                raise SourceRetrievalError(
+                    "Source hostname resolves to a non-public network destination."
+                )
+
+            validated_addresses.append(str(resolved_address))
+
+        return ValidatedHTTPDestination(
+            hostname=hostname,
+            addresses=validated_addresses,
+        )
+
+    if not address.is_global:
+        raise SourceRetrievalError(
+            "Source URL targets a non-public network destination."
+        )
+
+    return ValidatedHTTPDestination(
+        hostname=hostname,
+        addresses=[str(address)],
+    )
+
+
+def _validate_http_url(url: str, resolver=None) -> None:
+    """Compatibility wrapper for callers that need validation only."""
+    resolve_validated_http_destination(
+        url,
+        resolver=resolver,
+    )
 
 def safe_http_fetch(url: str, http_get, resolver=None) -> DownloadedSource:
     """Validate source URLs around delegation to an HTTP client.
@@ -366,6 +413,58 @@ def fetch_validated_http_source(
     return downloaded
 
 
+class ValidatedAddressSyncBackend(httpcore.SyncBackend):
+    """Connect only to network addresses validated before backend creation.
+
+    DNS resolution is deliberately outside this backend. The HTTP connection
+    retains the original origin hostname for HTTP/TLS semantics, while TCP is
+    delegated only to a supplied canonical public IP address.
+    """
+
+    def __init__(self, validated_addresses: list[str]):
+        super().__init__()
+
+        if not validated_addresses:
+            raise SourceRetrievalError(
+                "Validated-address backend requires at least one network address."
+            )
+
+        addresses = []
+
+        for supplied_address in validated_addresses:
+            try:
+                address = ipaddress.ip_address(supplied_address)
+            except ValueError as exc:
+                raise SourceRetrievalError(
+                    "Validated-address backend received an invalid network address."
+                ) from exc
+
+            if not address.is_global:
+                raise SourceRetrievalError(
+                    "Validated-address backend received a non-public network address."
+                )
+
+            addresses.append(str(address))
+
+        self._validated_addresses = addresses
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options=None,
+    ):
+        return super().connect_tcp(
+            host=self._validated_addresses[0],
+            port=port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+
 class PinnedSyncBackend(httpcore.SyncBackend):
     """Pin HTTP TCP connections to a validated public IP address.
 
@@ -418,3 +517,173 @@ class PinnedSyncBackend(httpcore.SyncBackend):
             local_address=local_address,
             socket_options=socket_options,
         )
+
+def fetch_with_validated_redirects(
+    url: str,
+    requester,
+    max_redirects: int = 5,
+    resolver=None,
+):
+    """Follow redirects only after validating each destination URL."""
+    current_url = url
+    redirects_followed = 0
+
+    while True:
+        _validate_http_url(current_url, resolver=resolver)
+        response = requester(current_url)
+
+        status_code = response["status_code"]
+
+        if status_code not in {301, 302, 303, 307, 308}:
+            return response
+
+        location = response.get("location")
+
+        if not location:
+            raise SourceRetrievalError(
+                "Redirect response did not provide a destination."
+            )
+
+        if redirects_followed >= max_redirects:
+            raise SourceRetrievalError(
+                "Source retrieval exceeded the redirect limit."
+            )
+
+        next_url = urljoin(current_url, location)
+
+        current_url = next_url
+        redirects_followed += 1
+
+
+def request_validated_http_hop(
+    url: str,
+    destination: ValidatedHTTPDestination,
+    connection_factory=httpcore.HTTPConnection,
+    max_bytes: int = 20 * 1024 * 1024,
+) -> HTTPHopResponse:
+    """Issue one HTTP GET using only the already-validated destination."""
+    if max_bytes < 0:
+        raise ValueError("max_bytes must not be negative.")
+
+    parsed = urlparse(url)
+
+    scheme = parsed.scheme.lower()
+
+    if scheme not in {"http", "https"}:
+        raise SourceRetrievalError(
+            "Validated HTTP hop requires an HTTP(S) URL."
+        )
+
+    if not destination.addresses:
+        raise SourceRetrievalError(
+            "Validated HTTP hop requires approved network addresses."
+        )
+
+    default_port = 443 if scheme == "https" else 80
+    port = parsed.port or default_port
+
+    origin = httpcore.Origin(
+        scheme=scheme.encode("ascii"),
+        host=destination.hostname.encode("idna"),
+        port=port,
+    )
+
+    backend = ValidatedAddressSyncBackend(
+        validated_addresses=destination.addresses,
+    )
+
+    connection = connection_factory(
+        origin=origin,
+        network_backend=backend,
+        http1=True,
+        http2=False,
+    )
+
+    request = httpcore.Request(
+        method="GET",
+        url=url,
+    )
+
+    response = None
+
+    try:
+        response = connection.handle_request(request)
+
+        location = None
+        content_type = None
+
+        for name, value in response.headers:
+            header_name = name.lower()
+
+            if header_name == b"location":
+                location = value.decode("latin-1")
+            elif header_name == b"content-type":
+                content_type = value.decode("latin-1")
+
+        chunks = []
+        total_bytes = 0
+
+        for chunk in response.iter_stream():
+            total_bytes += len(chunk)
+
+            if total_bytes > max_bytes:
+                raise SourceRetrievalError(
+                    "HTTP response exceeded the maximum permitted body size."
+                )
+
+            chunks.append(chunk)
+
+        content = b"".join(chunks)
+
+        return HTTPHopResponse(
+            status_code=response.status,
+            location=location,
+            content_type=content_type,
+            content=content,
+        )
+    finally:
+        if response is not None:
+            response.close()
+        connection.close()
+
+
+def fetch_with_validated_destinations(
+    url: str,
+    requester,
+    max_redirects: int = 5,
+    resolver=None,
+):
+    """Follow redirects using the exact destination validated for each hop."""
+    current_url = url
+    redirects_followed = 0
+
+    while True:
+        destination = resolve_validated_http_destination(
+            current_url,
+            resolver=resolver,
+        )
+
+        response = requester(
+            current_url,
+            destination,
+        )
+
+        status_code = response["status_code"]
+
+        if status_code not in {301, 302, 303, 307, 308}:
+            return response
+
+        location = response.get("location")
+
+        if not location:
+            raise SourceRetrievalError(
+                "Redirect response did not provide a destination."
+            )
+
+        if redirects_followed >= max_redirects:
+            raise SourceRetrievalError(
+                "Source retrieval exceeded the redirect limit."
+            )
+
+        current_url = urljoin(current_url, location)
+        redirects_followed += 1

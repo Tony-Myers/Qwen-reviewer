@@ -1253,3 +1253,743 @@ assert tls_hostnames == ["journal.example"]
 
 print("PASS: httpcore sends original origin hostname to network backend")
 print("PASS: httpcore preserves original hostname as TLS server_hostname")
+
+print("\n[27] redirect destination is validated before the next request")
+
+redirect_requests = []
+
+def redirect_requester(url):
+    redirect_requests.append(url)
+
+    if len(redirect_requests) == 1:
+        return {
+            "status_code": 302,
+            "location": "http://127.0.0.1/private",
+            "content_type": "text/html",
+            "content": b"",
+        }
+
+    raise AssertionError(
+        "Unsafe redirect destination must never receive a request."
+    )
+
+try:
+    academic_claims.fetch_with_validated_redirects(
+        "https://journal.example/article",
+        requester=redirect_requester,
+    )
+except academic_claims.SourceRetrievalError:
+    pass
+else:
+    raise AssertionError(
+        "Redirect to non-public destination must be rejected."
+    )
+
+assert redirect_requests == [
+    "https://journal.example/article"
+]
+
+print("PASS: initial eligible source is requested")
+print("PASS: unsafe redirect is rejected before a second request")
+
+print("\n[28] redirect hostname is resolved and validated before next request")
+
+dns_redirect_requests = []
+dns_redirect_resolutions = []
+
+def dns_redirect_requester(url):
+    dns_redirect_requests.append(url)
+
+    if len(dns_redirect_requests) == 1:
+        return {
+            "status_code": 302,
+            "location": "https://redirect.example/private",
+            "content_type": "text/html",
+            "content": b"",
+        }
+
+    raise AssertionError(
+        "Privately resolved redirect destination must never receive a request."
+    )
+
+def dns_redirect_resolver(hostname):
+    dns_redirect_resolutions.append(hostname)
+
+    if hostname == "journal.example":
+        return ["8.8.8.8"]
+
+    if hostname == "redirect.example":
+        return ["10.0.0.7"]
+
+    raise AssertionError(f"Unexpected hostname: {hostname}")
+
+try:
+    academic_claims.fetch_with_validated_redirects(
+        "https://journal.example/article",
+        requester=dns_redirect_requester,
+        resolver=dns_redirect_resolver,
+    )
+except academic_claims.SourceRetrievalError:
+    pass
+else:
+    raise AssertionError(
+        "Redirect hostname resolving privately must be rejected."
+    )
+
+assert dns_redirect_requests == [
+    "https://journal.example/article"
+]
+
+assert dns_redirect_resolutions == [
+    "journal.example",
+    "redirect.example",
+]
+
+print("PASS: initial hostname is resolved and validated")
+print("PASS: redirect hostname is resolved before second request")
+print("PASS: privately resolved redirect never reaches requester")
+
+print("\n[29] safe relative redirect is resolved once per requested hop")
+
+relative_redirect_requests = []
+relative_redirect_resolutions = []
+
+def relative_redirect_requester(url):
+    relative_redirect_requests.append(url)
+
+    if url == "https://journal.example/articles/123":
+        return {
+            "status_code": 302,
+            "location": "../pdf/123.pdf",
+            "content_type": "text/html",
+            "content": b"",
+        }
+
+    if url == "https://journal.example/pdf/123.pdf":
+        return {
+            "status_code": 200,
+            "location": None,
+            "content_type": "application/pdf",
+            "content": b"%PDF-test",
+        }
+
+    raise AssertionError(f"Unexpected request URL: {url}")
+
+def relative_redirect_resolver(hostname):
+    relative_redirect_resolutions.append(hostname)
+
+    if hostname == "journal.example":
+        return ["8.8.8.8"]
+
+    raise AssertionError(f"Unexpected hostname: {hostname}")
+
+relative_result = academic_claims.fetch_with_validated_redirects(
+    "https://journal.example/articles/123",
+    requester=relative_redirect_requester,
+    resolver=relative_redirect_resolver,
+)
+
+assert relative_redirect_requests == [
+    "https://journal.example/articles/123",
+    "https://journal.example/pdf/123.pdf",
+]
+
+assert relative_redirect_resolutions == [
+    "journal.example",
+    "journal.example",
+]
+
+assert relative_result["status_code"] == 200
+assert relative_result["content_type"] == "application/pdf"
+assert relative_result["content"] == b"%PDF-test"
+
+print("PASS: relative redirect is resolved against current URL")
+print("PASS: both eligible URLs are requested in order")
+print("PASS: each requested hop is resolved and validated exactly once")
+print("PASS: final non-redirect response is returned")
+
+print("\n[30] redirect limit is enforced before another request")
+
+limit_requests = []
+limit_resolutions = []
+
+def limit_requester(url):
+    limit_requests.append(url)
+
+    hop = len(limit_requests)
+
+    return {
+        "status_code": 302,
+        "location": f"/hop-{hop}",
+        "content_type": "text/html",
+        "content": b"",
+    }
+
+def limit_resolver(hostname):
+    limit_resolutions.append(hostname)
+
+    if hostname == "journal.example":
+        return ["8.8.8.8"]
+
+    raise AssertionError(f"Unexpected hostname: {hostname}")
+
+try:
+    academic_claims.fetch_with_validated_redirects(
+        "https://journal.example/start",
+        requester=limit_requester,
+        resolver=limit_resolver,
+        max_redirects=2,
+    )
+except academic_claims.SourceRetrievalError:
+    pass
+else:
+    raise AssertionError(
+        "Redirect chain beyond configured limit must be rejected."
+    )
+
+assert limit_requests == [
+    "https://journal.example/start",
+    "https://journal.example/hop-1",
+    "https://journal.example/hop-2",
+]
+
+assert limit_resolutions == [
+    "journal.example",
+    "journal.example",
+    "journal.example",
+]
+
+print("PASS: configured number of redirects is permitted")
+print("PASS: redirect beyond configured limit is rejected")
+print("PASS: no request is made beyond redirect limit")
+
+print("\n[31] validated-address backend performs no DNS resolution")
+
+parent_connection_calls = []
+
+original_parent_connect_tcp = httpcore.SyncBackend.connect_tcp
+
+def recording_parent_connect_tcp(
+    self,
+    host,
+    port,
+    timeout=None,
+    local_address=None,
+    socket_options=None,
+):
+    parent_connection_calls.append(
+        {
+            "host": host,
+            "port": port,
+            "timeout": timeout,
+            "local_address": local_address,
+            "socket_options": socket_options,
+        }
+    )
+    return "validated-stream"
+
+httpcore.SyncBackend.connect_tcp = recording_parent_connect_tcp
+
+try:
+    backend = academic_claims.ValidatedAddressSyncBackend(
+        validated_addresses=["8.8.8.8"]
+    )
+
+    stream = backend.connect_tcp(
+        host="journal.example",
+        port=443,
+        timeout=5.0,
+        local_address=None,
+        socket_options=[(6, 1, 1)],
+    )
+finally:
+    httpcore.SyncBackend.connect_tcp = original_parent_connect_tcp
+
+assert stream == "validated-stream"
+
+assert parent_connection_calls == [
+    {
+        "host": "8.8.8.8",
+        "port": 443,
+        "timeout": 5.0,
+        "local_address": None,
+        "socket_options": [(6, 1, 1)],
+    }
+]
+
+print("PASS: validated-address backend requires no resolver")
+print("PASS: original hostname is never delegated for TCP resolution")
+print("PASS: supplied validated IP is the TCP destination")
+
+print("\n[32] URL validation returns the exact approved network destination")
+
+destination_resolutions = []
+
+def destination_resolver(hostname):
+    destination_resolutions.append(hostname)
+
+    if hostname == "journal.example":
+        return ["8.8.8.8", "1.1.1.1"]
+
+    raise AssertionError(f"Unexpected hostname: {hostname}")
+
+destination = academic_claims.resolve_validated_http_destination(
+    "https://Journal.Example./article.pdf",
+    resolver=destination_resolver,
+)
+
+assert destination.hostname == "journal.example"
+assert destination.addresses == ["8.8.8.8", "1.1.1.1"]
+assert destination_resolutions == ["journal.example"]
+
+print("PASS: URL hostname is normalised")
+print("PASS: hostname is resolved exactly once")
+print("PASS: validated addresses are retained rather than discarded")
+
+print("\n[33] one DNS resolution supplies the validated connection boundary")
+
+join_resolutions = []
+join_connections = []
+
+def join_resolver(hostname):
+    join_resolutions.append(hostname)
+
+    if hostname == "journal.example":
+        return ["8.8.8.8", "1.1.1.1"]
+
+    raise AssertionError(f"Unexpected hostname: {hostname}")
+
+def join_connection_adapter(url, hostname, validated_addresses):
+    join_connections.append(
+        {
+            "url": url,
+            "hostname": hostname,
+            "validated_addresses": list(validated_addresses),
+        }
+    )
+
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url=url,
+        content_type="application/pdf",
+        content=b"source-content",
+        reasons=[],
+    )
+
+join_url = "https://journal.example/article.pdf"
+
+join_destination = academic_claims.resolve_validated_http_destination(
+    join_url,
+    resolver=join_resolver,
+)
+
+join_downloaded = academic_claims.fetch_validated_http_source(
+    join_url,
+    hostname=join_destination.hostname,
+    validated_addresses=join_destination.addresses,
+    connection_adapter=join_connection_adapter,
+)
+
+assert join_resolutions == ["journal.example"]
+
+assert join_connections == [
+    {
+        "url": "https://journal.example/article.pdf",
+        "hostname": "journal.example",
+        "validated_addresses": ["8.8.8.8", "1.1.1.1"],
+    }
+]
+
+assert join_downloaded.content == b"source-content"
+assert join_downloaded.content_type == "application/pdf"
+assert join_downloaded.final_url == join_url
+
+print("PASS: hostname is resolved exactly once")
+print("PASS: exact validated addresses reach the connection boundary")
+print("PASS: connection boundary performs no additional DNS resolution")
+print("PASS: downloaded source is returned unchanged")
+
+print("\n[34] redirect controller passes its validated destination to requester")
+
+aware_resolutions = []
+aware_requests = []
+
+def aware_resolver(hostname):
+    aware_resolutions.append(hostname)
+
+    if hostname == "journal.example":
+        return ["8.8.8.8"]
+
+    if hostname == "cdn.example":
+        return ["1.1.1.1"]
+
+    raise AssertionError(f"Unexpected hostname: {hostname}")
+
+def aware_requester(url, destination):
+    aware_requests.append(
+        {
+            "url": url,
+            "hostname": destination.hostname,
+            "addresses": list(destination.addresses),
+        }
+    )
+
+    if url == "https://journal.example/article":
+        return {
+            "status_code": 302,
+            "location": "https://cdn.example/article.pdf",
+        }
+
+    if url == "https://cdn.example/article.pdf":
+        return {
+            "status_code": 200,
+            "location": None,
+        }
+
+    raise AssertionError(f"Unexpected URL: {url}")
+
+aware_response = academic_claims.fetch_with_validated_destinations(
+    "https://journal.example/article",
+    requester=aware_requester,
+    resolver=aware_resolver,
+)
+
+assert aware_resolutions == [
+    "journal.example",
+    "cdn.example",
+]
+
+assert aware_requests == [
+    {
+        "url": "https://journal.example/article",
+        "hostname": "journal.example",
+        "addresses": ["8.8.8.8"],
+    },
+    {
+        "url": "https://cdn.example/article.pdf",
+        "hostname": "cdn.example",
+        "addresses": ["1.1.1.1"],
+    },
+]
+
+assert aware_response["status_code"] == 200
+
+print("PASS: each redirect hop is resolved exactly once")
+print("PASS: requester receives the destination validated for that hop")
+print("PASS: redirected host receives its own validated destination")
+
+print("\n[35] validated-address backend pins TCP while preserving TLS hostname")
+
+validated_origin_hosts = []
+validated_tcp_hosts = []
+validated_tls_hostnames = []
+
+class ValidatedRecordingStream(httpcore.NetworkStream):
+    def read(self, max_bytes, timeout=None):
+        return b""
+
+    def write(self, buffer, timeout=None):
+        pass
+
+    def close(self):
+        pass
+
+    def start_tls(
+        self,
+        ssl_context,
+        server_hostname=None,
+        timeout=None,
+    ):
+        validated_tls_hostnames.append(server_hostname)
+        return self
+
+    def get_extra_info(self, info):
+        return None
+
+original_validated_parent_connect_tcp = httpcore.SyncBackend.connect_tcp
+
+def validated_recording_parent_connect_tcp(
+    self,
+    host,
+    port,
+    timeout=None,
+    local_address=None,
+    socket_options=None,
+):
+    validated_tcp_hosts.append(host)
+    return ValidatedRecordingStream()
+
+httpcore.SyncBackend.connect_tcp = validated_recording_parent_connect_tcp
+
+try:
+    validated_backend = academic_claims.ValidatedAddressSyncBackend(
+        validated_addresses=["8.8.8.8"]
+    )
+
+    original_backend_connect_tcp = validated_backend.connect_tcp
+
+    def recording_validated_connect_tcp(
+        host,
+        port,
+        timeout=None,
+        local_address=None,
+        socket_options=None,
+    ):
+        validated_origin_hosts.append(host)
+        return original_backend_connect_tcp(
+            host=host,
+            port=port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+    validated_backend.connect_tcp = recording_validated_connect_tcp
+
+    validated_origin = httpcore.Origin(
+        scheme=b"https",
+        host=b"journal.example",
+        port=443,
+    )
+
+    validated_connection = httpcore.HTTPConnection(
+        origin=validated_origin,
+        network_backend=validated_backend,
+        http1=True,
+        http2=False,
+    )
+
+    validated_request = httpcore.Request(
+        method="GET",
+        url="https://journal.example/article.pdf",
+    )
+
+    try:
+        validated_connection.handle_request(validated_request)
+    except Exception:
+        # The synthetic stream does not implement an HTTP response.
+        # We only need origin, TCP destination, and TLS setup.
+        pass
+finally:
+    httpcore.SyncBackend.connect_tcp = original_validated_parent_connect_tcp
+
+assert validated_origin_hosts == ["journal.example"]
+assert validated_tcp_hosts == ["8.8.8.8"]
+assert validated_tls_hostnames == ["journal.example"]
+
+print("PASS: httpcore presents original hostname to validated backend")
+print("PASS: TCP connection is pinned to validated numeric IP")
+print("PASS: TLS authentication retains original hostname")
+
+print("\n[36] HTTP hop response preserves redirect and payload metadata")
+
+hop = academic_claims.HTTPHopResponse(
+    status_code=302,
+    location="../article.pdf",
+    content_type="text/html; charset=utf-8",
+    content=b"redirect body",
+)
+
+assert hop.status_code == 302
+assert hop.location == "../article.pdf"
+assert hop.content_type == "text/html; charset=utf-8"
+assert hop.content == b"redirect body"
+
+print("PASS: hop status is retained")
+print("PASS: redirect location is retained")
+print("PASS: content type is retained")
+print("PASS: response bytes are retained")
+
+print("\n[37] validated single-hop requester builds and translates HTTP request")
+
+single_hop_connections = []
+single_hop_requests = []
+
+class FakeHopResponse:
+    status = 302
+    headers = [
+        (b"location", b"../article.pdf"),
+        (b"content-type", b"text/html; charset=utf-8"),
+    ]
+
+    def iter_stream(self):
+        yield b"redirect-body"
+
+    def close(self):
+        pass
+
+class FakeHopConnection:
+    def handle_request(self, request):
+        single_hop_requests.append(request)
+        return FakeHopResponse()
+
+    def close(self):
+        pass
+
+def fake_connection_factory(origin, network_backend, http1, http2):
+    single_hop_connections.append(
+        {
+            "origin": origin,
+            "network_backend": network_backend,
+            "http1": http1,
+            "http2": http2,
+        }
+    )
+    return FakeHopConnection()
+
+single_hop_destination = academic_claims.ValidatedHTTPDestination(
+    hostname="journal.example",
+    addresses=["8.8.8.8"],
+)
+
+single_hop_response = academic_claims.request_validated_http_hop(
+    "https://journal.example/articles/123?download=1",
+    destination=single_hop_destination,
+    connection_factory=fake_connection_factory,
+)
+
+assert len(single_hop_connections) == 1
+
+single_hop_connection = single_hop_connections[0]
+
+assert single_hop_connection["origin"] == httpcore.Origin(
+    scheme=b"https",
+    host=b"journal.example",
+    port=443,
+)
+
+assert isinstance(
+    single_hop_connection["network_backend"],
+    academic_claims.ValidatedAddressSyncBackend,
+)
+
+assert single_hop_connection["http1"] is True
+assert single_hop_connection["http2"] is False
+
+assert len(single_hop_requests) == 1
+
+single_hop_request = single_hop_requests[0]
+
+assert single_hop_request.method == b"GET"
+assert single_hop_request.url.scheme == b"https"
+assert single_hop_request.url.host == b"journal.example"
+assert single_hop_request.url.port is None
+assert single_hop_request.url.target == b"/articles/123?download=1"
+
+assert single_hop_response == academic_claims.HTTPHopResponse(
+    status_code=302,
+    location="../article.pdf",
+    content_type="text/html; charset=utf-8",
+    content=b"redirect-body",
+)
+
+print("PASS: original HTTP origin is retained")
+print("PASS: validated-address backend is installed")
+print("PASS: requester issues exactly one GET with path and query")
+print("PASS: requester does not follow redirect itself")
+print("PASS: response headers and bytes become HTTPHopResponse")
+
+print("\n[38] single-hop requester enforces maximum body size while streaming")
+
+bounded_response_closed = []
+bounded_connection_closed = []
+
+class OversizedHopResponse:
+    status = 200
+    headers = [
+        (b"content-type", b"application/pdf"),
+    ]
+
+    def iter_stream(self):
+        yield b"12345"
+        yield b"67890"
+        yield b"X"
+
+    def close(self):
+        bounded_response_closed.append(True)
+
+class OversizedHopConnection:
+    def handle_request(self, request):
+        return OversizedHopResponse()
+
+    def close(self):
+        bounded_connection_closed.append(True)
+
+def oversized_connection_factory(origin, network_backend, http1, http2):
+    return OversizedHopConnection()
+
+oversized_destination = academic_claims.ValidatedHTTPDestination(
+    hostname="journal.example",
+    addresses=["8.8.8.8"],
+)
+
+try:
+    academic_claims.request_validated_http_hop(
+        "https://journal.example/article.pdf",
+        destination=oversized_destination,
+        connection_factory=oversized_connection_factory,
+        max_bytes=10,
+    )
+except academic_claims.SourceRetrievalError:
+    pass
+else:
+    raise AssertionError(
+        "Response exceeding maximum body size must be rejected."
+    )
+
+assert bounded_response_closed == [True]
+assert bounded_connection_closed == [True]
+
+print("PASS: body larger than configured maximum is rejected")
+print("PASS: oversized response is closed")
+print("PASS: connection is closed after oversized response")
+
+print("\n[39] response exactly at maximum body size is accepted")
+
+exact_response_closed = []
+exact_connection_closed = []
+
+class ExactLimitHopResponse:
+    status = 200
+    headers = [
+        (b"content-type", b"application/pdf"),
+    ]
+
+    def iter_stream(self):
+        yield b"12345"
+        yield b"67890"
+
+    def close(self):
+        exact_response_closed.append(True)
+
+class ExactLimitHopConnection:
+    def handle_request(self, request):
+        return ExactLimitHopResponse()
+
+    def close(self):
+        exact_connection_closed.append(True)
+
+def exact_limit_connection_factory(origin, network_backend, http1, http2):
+    return ExactLimitHopConnection()
+
+exact_limit_destination = academic_claims.ValidatedHTTPDestination(
+    hostname="journal.example",
+    addresses=["8.8.8.8"],
+)
+
+exact_limit_response = academic_claims.request_validated_http_hop(
+    "https://journal.example/article.pdf",
+    destination=exact_limit_destination,
+    connection_factory=exact_limit_connection_factory,
+    max_bytes=10,
+)
+
+assert exact_limit_response.status_code == 200
+assert exact_limit_response.content == b"1234567890"
+assert exact_response_closed == [True]
+assert exact_connection_closed == [True]
+
+print("PASS: body exactly equal to configured maximum is accepted")
+print("PASS: complete body is retained")
+print("PASS: response and connection are closed after success")
