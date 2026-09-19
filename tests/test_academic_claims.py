@@ -2918,3 +2918,175 @@ assert decimal_discriminator_evidence[0].text == (
 )
 
 print("PASS: decimal value itself discriminates otherwise similar passages")
+
+print("\n[57] claim support preparation stops at evidence location")
+
+not_retrieved_for_claim = academic_claims.RetrievedSource(
+    status="not_retrieved",
+    doi="10.1234/state-unretrieved",
+    source="openalex",
+    text=None,
+    locator=None,
+    reasons=["Source could not be retrieved."],
+)
+
+unretrieved_result = academic_claims.prepare_claim_support(
+    not_retrieved_for_claim,
+    "The intervention increased jump height.",
+)
+
+assert isinstance(unretrieved_result, academic_claims.ClaimSupportResult)
+assert unretrieved_result.status == "source_not_retrieved"
+assert unretrieved_result.source_status == "not_retrieved"
+assert unretrieved_result.claim_status == "not_assessed"
+assert unretrieved_result.evidence == []
+assert unretrieved_result.doi == "10.1234/state-unretrieved"
+
+print("PASS: unavailable source remains source_not_retrieved")
+print("PASS: unavailable source does not become a claim judgement")
+
+
+retrieved_without_match = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/state-not-located",
+    source="openalex",
+    text=(
+        "Methods\n"
+        "Participants completed questionnaires at baseline.\n\n"
+        "Discussion\n"
+        "Future research should use larger samples."
+    ),
+    locator="https://cdn.example/not-located.pdf",
+    reasons=["Test retrieved source."],
+)
+
+not_located_result = academic_claims.prepare_claim_support(
+    retrieved_without_match,
+    "Mean sprint velocity increased by 1.8 metres per second.",
+)
+
+assert not_located_result.status == "claim_not_located"
+assert not_located_result.source_status == "retrieved"
+assert not_located_result.claim_status == "not_located"
+assert not_located_result.evidence == []
+assert not_located_result.doi == "10.1234/state-not-located"
+
+print("PASS: retrieved source without candidate evidence becomes claim_not_located")
+
+
+retrieved_with_match = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/state-located",
+    source="openalex",
+    text=(
+        "Methods\n"
+        "Eighteen athletes completed six weeks of training.\n\n"
+        "Results\n"
+        "Mean jump height increased by 2.4 cm after the intervention."
+    ),
+    locator="https://cdn.example/located.pdf",
+    reasons=["Test retrieved source."],
+)
+
+located_result = academic_claims.prepare_claim_support(
+    retrieved_with_match,
+    "Mean jump height increased by 2.4 cm after the intervention.",
+)
+
+assert located_result.status == "claim_located"
+assert located_result.source_status == "retrieved"
+assert located_result.claim_status == "located"
+assert located_result.evidence
+assert "2.4 cm" in located_result.evidence[0].text
+assert located_result.doi == "10.1234/state-located"
+
+assert located_result.status not in {
+    "claim_supported",
+    "claim_partially_supported",
+    "claim_not_supported",
+}
+assert located_result.claim_status not in {
+    "supported",
+    "partially_supported",
+    "not_supported",
+}
+
+print("PASS: located evidence becomes claim_located")
+print("PASS: candidate evidence is preserved for later assessment")
+print("PASS: passage location cannot itself produce a support judgement")
+
+print("\n[58] unusable claim input does not become claim_not_located")
+
+retrieved_for_input_checks = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/input-checks",
+    source="openalex",
+    text=(
+        "Results\n"
+        "Mean jump height increased by 2.4 cm after the intervention."
+    ),
+    locator="https://cdn.example/input-checks.pdf",
+    reasons=["Test retrieved source."],
+)
+
+empty_claim_result = academic_claims.prepare_claim_support(
+    retrieved_for_input_checks,
+    "",
+)
+
+assert empty_claim_result.status == "claim_not_assessed"
+assert empty_claim_result.source_status == "retrieved"
+assert empty_claim_result.claim_status == "not_assessed"
+assert empty_claim_result.evidence == []
+
+print("PASS: empty claim remains not_assessed")
+
+
+stopword_claim_result = academic_claims.prepare_claim_support(
+    retrieved_for_input_checks,
+    "the and of to",
+)
+
+assert stopword_claim_result.status == "claim_not_assessed"
+assert stopword_claim_result.source_status == "retrieved"
+assert stopword_claim_result.claim_status == "not_assessed"
+assert stopword_claim_result.evidence == []
+
+print("PASS: claim without searchable content remains not_assessed")
+
+
+missing_locator_source = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/missing-locator",
+    source="openalex",
+    text="Mean jump height increased by 2.4 cm.",
+    locator=None,
+    reasons=["Synthetic retrieved source without locator."],
+)
+
+missing_locator_result = academic_claims.prepare_claim_support(
+    missing_locator_source,
+    "Mean jump height increased by 2.4 cm.",
+)
+
+assert missing_locator_result.status == "claim_not_assessed"
+assert missing_locator_result.source_status == "retrieved"
+assert missing_locator_result.claim_status == "not_assessed"
+assert missing_locator_result.evidence == []
+
+print("PASS: missing evidence locator remains not_assessed")
+
+
+zero_limit_result = academic_claims.prepare_claim_support(
+    retrieved_for_input_checks,
+    "Mean jump height increased by 2.4 cm.",
+    max_passages=0,
+)
+
+assert zero_limit_result.status == "claim_not_assessed"
+assert zero_limit_result.source_status == "retrieved"
+assert zero_limit_result.claim_status == "not_assessed"
+assert zero_limit_result.evidence == []
+
+print("PASS: disabled passage search remains not_assessed")
+print("PASS: claim_not_located is reserved for an attempted meaningful search")

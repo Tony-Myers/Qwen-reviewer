@@ -104,6 +104,21 @@ class RetrievedSource:
         return asdict(self)
 
 
+def _claim_terms(value: str) -> set[str]:
+    """Return deterministic searchable terms for local claim location."""
+    stop_words = {
+        "a", "an", "and", "are", "as", "at", "be", "by", "for",
+        "from", "in", "is", "it", "of", "on", "or", "that", "the",
+        "this", "to", "was", "were", "with",
+    }
+    tokens = re.findall(r"[A-Za-z0-9]+(?:\.[0-9]+)?", value.lower())
+    return {
+        token
+        for token in tokens
+        if token not in stop_words and (len(token) > 1 or token.isdigit())
+    }
+
+
 def locate_claim_passages(
     retrieved: RetrievedSource,
     claim: str,
@@ -118,21 +133,7 @@ def locate_claim_passages(
     ):
         return []
 
-    stop_words = {
-        "a", "an", "and", "are", "as", "at", "be", "by", "for",
-        "from", "in", "is", "it", "of", "on", "or", "that", "the",
-        "this", "to", "was", "were", "with",
-    }
-
-    def terms(value: str) -> set[str]:
-        tokens = re.findall(r"[A-Za-z0-9]+(?:\.[0-9]+)?", value.lower())
-        return {
-            token
-            for token in tokens
-            if token not in stop_words and (len(token) > 1 or token.isdigit())
-        }
-
-    claim_terms = terms(claim)
+    claim_terms = _claim_terms(claim)
     if not claim_terms:
         return []
 
@@ -144,7 +145,7 @@ def locate_claim_passages(
 
     ranked = []
     for index, passage in enumerate(passages):
-        passage_terms = terms(passage)
+        passage_terms = _claim_terms(passage)
         overlap = claim_terms & passage_terms
         if not overlap:
             continue
@@ -167,6 +168,70 @@ def locate_claim_passages(
         )
         for _, passage in ranked[:max_passages]
     ]
+
+
+def prepare_claim_support(
+    retrieved: RetrievedSource,
+    claim: str,
+    max_passages: int = 3,
+) -> ClaimSupportResult:
+    """Prepare a claim for later support assessment without judging support."""
+    if retrieved.status != "retrieved" or not retrieved.text:
+        return ClaimSupportResult(
+            status="source_not_retrieved",
+            source_status=retrieved.status,
+            claim_status="not_assessed",
+            doi=_normalise_doi(retrieved.doi),
+            evidence=[],
+            reasons=[
+                "Substantive source text was not available for claim location."
+            ],
+        )
+
+    if (
+        not retrieved.locator
+        or max_passages <= 0
+        or not _claim_terms(claim)
+    ):
+        return ClaimSupportResult(
+            status="claim_not_assessed",
+            source_status="retrieved",
+            claim_status="not_assessed",
+            doi=_normalise_doi(retrieved.doi),
+            evidence=[],
+            reasons=[
+                "Claim passage location could not be meaningfully attempted."
+            ],
+        )
+
+    evidence = locate_claim_passages(
+        retrieved,
+        claim,
+        max_passages=max_passages,
+    )
+
+    if not evidence:
+        return ClaimSupportResult(
+            status="claim_not_located",
+            source_status="retrieved",
+            claim_status="not_located",
+            doi=_normalise_doi(retrieved.doi),
+            evidence=[],
+            reasons=[
+                "Source text was retrieved but no candidate claim passage was located."
+            ],
+        )
+
+    return ClaimSupportResult(
+        status="claim_located",
+        source_status="retrieved",
+        claim_status="located",
+        doi=_normalise_doi(retrieved.doi),
+        evidence=evidence,
+        reasons=[
+            "Candidate claim evidence was located but support has not been assessed."
+        ],
+    )
 
 
 def extract_pdf_text(
