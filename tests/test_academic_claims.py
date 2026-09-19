@@ -2549,3 +2549,78 @@ print("PASS: substantive extracted text becomes RetrievedSource")
 print("PASS: final source URL is retained as retrieval locator")
 print("PASS: empty extraction remains not_retrieved")
 print("PASS: successful download alone does not imply successful retrieval")
+
+print("\n[50] PDF extractor preserves page order and translates parsing failure")
+
+class FakePDFPage:
+    def __init__(self, text):
+        self._text = text
+
+    def extract_text(self):
+        return self._text
+
+
+class FakePDFReader:
+    def __init__(self, stream):
+        assert stream.read() == b"%PDF-test"
+        self.pages = [
+            FakePDFPage("First page text."),
+            FakePDFPage(None),
+            FakePDFPage("Third page text."),
+        ]
+
+
+pdf_text = academic_claims.extract_pdf_text(
+    b"%PDF-test",
+    reader_factory=FakePDFReader,
+)
+
+assert pdf_text == "First page text.\n\nThird page text."
+
+print("PASS: PDF bytes are supplied through an in-memory stream")
+print("PASS: extractable pages remain in document order")
+print("PASS: empty PDF pages do not create false textual content")
+print("PASS: extracted pages use deterministic paragraph separation")
+
+
+class FailingPDFReader:
+    def __init__(self, stream):
+        from pypdf.errors import PdfReadError
+        raise PdfReadError("malformed PDF")
+
+
+try:
+    academic_claims.extract_pdf_text(
+        b"not-a-pdf",
+        reader_factory=FailingPDFReader,
+    )
+except academic_claims.SourceRetrievalError:
+    pass
+else:
+    raise AssertionError(
+        "Expected PDF parsing failure to become SourceRetrievalError."
+    )
+
+print("PASS: expected PDF parsing failure becomes SourceRetrievalError")
+
+print("\n[51] PDF extractor does not hide unexpected programming failures")
+
+class UnexpectedlyFailingPDFReader:
+    def __init__(self, stream):
+        raise ValueError("unexpected programming failure")
+
+
+try:
+    academic_claims.extract_pdf_text(
+        b"%PDF-test",
+        reader_factory=UnexpectedlyFailingPDFReader,
+    )
+except ValueError as exc:
+    assert str(exc) == "unexpected programming failure"
+else:
+    raise AssertionError(
+        "Unexpected non-pypdf exception should propagate unchanged."
+    )
+
+print("PASS: unexpected non-pypdf exception propagates unchanged")
+print("PASS: PDF adapter does not convert arbitrary failures into retrieval failures")

@@ -8,9 +8,12 @@ that an academic claim is false or unsupported.
 """
 
 from dataclasses import asdict, dataclass
+from io import BytesIO
 
 import httpcore
 import ipaddress
+from pypdf import PdfReader
+from pypdf.errors import PyPdfError
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -98,6 +101,28 @@ class RetrievedSource:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def extract_pdf_text(
+    content: bytes,
+    reader_factory=PdfReader,
+) -> str:
+    """Extract available text from PDF bytes in document page order."""
+    try:
+        reader = reader_factory(BytesIO(content))
+        pages = []
+
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if isinstance(page_text, str) and page_text.strip():
+                pages.append(page_text.strip())
+
+        return "\n\n".join(pages)
+
+    except PyPdfError as exc:
+        raise SourceRetrievalError(
+            "PDF text extraction failed."
+        ) from exc
 
 
 def extract_downloaded_source(
