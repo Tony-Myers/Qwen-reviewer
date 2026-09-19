@@ -738,6 +738,11 @@ def download_validated_http_source(
         resolver=resolver,
     )
 
+    if not 200 <= response.status_code < 300:
+        raise SourceRetrievalError(
+            f"Source download returned HTTP status {response.status_code}."
+        )
+
     return DownloadedSource(
         status="downloaded",
         requested_url=url,

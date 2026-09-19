@@ -2445,3 +2445,48 @@ print("PASS: original requested URL is preserved")
 print("PASS: final redirected URL is preserved")
 print("PASS: final content type and bytes are preserved")
 print("PASS: every download hop uses its independently validated destination")
+
+print("\n[48] terminal HTTP status determines download success")
+
+def status_resolver(hostname):
+    assert hostname == "journal.example"
+    return ["8.8.8.8"]
+
+def make_status_requester(status_code, content=b"response-body"):
+    def requester(url, destination):
+        return academic_claims.HTTPHopResponse(
+            status_code=status_code,
+            location=None,
+            content_type="application/pdf",
+            content=content,
+        )
+    return requester
+
+for error_status in (404, 500):
+    try:
+        academic_claims.download_validated_http_source(
+            "https://journal.example/article.pdf",
+            requester=make_status_requester(error_status),
+            resolver=status_resolver,
+        )
+    except academic_claims.SourceRetrievalError:
+        pass
+    else:
+        raise AssertionError(
+            f"HTTP {error_status} must not become a successful download."
+        )
+
+partial_download = academic_claims.download_validated_http_source(
+    "https://journal.example/article.pdf",
+    requester=make_status_requester(206, b"partial-pdf"),
+    resolver=status_resolver,
+)
+
+assert partial_download.status == "downloaded"
+assert partial_download.content == b"partial-pdf"
+assert partial_download.content_type == "application/pdf"
+
+print("PASS: terminal HTTP 404 is rejected")
+print("PASS: terminal HTTP 500 is rejected")
+print("PASS: successful 2xx response remains downloadable")
+print("PASS: download layer accepts 2xx rather than requiring exactly 200")
