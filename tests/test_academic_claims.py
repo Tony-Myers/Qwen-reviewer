@@ -3327,3 +3327,98 @@ assert "Sprint velocity increased" in meaningful_evidence[0].text
 
 print("PASS: multiple substantive overlapping terms remain candidate evidence")
 print("PASS: lexical threshold remains a location heuristic, not support assessment")
+
+print("\n[64] page-aware PDF extraction composes with claim location")
+
+class ComposedFakePage:
+    def __init__(self, text):
+        self._text = text
+
+    def extract_text(self):
+        return self._text
+
+
+class ComposedFakeReader:
+    def __init__(self, stream):
+        self.pages = [
+            ComposedFakePage(
+                "Background\n"
+                "Jump performance is commonly assessed in basketball."
+            ),
+            ComposedFakePage(None),
+            ComposedFakePage(
+                "Results\n"
+                "Mean jump height increased by 2.4 cm after the intervention."
+            ),
+        ]
+
+
+composed_evidence = academic_claims.locate_pdf_claim_passages(
+    b"%PDF-synthetic",
+    "Mean jump height increased by 2.4 cm after the intervention.",
+    locator="https://cdn.example/composed.pdf",
+    source="openalex",
+    max_passages=2,
+    reader_factory=ComposedFakeReader,
+)
+
+assert composed_evidence
+assert len(composed_evidence) == 1
+assert isinstance(composed_evidence[0], academic_claims.ClaimEvidence)
+assert composed_evidence[0].page_number == 3
+assert "2.4 cm" in composed_evidence[0].text
+assert composed_evidence[0].locator == "https://cdn.example/composed.pdf"
+assert composed_evidence[0].source == "openalex"
+
+print("PASS: PDF bytes compose directly with page-aware claim location")
+print("PASS: composed evidence preserves physical page number")
+print("PASS: composed evidence preserves source locator")
+print("PASS: composed evidence preserves scholarly source provenance")
+
+print("\n[65] composed PDF claim location preserves extraction failure")
+
+class FailingComposedReader:
+    def __init__(self, stream):
+        raise academic_claims.PyPdfError("synthetic PDF failure")
+
+
+try:
+    academic_claims.locate_pdf_claim_passages(
+        b"%PDF-broken",
+        "Mean jump height increased by 2.4 cm.",
+        locator="https://cdn.example/broken.pdf",
+        source="openalex",
+        reader_factory=FailingComposedReader,
+    )
+except academic_claims.SourceRetrievalError as exc:
+    assert "PDF page text extraction failed" in str(exc)
+else:
+    raise AssertionError(
+        "Expected SourceRetrievalError from failed PDF extraction"
+    )
+
+print("PASS: expected PDF processing failure propagates through composition")
+print("PASS: extraction failure does not become empty candidate evidence")
+
+
+class UnexpectedFailingComposedReader:
+    def __init__(self, stream):
+        raise ValueError("unexpected parser failure")
+
+
+try:
+    academic_claims.locate_pdf_claim_passages(
+        b"%PDF-unexpected",
+        "Mean jump height increased by 2.4 cm.",
+        locator="https://cdn.example/unexpected.pdf",
+        source="openalex",
+        reader_factory=UnexpectedFailingComposedReader,
+    )
+except ValueError as exc:
+    assert str(exc) == "unexpected parser failure"
+else:
+    raise AssertionError(
+        "Expected unexpected extraction failure to propagate unchanged"
+    )
+
+print("PASS: unexpected extraction failure is not hidden by composition")

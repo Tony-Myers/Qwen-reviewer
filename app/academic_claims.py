@@ -264,6 +264,29 @@ def locate_claim_passages_in_pages(
     ]
 
 
+def locate_pdf_claim_passages(
+    content: bytes,
+    claim: str,
+    locator: str,
+    source: str,
+    max_passages: int = 3,
+    reader_factory=PdfReader,
+) -> list[ClaimEvidence]:
+    """Extract PDF pages and locate candidate passages with page provenance."""
+    pages = extract_pdf_pages(
+        content,
+        reader_factory=reader_factory,
+    )
+
+    return locate_claim_passages_in_pages(
+        pages,
+        claim,
+        locator=locator,
+        source=source,
+        max_passages=max_passages,
+    )
+
+
 def prepare_claim_support(
     retrieved: RetrievedSource,
     claim: str,
