@@ -287,6 +287,36 @@ def locate_pdf_claim_passages(
     )
 
 
+def locate_pdf_claim_from_location(
+    location: "SourceLocation",
+    claim: str,
+    downloader,
+    max_passages: int = 3,
+    reader_factory=PdfReader,
+) -> list[ClaimEvidence]:
+    """Download a located PDF and preserve provenance through claim location."""
+    if not location.pdf_url:
+        raise SourceRetrievalError(
+            "No PDF URL is available for page-aware claim location."
+        )
+
+    downloaded = downloader(location.pdf_url)
+
+    if downloaded.status != "downloaded":
+        raise SourceRetrievalError(
+            "PDF source was not successfully downloaded."
+        )
+
+    return locate_pdf_claim_passages(
+        downloaded.content,
+        claim,
+        locator=downloaded.final_url,
+        source=location.source,
+        max_passages=max_passages,
+        reader_factory=reader_factory,
+    )
+
+
 def prepare_claim_support(
     retrieved: RetrievedSource,
     claim: str,

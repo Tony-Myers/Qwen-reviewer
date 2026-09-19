@@ -3422,3 +3422,186 @@ else:
     )
 
 print("PASS: unexpected extraction failure is not hidden by composition")
+
+print("\n[66] downloaded PDF composes with page-aware claim evidence")
+
+download_location = academic_claims.SourceLocation(
+    status="located",
+    doi="10.1234/page-aware-download",
+    source="openalex",
+    landing_page_url="https://example.org/article",
+    pdf_url="https://example.org/original.pdf",
+    is_oa=True,
+    reasons=["Synthetic source location."],
+)
+
+download_calls = []
+
+
+def fake_page_aware_downloader(url):
+    download_calls.append(url)
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url="https://cdn.example/final.pdf",
+        content_type="application/pdf",
+        content=b"%PDF-synthetic",
+        reasons=["Synthetic validated download."],
+    )
+
+
+class DownloadedFakePage:
+    def __init__(self, text):
+        self._text = text
+
+    def extract_text(self):
+        return self._text
+
+
+class DownloadedFakeReader:
+    def __init__(self, stream):
+        self.pages = [
+            DownloadedFakePage(
+                "Background\n"
+                "Jump performance was assessed before the intervention."
+            ),
+            DownloadedFakePage(""),
+            DownloadedFakePage(
+                "Results\n"
+                "Mean jump height increased by 2.4 cm after the intervention."
+            ),
+        ]
+
+
+downloaded_evidence = academic_claims.locate_pdf_claim_from_location(
+    download_location,
+    "Mean jump height increased by 2.4 cm after the intervention.",
+    downloader=fake_page_aware_downloader,
+    reader_factory=DownloadedFakeReader,
+)
+
+assert download_calls == ["https://example.org/original.pdf"]
+assert downloaded_evidence
+assert len(downloaded_evidence) <= 2
+assert downloaded_evidence[0].page_number == 3
+assert "2.4 cm" in downloaded_evidence[0].text
+assert downloaded_evidence[0].locator == "https://cdn.example/final.pdf"
+assert downloaded_evidence[0].source == "openalex"
+
+print("PASS: discovered PDF URL is passed to downloader")
+print("PASS: downloaded PDF composes with page-aware claim location")
+print("PASS: physical page provenance survives downloaded-source composition")
+print("PASS: final validated download URL becomes evidence locator")
+print("PASS: scholarly discovery source remains explicit")
+
+print("\n[67] unavailable PDF source is distinct from no located claim")
+
+no_pdf_location = academic_claims.SourceLocation(
+    status="located",
+    doi="10.1234/no-pdf",
+    source="openalex",
+    landing_page_url="https://example.org/article",
+    pdf_url=None,
+    is_oa=True,
+    reasons=["No PDF URL available."],
+)
+
+unexpected_download_calls = []
+
+
+def should_not_download(url):
+    unexpected_download_calls.append(url)
+    raise AssertionError("Downloader should not be called without a PDF URL")
+
+
+try:
+    academic_claims.locate_pdf_claim_from_location(
+        no_pdf_location,
+        "Mean jump height increased by 2.4 cm.",
+        downloader=should_not_download,
+    )
+except academic_claims.SourceRetrievalError as exc:
+    assert "No PDF URL" in str(exc)
+else:
+    raise AssertionError(
+        "Missing PDF URL should raise SourceRetrievalError"
+    )
+
+assert unexpected_download_calls == []
+
+print("PASS: missing PDF URL is a retrieval failure")
+print("PASS: downloader is not called when no PDF URL exists")
+
+
+failed_download_location = academic_claims.SourceLocation(
+    status="located",
+    doi="10.1234/download-failure",
+    source="openalex",
+    landing_page_url="https://example.org/article",
+    pdf_url="https://example.org/article.pdf",
+    is_oa=True,
+    reasons=["Synthetic source location."],
+)
+
+
+def failed_downloader(url):
+    return academic_claims.DownloadedSource(
+        status="not_retrieved",
+        requested_url=url,
+        final_url=url,
+        content_type=None,
+        content=b"",
+        reasons=["Synthetic download failure."],
+    )
+
+
+try:
+    academic_claims.locate_pdf_claim_from_location(
+        failed_download_location,
+        "Mean jump height increased by 2.4 cm.",
+        downloader=failed_downloader,
+    )
+except academic_claims.SourceRetrievalError as exc:
+    assert "not successfully downloaded" in str(exc)
+else:
+    raise AssertionError(
+        "Failed PDF download should raise SourceRetrievalError"
+    )
+
+print("PASS: failed PDF download remains a retrieval failure")
+
+
+class NoMatchDownloadedReader:
+    def __init__(self, stream):
+        self.pages = [
+            DownloadedFakePage(
+                "Participants completed questionnaires at baseline."
+            ),
+            DownloadedFakePage(
+                "Demographic characteristics are presented descriptively."
+            ),
+        ]
+
+
+def successful_no_match_downloader(url):
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url="https://cdn.example/no-match.pdf",
+        content_type="application/pdf",
+        content=b"%PDF-synthetic",
+        reasons=["Synthetic successful download."],
+    )
+
+
+no_match_evidence = academic_claims.locate_pdf_claim_from_location(
+    failed_download_location,
+    "Mean jump height increased by 2.4 cm.",
+    downloader=successful_no_match_downloader,
+    reader_factory=NoMatchDownloadedReader,
+)
+
+assert no_match_evidence == []
+
+print("PASS: successfully searched PDF may legitimately return no candidate")
+print("PASS: retrieval failure remains distinct from claim not located")
