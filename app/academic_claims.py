@@ -100,6 +100,49 @@ class RetrievedSource:
         return asdict(self)
 
 
+def extract_downloaded_source(
+    downloaded: DownloadedSource,
+    doi: str | None,
+    source: str,
+    extractor,
+) -> RetrievedSource:
+    """Extract substantive text from already-downloaded source bytes.
+
+    The extractor receives only the downloaded bytes. A successful HTTP
+    download does not itself imply successful substantive retrieval.
+    """
+    try:
+        text = extractor(downloaded.content)
+    except SourceRetrievalError:
+        return RetrievedSource(
+            status="not_retrieved",
+            doi=_normalise_doi(doi),
+            source=source,
+            text=None,
+            locator=None,
+            reasons=["Source text extraction failed."],
+        )
+
+    if not isinstance(text, str) or not text.strip():
+        return RetrievedSource(
+            status="not_retrieved",
+            doi=_normalise_doi(doi),
+            source=source,
+            text=None,
+            locator=None,
+            reasons=["Extracted source content was empty."],
+        )
+
+    return RetrievedSource(
+        status="retrieved",
+        doi=_normalise_doi(doi),
+        source=source,
+        text=text,
+        locator=downloaded.final_url,
+        reasons=["Substantive source text was extracted from downloaded content."],
+    )
+
+
 def retrieve_source(doi: str, retriever) -> RetrievedSource:
     """Retrieve scholarly source text using a bibliographic identifier only.
 

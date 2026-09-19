@@ -2490,3 +2490,62 @@ print("PASS: terminal HTTP 404 is rejected")
 print("PASS: terminal HTTP 500 is rejected")
 print("PASS: successful 2xx response remains downloadable")
 print("PASS: download layer accepts 2xx rather than requiring exactly 200")
+
+print("\n[49] downloaded source becomes retrieved only after substantive extraction")
+
+downloaded_pdf = academic_claims.DownloadedSource(
+    status="downloaded",
+    requested_url="https://journal.example/article",
+    final_url="https://cdn.example/article.pdf",
+    content_type="application/pdf",
+    content=b"%PDF-test-content",
+    reasons=["Test download."],
+)
+
+extractor_inputs = []
+
+def substantive_pdf_extractor(content):
+    extractor_inputs.append(content)
+    return "Methods\nParticipants were randomly allocated to two groups."
+
+retrieved_pdf = academic_claims.extract_downloaded_source(
+    downloaded_pdf,
+    doi="10.1234/example",
+    source="openalex",
+    extractor=substantive_pdf_extractor,
+)
+
+assert retrieved_pdf.status == "retrieved"
+assert retrieved_pdf.doi == "10.1234/example"
+assert retrieved_pdf.source == "openalex"
+assert retrieved_pdf.text == (
+    "Methods\nParticipants were randomly allocated to two groups."
+)
+assert retrieved_pdf.locator == "https://cdn.example/article.pdf"
+assert extractor_inputs == [b"%PDF-test-content"]
+
+empty_pdf = academic_claims.DownloadedSource(
+    status="downloaded",
+    requested_url="https://journal.example/empty",
+    final_url="https://cdn.example/empty.pdf",
+    content_type="application/pdf",
+    content=b"%PDF-empty",
+    reasons=["Test download."],
+)
+
+empty_result = academic_claims.extract_downloaded_source(
+    empty_pdf,
+    doi="10.1234/empty",
+    source="openalex",
+    extractor=lambda content: "   ",
+)
+
+assert empty_result.status == "not_retrieved"
+assert empty_result.text is None
+assert empty_result.locator is None
+
+print("PASS: downloaded bytes are passed to extraction")
+print("PASS: substantive extracted text becomes RetrievedSource")
+print("PASS: final source URL is retained as retrieval locator")
+print("PASS: empty extraction remains not_retrieved")
+print("PASS: successful download alone does not imply successful retrieval")
