@@ -1636,16 +1636,20 @@ def aware_requester(url, destination):
     )
 
     if url == "https://journal.example/article":
-        return {
-            "status_code": 302,
-            "location": "https://cdn.example/article.pdf",
-        }
+        return academic_claims.HTTPHopResponse(
+            status_code=302,
+            location="https://cdn.example/article.pdf",
+            content_type=None,
+            content=b"",
+        )
 
     if url == "https://cdn.example/article.pdf":
-        return {
-            "status_code": 200,
-            "location": None,
-        }
+        return academic_claims.HTTPHopResponse(
+            status_code=200,
+            location=None,
+            content_type=None,
+            content=b"",
+        )
 
     raise AssertionError(f"Unexpected URL: {url}")
 
@@ -1673,7 +1677,7 @@ assert aware_requests == [
     },
 ]
 
-assert aware_response["status_code"] == 200
+assert aware_response.status_code == 200
 
 print("PASS: each redirect hop is resolved exactly once")
 print("PASS: requester receives the destination validated for that hop")
@@ -1993,3 +1997,293 @@ assert exact_connection_closed == [True]
 print("PASS: body exactly equal to configured maximum is accepted")
 print("PASS: complete body is retained")
 print("PASS: response and connection are closed after success")
+
+print("\n[40] destination-aware redirect controller accepts typed HTTP hop responses")
+
+typed_redirect_requests = []
+typed_redirect_resolutions = []
+
+def typed_redirect_resolver(hostname):
+    typed_redirect_resolutions.append(hostname)
+
+    if hostname == "journal.example":
+        return ["8.8.8.8"]
+
+    if hostname == "cdn.example":
+        return ["1.1.1.1"]
+
+    raise AssertionError(f"Unexpected hostname: {hostname}")
+
+def typed_redirect_requester(url, destination):
+    typed_redirect_requests.append(
+        (
+            url,
+            destination.hostname,
+            list(destination.addresses),
+        )
+    )
+
+    if url == "https://journal.example/article":
+        return academic_claims.HTTPHopResponse(
+            status_code=302,
+            location="https://cdn.example/article.pdf",
+            content_type="text/html",
+            content=b"",
+        )
+
+    if url == "https://cdn.example/article.pdf":
+        return academic_claims.HTTPHopResponse(
+            status_code=200,
+            location=None,
+            content_type="application/pdf",
+            content=b"pdf-content",
+        )
+
+    raise AssertionError(f"Unexpected URL: {url}")
+
+typed_redirect_response = academic_claims.fetch_with_validated_destinations(
+    "https://journal.example/article",
+    requester=typed_redirect_requester,
+    resolver=typed_redirect_resolver,
+)
+
+assert typed_redirect_response.status_code == 200
+assert typed_redirect_response.content_type == "application/pdf"
+assert typed_redirect_response.content == b"pdf-content"
+
+assert typed_redirect_resolutions == [
+    "journal.example",
+    "cdn.example",
+]
+
+assert typed_redirect_requests == [
+    (
+        "https://journal.example/article",
+        "journal.example",
+        ["8.8.8.8"],
+    ),
+    (
+        "https://cdn.example/article.pdf",
+        "cdn.example",
+        ["1.1.1.1"],
+    ),
+]
+
+print("PASS: typed redirect response is consumed by controller")
+print("PASS: redirect destination is independently resolved and validated")
+print("PASS: final typed HTTP response is returned unchanged")
+
+print("\n[41] redirect controller composes with real validated single-hop requester")
+
+composed_resolutions = []
+composed_connections = []
+composed_requests = []
+
+def composed_resolver(hostname):
+    composed_resolutions.append(hostname)
+
+    if hostname == "journal.example":
+        return ["8.8.8.8"]
+
+    if hostname == "cdn.example":
+        return ["1.1.1.1"]
+
+    raise AssertionError(f"Unexpected hostname: {hostname}")
+
+class ComposedHopResponse:
+    def __init__(self, status, headers, content):
+        self.status = status
+        self.headers = headers
+        self._content = content
+
+    def iter_stream(self):
+        yield self._content
+
+    def close(self):
+        pass
+
+class ComposedHopConnection:
+    def __init__(self, origin, network_backend, http1, http2):
+        self.origin = origin
+        self.network_backend = network_backend
+        composed_connections.append(
+            {
+                "host": origin.host.decode("ascii"),
+                "addresses": list(network_backend._validated_addresses),
+            }
+        )
+
+    def handle_request(self, request):
+        scheme = request.url.scheme.decode("ascii")
+        host = request.url.host.decode("ascii")
+        port = request.url.port
+        target = request.url.target.decode("ascii")
+
+        default_port = (
+            (scheme == "https" and port in {None, 443})
+            or (scheme == "http" and port in {None, 80})
+        )
+        authority = host if default_port else f"{host}:{port}"
+        url = f"{scheme}://{authority}{target}"
+
+        composed_requests.append(url)
+
+        if url == "https://journal.example/article":
+            return ComposedHopResponse(
+                status=302,
+                headers=[
+                    (
+                        b"location",
+                        b"https://cdn.example/article.pdf",
+                    ),
+                    (b"content-type", b"text/html"),
+                ],
+                content=b"",
+            )
+
+        if url == "https://cdn.example/article.pdf":
+            return ComposedHopResponse(
+                status=200,
+                headers=[
+                    (b"content-type", b"application/pdf"),
+                ],
+                content=b"pdf-content",
+            )
+
+        raise AssertionError(f"Unexpected request URL: {url}")
+
+    def close(self):
+        pass
+
+def composed_requester(url, destination):
+    return academic_claims.request_validated_http_hop(
+        url,
+        destination=destination,
+        connection_factory=ComposedHopConnection,
+        max_bytes=1024,
+    )
+
+composed_response = academic_claims.fetch_with_validated_destinations(
+    "https://journal.example/article",
+    requester=composed_requester,
+    resolver=composed_resolver,
+)
+
+assert composed_response.status_code == 200
+assert composed_response.content_type == "application/pdf"
+assert composed_response.content == b"pdf-content"
+
+assert composed_resolutions == [
+    "journal.example",
+    "cdn.example",
+]
+
+assert composed_connections == [
+    {
+        "host": "journal.example",
+        "addresses": ["8.8.8.8"],
+    },
+    {
+        "host": "cdn.example",
+        "addresses": ["1.1.1.1"],
+    },
+]
+
+assert composed_requests == [
+    "https://journal.example/article",
+    "https://cdn.example/article.pdf",
+]
+
+print("PASS: redirect controller invokes real validated single-hop requester")
+print("PASS: each hop retains its original hostname")
+print("PASS: each hop receives only its separately validated address")
+print("PASS: redirect is followed through typed HTTPHopResponse")
+print("PASS: final PDF response survives the complete composed path")
+
+print("\n[42] single-hop requester rejects URL and validated-destination mismatch")
+
+mismatch_connections = []
+
+def mismatch_connection_factory(origin, network_backend, http1, http2):
+    mismatch_connections.append(True)
+    raise AssertionError(
+        "Connection factory must not be reached for mismatched destination."
+    )
+
+mismatched_destination = academic_claims.ValidatedHTTPDestination(
+    hostname="journal.example",
+    addresses=["8.8.8.8"],
+)
+
+try:
+    academic_claims.request_validated_http_hop(
+        "https://other.example/article.pdf",
+        destination=mismatched_destination,
+        connection_factory=mismatch_connection_factory,
+    )
+except academic_claims.SourceRetrievalError:
+    pass
+else:
+    raise AssertionError(
+        "URL hostname differing from validated destination must be rejected."
+    )
+
+assert mismatch_connections == []
+
+print("PASS: URL/destination hostname mismatch is rejected")
+print("PASS: mismatch is rejected before connection construction")
+
+print("\n[43] equivalent canonical hostname forms remain accepted")
+
+canonical_connections = []
+
+class CanonicalHopResponse:
+    status = 200
+    headers = [
+        (b"content-type", b"application/pdf"),
+    ]
+
+    def iter_stream(self):
+        yield b"pdf-content"
+
+    def close(self):
+        pass
+
+class CanonicalHopConnection:
+    def __init__(self, origin, network_backend, http1, http2):
+        canonical_connections.append(
+            {
+                "host": origin.host.decode("ascii"),
+                "addresses": list(network_backend._validated_addresses),
+            }
+        )
+
+    def handle_request(self, request):
+        return CanonicalHopResponse()
+
+    def close(self):
+        pass
+
+canonical_destination = academic_claims.ValidatedHTTPDestination(
+    hostname="journal.example",
+    addresses=["8.8.8.8"],
+)
+
+canonical_response = academic_claims.request_validated_http_hop(
+    "https://Journal.Example./article.pdf",
+    destination=canonical_destination,
+    connection_factory=CanonicalHopConnection,
+)
+
+assert canonical_response.status_code == 200
+assert canonical_response.content == b"pdf-content"
+assert canonical_connections == [
+    {
+        "host": "journal.example",
+        "addresses": ["8.8.8.8"],
+    }
+]
+
+print("PASS: hostname comparison tolerates case and trailing root dot")
+print("PASS: canonical validated hostname remains the HTTP/TLS origin")
+print("PASS: validated address remains the only TCP destination")

@@ -574,6 +574,14 @@ def request_validated_http_hop(
             "Validated HTTP hop requires an HTTP(S) URL."
         )
 
+    request_hostname = (parsed.hostname or "").lower().rstrip(".")
+    destination_hostname = destination.hostname.lower().rstrip(".")
+
+    if not request_hostname or request_hostname != destination_hostname:
+        raise SourceRetrievalError(
+            "HTTP request hostname does not match validated destination."
+        )
+
     if not destination.addresses:
         raise SourceRetrievalError(
             "Validated HTTP hop requires approved network addresses."
@@ -668,12 +676,12 @@ def fetch_with_validated_destinations(
             destination,
         )
 
-        status_code = response["status_code"]
+        status_code = response.status_code
 
         if status_code not in {301, 302, 303, 307, 308}:
             return response
 
-        location = response.get("location")
+        location = response.location
 
         if not location:
             raise SourceRetrievalError(
