@@ -3090,3 +3090,87 @@ assert zero_limit_result.evidence == []
 
 print("PASS: disabled passage search remains not_assessed")
 print("PASS: claim_not_located is reserved for an attempted meaningful search")
+
+print("\n[59] PDF page extraction preserves page identity")
+
+class PageAwareFakePage:
+    def __init__(self, text):
+        self._text = text
+
+    def extract_text(self):
+        return self._text
+
+
+class PageAwareFakeReader:
+    def __init__(self, stream):
+        assert stream.read() == b"%PDF-page-aware"
+        self.pages = [
+            PageAwareFakePage("First page text."),
+            PageAwareFakePage(None),
+            PageAwareFakePage("Third page text."),
+        ]
+
+
+pages = academic_claims.extract_pdf_pages(
+    b"%PDF-page-aware",
+    reader_factory=PageAwareFakeReader,
+)
+
+assert len(pages) == 3
+assert isinstance(pages[0], academic_claims.ExtractedPage)
+
+assert pages[0].page_number == 1
+assert pages[0].text == "First page text."
+
+assert pages[1].page_number == 2
+assert pages[1].text == ""
+
+assert pages[2].page_number == 3
+assert pages[2].text == "Third page text."
+
+print("PASS: PDF extraction preserves physical page count")
+print("PASS: page numbering is one-based")
+print("PASS: empty page remains represented")
+print("PASS: later page identity does not shift when an earlier page has no text")
+
+
+class FailingPageAwareReader:
+    def __init__(self, stream):
+        raise academic_claims.PyPdfError("Synthetic PDF failure")
+
+
+try:
+    academic_claims.extract_pdf_pages(
+        b"%PDF-broken",
+        reader_factory=FailingPageAwareReader,
+    )
+except academic_claims.SourceRetrievalError:
+    pass
+else:
+    raise AssertionError(
+        "Expected PDF processing failure to become SourceRetrievalError"
+    )
+
+print("PASS: expected PDF processing failure remains controlled")
+
+print("\n[60] page-aware PDF extraction does not hide unexpected failures")
+
+class UnexpectedPageAwareReader:
+    def __init__(self, stream):
+        raise ValueError("Synthetic unexpected failure")
+
+
+try:
+    academic_claims.extract_pdf_pages(
+        b"%PDF-unexpected",
+        reader_factory=UnexpectedPageAwareReader,
+    )
+except ValueError as exc:
+    assert str(exc) == "Synthetic unexpected failure"
+else:
+    raise AssertionError(
+        "Unexpected extraction failure should propagate unchanged"
+    )
+
+print("PASS: unexpected page-aware extraction failure propagates")
+print("PASS: page-aware extraction catches only expected PDF processing errors")

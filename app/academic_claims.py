@@ -90,6 +90,16 @@ class HTTPHopResponse:
 
 
 @dataclass
+class ExtractedPage:
+    """Text extracted from one physical page of a source document."""
+    page_number: int
+    text: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class RetrievedSource:
     """Substantive scholarly text retrieved for a bibliographic identifier."""
 
@@ -232,6 +242,33 @@ def prepare_claim_support(
             "Candidate claim evidence was located but support has not been assessed."
         ],
     )
+
+
+def extract_pdf_pages(
+    content: bytes,
+    reader_factory=PdfReader,
+) -> list[ExtractedPage]:
+    """Extract text while preserving one-based physical PDF page identity."""
+    try:
+        reader = reader_factory(BytesIO(content))
+        pages = []
+
+        for page_number, page in enumerate(reader.pages, start=1):
+            page_text = page.extract_text()
+            text = page_text.strip() if isinstance(page_text, str) else ""
+            pages.append(
+                ExtractedPage(
+                    page_number=page_number,
+                    text=text,
+                )
+            )
+
+        return pages
+
+    except PyPdfError as exc:
+        raise SourceRetrievalError(
+            "PDF page text extraction failed."
+        ) from exc
 
 
 def extract_pdf_text(
