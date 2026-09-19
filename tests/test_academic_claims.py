@@ -2624,3 +2624,132 @@ else:
 
 print("PASS: unexpected non-pypdf exception propagates unchanged")
 print("PASS: PDF adapter does not convert arbitrary failures into retrieval failures")
+
+print("\n[52] discovered PDF source composes download and extraction")
+
+location = academic_claims.SourceLocation(
+    status="located",
+    doi="10.1234/composed",
+    source="openalex",
+    landing_page_url=None,
+    pdf_url="https://cdn.example/article.pdf",
+    is_oa=True,
+    reasons=["Test source location."],
+)
+
+download_calls = []
+
+def fake_pdf_downloader(url):
+    download_calls.append(url)
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url="https://cdn.example/final-article.pdf",
+        content_type="application/pdf",
+        content=b"%PDF-composed",
+        reasons=["Test download."],
+    )
+
+
+extractor_calls = []
+
+def fake_pdf_extractor(content):
+    extractor_calls.append(content)
+    return "Results\nThe intervention group improved by 2.4 cm."
+
+
+retrieved = academic_claims.retrieve_pdf_source_from_location(
+    location,
+    downloader=fake_pdf_downloader,
+    extractor=fake_pdf_extractor,
+)
+
+assert download_calls == ["https://cdn.example/article.pdf"]
+assert extractor_calls == [b"%PDF-composed"]
+assert retrieved.status == "retrieved"
+assert retrieved.doi == "10.1234/composed"
+assert retrieved.source == "openalex"
+assert retrieved.text == (
+    "Results\nThe intervention group improved by 2.4 cm."
+)
+assert retrieved.locator == "https://cdn.example/final-article.pdf"
+
+print("PASS: discovered PDF URL is passed to downloader only")
+print("PASS: downloaded bytes are passed to extractor")
+print("PASS: bibliographic DOI and source survive composition")
+print("PASS: extracted text becomes RetrievedSource")
+print("PASS: final redirected source URL survives as locator")
+
+print("\n[53] composed PDF retrieval preserves controlled failure states")
+
+no_pdf_location = academic_claims.SourceLocation(
+    status="located",
+    doi="10.1234/no-pdf",
+    source="openalex",
+    landing_page_url="https://journal.example/article",
+    pdf_url=None,
+    is_oa=True,
+    reasons=["Test source location without PDF."],
+)
+
+downloader_called = []
+
+def downloader_must_not_run(url):
+    downloader_called.append(url)
+    raise AssertionError("Downloader should not run without a PDF URL.")
+
+
+no_pdf_result = academic_claims.retrieve_pdf_source_from_location(
+    no_pdf_location,
+    downloader=downloader_must_not_run,
+)
+
+assert no_pdf_result.status == "not_retrieved"
+assert no_pdf_result.doi == "10.1234/no-pdf"
+assert no_pdf_result.source == "openalex"
+assert no_pdf_result.text is None
+assert no_pdf_result.locator is None
+assert downloader_called == []
+
+print("PASS: missing PDF URL remains not_retrieved")
+print("PASS: missing PDF URL does not invoke downloader")
+
+
+failed_download_location = academic_claims.SourceLocation(
+    status="located",
+    doi="10.1234/download-failure",
+    source="openalex",
+    landing_page_url=None,
+    pdf_url="https://cdn.example/failure.pdf",
+    is_oa=True,
+    reasons=["Test source location with failed download."],
+)
+
+extractor_called = []
+
+def failing_downloader(url):
+    assert url == "https://cdn.example/failure.pdf"
+    raise academic_claims.SourceRetrievalError("controlled download failure")
+
+
+def extractor_must_not_run(content):
+    extractor_called.append(content)
+    raise AssertionError("Extractor should not run after failed download.")
+
+
+failed_download_result = academic_claims.retrieve_pdf_source_from_location(
+    failed_download_location,
+    downloader=failing_downloader,
+    extractor=extractor_must_not_run,
+)
+
+assert failed_download_result.status == "not_retrieved"
+assert failed_download_result.doi == "10.1234/download-failure"
+assert failed_download_result.source == "openalex"
+assert failed_download_result.text is None
+assert failed_download_result.locator is None
+assert extractor_called == []
+
+print("PASS: controlled download failure remains not_retrieved")
+print("PASS: failed download does not invoke extractor")
+print("PASS: bibliographic provenance survives controlled retrieval failure")

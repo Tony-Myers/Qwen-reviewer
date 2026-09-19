@@ -262,6 +262,45 @@ def discover_openalex_source(doi: str, work_getter) -> SourceLocation:
     )
 
 
+def retrieve_pdf_source_from_location(
+    location: SourceLocation,
+    downloader=None,
+    extractor=extract_pdf_text,
+) -> RetrievedSource:
+    """Download and extract a discovered PDF source location."""
+    if downloader is None:
+        downloader = download_validated_http_source
+
+    if not location.pdf_url:
+        return RetrievedSource(
+            status="not_retrieved",
+            doi=_normalise_doi(location.doi),
+            source=location.source,
+            text=None,
+            locator=None,
+            reasons=["No PDF source URL was available for retrieval."],
+        )
+
+    try:
+        downloaded = downloader(location.pdf_url)
+    except SourceRetrievalError:
+        return RetrievedSource(
+            status="not_retrieved",
+            doi=_normalise_doi(location.doi),
+            source=location.source,
+            text=None,
+            locator=None,
+            reasons=["PDF source download failed."],
+        )
+
+    return extract_downloaded_source(
+        downloaded,
+        doi=location.doi,
+        source=location.source,
+        extractor=extractor,
+    )
+
+
 def retrieve_source_from_location(
     location: SourceLocation,
     fetcher,
