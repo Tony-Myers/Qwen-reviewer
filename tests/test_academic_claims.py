@@ -2753,3 +2753,107 @@ assert extractor_called == []
 print("PASS: controlled download failure remains not_retrieved")
 print("PASS: failed download does not invoke extractor")
 print("PASS: bibliographic provenance survives controlled retrieval failure")
+
+print("\n[54] claim passage locator identifies candidate evidence without judging support")
+
+retrieved_source = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/passage",
+    source="openalex",
+    text=(
+        "Introduction\n"
+        "Jump performance is commonly assessed in basketball players.\n\n"
+        "Methods\n"
+        "Eighteen athletes completed the intervention over six weeks.\n\n"
+        "Results\n"
+        "Mean jump height increased by 2.4 cm after the intervention.\n\n"
+        "Discussion\n"
+        "The findings should be interpreted in light of the small sample."
+    ),
+    locator="https://cdn.example/article.pdf",
+    reasons=["Test retrieved source."],
+)
+
+claim = "The intervention increased mean jump height by 2.4 cm."
+
+evidence = academic_claims.locate_claim_passages(
+    retrieved_source,
+    claim,
+    max_passages=2,
+)
+
+assert evidence
+assert isinstance(evidence[0], academic_claims.ClaimEvidence)
+assert "2.4 cm" in evidence[0].text
+assert "jump height" in evidence[0].text.lower()
+assert evidence[0].locator == "https://cdn.example/article.pdf"
+assert evidence[0].source == "openalex"
+
+print("PASS: lexical locator returns candidate ClaimEvidence")
+print("PASS: most relevant passage contains the distinctive claim details")
+print("PASS: source locator survives passage location")
+print("PASS: source provenance survives passage location")
+print("PASS: passage location makes no support-status judgement")
+
+print("\n[55] passage location remains lexical and conservative")
+
+contradictory_source = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/contradiction",
+    source="openalex",
+    text=(
+        "Results\n"
+        "Mean jump height did not increase by 2.4 cm after the intervention.\n\n"
+        "Discussion\n"
+        "Further research is required."
+    ),
+    locator="https://cdn.example/contradiction.pdf",
+    reasons=["Test retrieved source."],
+)
+
+contradictory_evidence = academic_claims.locate_claim_passages(
+    contradictory_source,
+    "The intervention increased mean jump height by 2.4 cm.",
+)
+
+assert contradictory_evidence
+assert "did not increase" in contradictory_evidence[0].text.lower()
+
+print("PASS: contradictory passage can still be located as candidate evidence")
+print("PASS: lexical location does not silently become support assessment")
+
+
+unretrieved_source = academic_claims.RetrievedSource(
+    status="not_retrieved",
+    doi="10.1234/unretrieved",
+    source="openalex",
+    text=None,
+    locator=None,
+    reasons=["Test source was not retrieved."],
+)
+
+assert academic_claims.locate_claim_passages(
+    unretrieved_source,
+    "The intervention increased mean jump height by 2.4 cm.",
+) == []
+
+assert academic_claims.locate_claim_passages(
+    retrieved_source,
+    "",
+) == []
+
+assert academic_claims.locate_claim_passages(
+    retrieved_source,
+    "the and of to",
+) == []
+
+assert academic_claims.locate_claim_passages(
+    retrieved_source,
+    claim,
+    max_passages=0,
+) == []
+
+print("PASS: unretrieved source cannot produce candidate evidence")
+print("PASS: empty claim cannot produce candidate evidence")
+print("PASS: stop-word-only claim cannot produce candidate evidence")
+print("PASS: non-positive passage limit returns no evidence")

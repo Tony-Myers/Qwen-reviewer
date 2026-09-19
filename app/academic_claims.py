@@ -12,6 +12,7 @@ from io import BytesIO
 
 import httpcore
 import ipaddress
+import re
 from pypdf import PdfReader
 from pypdf.errors import PyPdfError
 from typing import Any
@@ -101,6 +102,71 @@ class RetrievedSource:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def locate_claim_passages(
+    retrieved: RetrievedSource,
+    claim: str,
+    max_passages: int = 3,
+) -> list[ClaimEvidence]:
+    """Locate candidate source passages by deterministic lexical overlap."""
+    if (
+        retrieved.status != "retrieved"
+        or not retrieved.text
+        or not retrieved.locator
+        or max_passages <= 0
+    ):
+        return []
+
+    stop_words = {
+        "a", "an", "and", "are", "as", "at", "be", "by", "for",
+        "from", "in", "is", "it", "of", "on", "or", "that", "the",
+        "this", "to", "was", "were", "with",
+    }
+
+    def terms(value: str) -> set[str]:
+        tokens = re.findall(r"[A-Za-z0-9]+(?:\\.[0-9]+)?", value.lower())
+        return {
+            token
+            for token in tokens
+            if token not in stop_words and (len(token) > 1 or token.isdigit())
+        }
+
+    claim_terms = terms(claim)
+    if not claim_terms:
+        return []
+
+    passages = [
+        passage.strip()
+        for passage in re.split(r"\\n\\s*\\n", retrieved.text)
+        if passage.strip()
+    ]
+
+    ranked = []
+    for index, passage in enumerate(passages):
+        passage_terms = terms(passage)
+        overlap = claim_terms & passage_terms
+        if not overlap:
+            continue
+
+        numeric_matches = sum(
+            1
+            for token in overlap
+            if any(char.isdigit() for char in token)
+        )
+        score = (numeric_matches, len(overlap), -index)
+        ranked.append((score, passage))
+
+    ranked.sort(reverse=True)
+
+    return [
+        ClaimEvidence(
+            text=passage,
+            locator=retrieved.locator,
+            source=retrieved.source,
+        )
+        for _, passage in ranked[:max_passages]
+    ]
 
 
 def extract_pdf_text(
