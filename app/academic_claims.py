@@ -79,6 +79,50 @@ class ClaimAssessmentResult:
         }
 
 
+@dataclass
+class ClaimPresentation:
+    """Application-owned presentation of a validated semantic assessment."""
+
+    status: str
+    statement: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "status": self.status,
+            "statement": self.statement,
+        }
+
+
+_CLAIM_PRESENTATION_STATEMENTS = {
+    "claim_supported": "The retrieved source supports this claim.",
+    "claim_partially_supported": "The retrieved source partially supports this claim.",
+    "claim_not_supported": "The retrieved evidence does not substantiate this claim.",
+    "claim_contradicted": "The retrieved evidence appears inconsistent with this claim.",
+}
+
+
+def build_claim_presentation(
+    assessment: ClaimAssessmentResult,
+) -> ClaimPresentation:
+    """Map validated assessment status to bounded presentation language."""
+    if not isinstance(assessment, ClaimAssessmentResult):
+        raise TypeError(
+            "Claim presentation requires a ClaimAssessmentResult."
+        )
+
+    try:
+        statement = _CLAIM_PRESENTATION_STATEMENTS[assessment.status]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported claim assessment status: {assessment.status}"
+        ) from exc
+
+    return ClaimPresentation(
+        status=assessment.status,
+        statement=statement,
+    )
+
+
 CLAIM_ASSESSMENT_STATUSES = (
     "claim_supported",
     "claim_partially_supported",

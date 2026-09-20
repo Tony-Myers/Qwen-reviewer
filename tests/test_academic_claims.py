@@ -4472,3 +4472,76 @@ assert assessor_called_without_evidence is False
 
 print("PASS: invalid evidence is rejected before the assessor is called")
 print("PASS: orchestration preserves the semantic-assessment trust boundary")
+
+
+print()
+print("[78] semantic assessment maps to bounded application presentation")
+
+presentation_evidence = [
+    academic_claims.ClaimEvidence(
+        text="Synthetic evidence passage.",
+        locator="https://example.org/source.pdf",
+        source="openalex",
+        page_number=4,
+    )
+]
+
+presentation_cases = (
+    (
+        "claim_supported",
+        "The retrieved source supports this claim.",
+    ),
+    (
+        "claim_partially_supported",
+        "The retrieved source partially supports this claim.",
+    ),
+    (
+        "claim_not_supported",
+        "The retrieved evidence does not substantiate this claim.",
+    ),
+    (
+        "claim_contradicted",
+        "The retrieved evidence appears inconsistent with this claim.",
+    ),
+)
+
+for status, expected_statement in presentation_cases:
+    assessment = academic_claims.ClaimAssessmentResult(
+        status=status,
+        claim="Synthetic claim.",
+        evidence=presentation_evidence,
+        reasons=["MODEL_REASON_SENTINEL"],
+    )
+
+    presentation = academic_claims.build_claim_presentation(assessment)
+
+    assert presentation.status == status
+    assert presentation.statement == expected_statement
+    assert "MODEL_REASON_SENTINEL" not in presentation.statement
+
+print("PASS: all semantic states map to deterministic presentation language")
+print("PASS: contradiction is presented cautiously rather than as deterministic fact")
+print("PASS: model-generated reason does not become trusted presentation text")
+
+
+try:
+    academic_claims.build_claim_presentation(
+        {
+            "status": "claim_supported",
+            "reason": "Unvalidated model output.",
+        }
+    )
+except (TypeError, ValueError):
+    pass
+else:
+    raise AssertionError(
+        "Presentation policy accepted unvalidated assessor output"
+    )
+
+print("PASS: presentation policy requires validated semantic assessment")
+
+assert set(academic_claims._CLAIM_PRESENTATION_STATEMENTS) == set(
+    academic_claims.CLAIM_ASSESSMENT_STATUSES
+)
+
+print("PASS: every canonical semantic status has exactly one presentation policy")
