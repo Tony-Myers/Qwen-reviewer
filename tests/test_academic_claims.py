@@ -4173,3 +4173,141 @@ assert set(
 ) == set(academic_claims.CLAIM_ASSESSMENT_STATUSES)
 
 print("PASS: schema statuses come from the canonical assessment vocabulary")
+
+print("\n[75] claim assessor prompt is evidence-bounded and provenance-preserving")
+
+prompt_evidence = [
+    academic_claims.ClaimEvidence(
+        text=(
+            "Mean jump height increased by 2.4 cm after the intervention "
+            "in the intervention group."
+        ),
+        locator="https://example.org/final-paper.pdf",
+        source="openalex",
+        page_number=3,
+    ),
+    academic_claims.ClaimEvidence(
+        text="Participants were 18 adolescent basketball players.",
+        locator="https://example.org/final-paper.pdf",
+        source="openalex",
+        page_number=2,
+    ),
+]
+
+assessment_prompt = academic_claims.build_claim_assessment_prompt(
+    claim="The intervention increased mean jump height by 2.4 cm.",
+    evidence=prompt_evidence,
+)
+
+assert isinstance(assessment_prompt, str)
+assert assessment_prompt.strip()
+
+print("PASS: assessor prompt is non-empty text")
+
+
+assert "The intervention increased mean jump height by 2.4 cm." in assessment_prompt
+
+for item in prompt_evidence:
+    assert item.text in assessment_prompt
+    assert item.locator in assessment_prompt
+    assert item.source in assessment_prompt
+    assert f"page_number: {item.page_number}" in assessment_prompt
+
+print("PASS: original claim is supplied without model rewriting")
+print("PASS: located evidence text is supplied")
+print("PASS: evidence provenance is supplied with the evidence")
+
+
+for status in academic_claims.CLAIM_ASSESSMENT_STATUSES:
+    assert status in assessment_prompt
+
+print("PASS: prompt defines all four permitted assessment outcomes")
+
+
+required_grounding_phrases = (
+    "only the supplied evidence",
+    "Do not use outside knowledge",
+    "Do not fill gaps",
+)
+
+for phrase in required_grounding_phrases:
+    assert phrase in assessment_prompt
+
+print("PASS: prompt restricts assessment to supplied evidence")
+print("PASS: prompt prohibits parametric knowledge from filling evidence gaps")
+
+
+assert "claim_not_supported" in assessment_prompt
+assert "claim_contradicted" in assessment_prompt
+assert "absence of support is not contradiction" in assessment_prompt.lower()
+
+print("PASS: lack of support is explicitly distinguished from contradiction")
+
+
+for component in (
+    "direction",
+    "numerical value",
+    "population",
+    "outcome",
+    "comparison",
+    "qualifier",
+):
+    assert component in assessment_prompt.lower()
+
+print("PASS: prompt directs attention to material claim components")
+
+
+assert "status" in assessment_prompt
+assert "reason" in assessment_prompt
+
+for forbidden_output_field in (
+    '"claim":',
+    '"evidence":',
+    '"page_number":',
+    '"locator":',
+    '"source":',
+):
+    assert forbidden_output_field not in assessment_prompt
+
+print("PASS: assessor is asked to return judgement fields only")
+print("PASS: application-owned provenance is not presented as an output field")
+
+
+try:
+    academic_claims.build_claim_assessment_prompt(
+        claim="Synthetic claim.",
+        evidence=[],
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Assessor prompt was built without located evidence")
+
+print("PASS: assessor prompt cannot be built without located evidence")
+
+
+try:
+    academic_claims.build_claim_assessment_prompt(
+        claim="   ",
+        evidence=prompt_evidence,
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Assessor prompt was built with an empty claim")
+
+print("PASS: assessor prompt requires a substantive claim")
+
+
+try:
+    academic_claims.build_claim_assessment_prompt(
+        claim="Synthetic claim.",
+        evidence=["not ClaimEvidence"],
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Assessor prompt accepted non-ClaimEvidence input")
+
+print("PASS: assessor prompt accepts only application-owned ClaimEvidence")
+print("PASS: assessor prompt preserves the semantic-assessment trust boundary")

@@ -106,6 +106,88 @@ def claim_assessment_output_schema() -> dict[str, Any]:
     }
 
 
+def build_claim_assessment_prompt(
+    claim: str,
+    evidence: list[ClaimEvidence],
+) -> str:
+    """Build an evidence-bounded prompt for semantic claim assessment."""
+    if not isinstance(claim, str) or not claim.strip():
+        raise ValueError("Claim assessment requires a substantive claim.")
+
+    if (
+        not isinstance(evidence, list)
+        or not evidence
+        or not all(isinstance(item, ClaimEvidence) for item in evidence)
+    ):
+        raise ValueError(
+            "Claim assessment prompt requires located ClaimEvidence."
+        )
+
+    evidence_blocks = []
+    for index, item in enumerate(evidence, start=1):
+        page_number = (
+            str(item.page_number)
+            if item.page_number is not None
+            else "not available"
+        )
+        evidence_blocks.append(
+            "\n".join(
+                [
+                    f"EVIDENCE {index}",
+                    f"source: {item.source}",
+                    f"locator: {item.locator}",
+                    f"page_number: {page_number}",
+                    "text:",
+                    item.text,
+                ]
+            )
+        )
+
+    return f"""Assess the claim using only the supplied evidence.
+
+CLAIM
+{claim}
+
+LOCATED EVIDENCE
+{chr(10).join(chr(10) + block for block in evidence_blocks)}
+
+RULES
+Use only the supplied evidence when judging the claim.
+Do not use outside knowledge.
+Do not fill gaps using prior knowledge, assumptions, or information that is
+not stated in the supplied evidence.
+
+Assess all material components of the claim when present, including direction,
+numerical value, population or sample, outcome or construct, comparison,
+intervention or exposure, and important qualifier or context.
+
+Use exactly one of these statuses:
+
+claim_supported
+The supplied evidence supports all material components of the claim.
+
+claim_partially_supported
+The supplied evidence supports part of the claim, but at least one material
+component is absent, narrower, qualified differently, or not established.
+
+claim_not_supported
+Relevant supplied evidence does not sufficiently substantiate the claim, but
+does not clearly establish a materially inconsistent statement.
+
+claim_contradicted
+The supplied evidence clearly establishes a material statement or result that
+is inconsistent with the claim.
+
+Absence of support is not contradiction. Use claim_contradicted only when the
+supplied evidence provides clear contrary evidence.
+
+Return only the required judgement fields: status and reason.
+The reason must explain the judgement from the supplied evidence.
+Do not return the claim, evidence, page information, locator, source, or any
+other provenance field.
+"""
+
+
 def build_claim_assessment(
     claim: str,
     evidence: list[ClaimEvidence],
