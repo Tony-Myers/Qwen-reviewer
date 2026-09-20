@@ -4118,3 +4118,58 @@ else:
 
 print("PASS: semantic assessment requires ClaimEvidence objects")
 print("PASS: assessment remains strictly downstream of claim location")
+
+print("\n[74] claim assessor has a strict structured-output schema")
+
+schema = academic_claims.claim_assessment_output_schema()
+
+assert schema["type"] == "object"
+assert schema["additionalProperties"] is False
+assert set(schema["required"]) == {"status", "reason"}
+assert set(schema["properties"]) == {"status", "reason"}
+
+status_schema = schema["properties"]["status"]
+reason_schema = schema["properties"]["reason"]
+
+assert status_schema["type"] == "string"
+assert status_schema["enum"] == [
+    "claim_supported",
+    "claim_partially_supported",
+    "claim_not_supported",
+    "claim_contradicted",
+]
+
+assert reason_schema["type"] == "string"
+assert reason_schema["minLength"] == 1
+
+print("PASS: assessor schema is an object with no additional properties")
+print("PASS: assessor schema requires exactly status and reason")
+print("PASS: schema exposes exactly the four assessment outcomes")
+print("PASS: assessor reason must be non-empty text")
+
+
+assert "claim" not in schema["properties"]
+assert "evidence" not in schema["properties"]
+assert "page_number" not in schema["properties"]
+assert "locator" not in schema["properties"]
+assert "source" not in schema["properties"]
+
+print("PASS: model schema contains no application-owned claim field")
+print("PASS: model schema contains no evidence or provenance fields")
+
+
+schema["properties"]["status"]["enum"].append("invented_status")
+
+fresh_schema = academic_claims.claim_assessment_output_schema()
+
+assert "invented_status" not in fresh_schema["properties"]["status"]["enum"]
+
+print("PASS: callers receive independent schema structures")
+print("PASS: one caller cannot mutate the future assessor schema globally")
+
+
+assert set(
+    fresh_schema["properties"]["status"]["enum"]
+) == set(academic_claims.CLAIM_ASSESSMENT_STATUSES)
+
+print("PASS: schema statuses come from the canonical assessment vocabulary")

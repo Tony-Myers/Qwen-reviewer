@@ -79,6 +79,33 @@ class ClaimAssessmentResult:
         }
 
 
+CLAIM_ASSESSMENT_STATUSES = (
+    "claim_supported",
+    "claim_partially_supported",
+    "claim_not_supported",
+    "claim_contradicted",
+)
+
+
+def claim_assessment_output_schema() -> dict[str, Any]:
+    """Return the strict structured-output schema for claim assessment."""
+    return {
+        "type": "object",
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": list(CLAIM_ASSESSMENT_STATUSES),
+            },
+            "reason": {
+                "type": "string",
+                "minLength": 1,
+            },
+        },
+        "required": ["status", "reason"],
+        "additionalProperties": False,
+    }
+
+
 def build_claim_assessment(
     claim: str,
     evidence: list[ClaimEvidence],
@@ -106,14 +133,10 @@ def build_claim_assessment(
     status = assessor_output["status"]
     reason = assessor_output["reason"]
 
-    allowed_statuses = {
-        "claim_supported",
-        "claim_partially_supported",
-        "claim_not_supported",
-        "claim_contradicted",
-    }
-
-    if not isinstance(status, str) or status not in allowed_statuses:
+    if (
+        not isinstance(status, str)
+        or status not in CLAIM_ASSESSMENT_STATUSES
+    ):
         raise ValueError("Assessor output contains an invalid status.")
 
     if not isinstance(reason, str) or not reason.strip():
