@@ -62,6 +62,24 @@ class SourceRetrievalError(RuntimeError):
 
 
 @dataclass
+class ClaimAssessmentResult:
+    """An auditable assessment of located evidence against a claim."""
+
+    status: str
+    claim: str
+    evidence: list[ClaimEvidence]
+    reasons: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "claim": self.claim,
+            "evidence": [item.to_dict() for item in self.evidence],
+            "reasons": self.reasons,
+        }
+
+
+@dataclass
 class DownloadedSource:
     """Raw resource obtained from a discovered scholarly source location.
 

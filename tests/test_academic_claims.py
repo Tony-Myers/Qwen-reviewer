@@ -3780,3 +3780,99 @@ assert unsearchable_pipeline.evidence == []
 
 print("PASS: retrieved PDF with no searchable claim terms becomes claim_not_assessed")
 print("PASS: unsearchable claim is not misreported as claim_not_located")
+
+print("\n[71] claim evidence assessment has an auditable data contract")
+
+assessment_evidence = [
+    academic_claims.ClaimEvidence(
+        text="Mean jump height increased by 2.4 cm after the intervention.",
+        locator="https://cdn.example/article.pdf",
+        source="openalex",
+        page_number=7,
+    )
+]
+
+supported_assessment = academic_claims.ClaimAssessmentResult(
+    status="claim_supported",
+    claim="The intervention increased mean jump height by 2.4 cm.",
+    evidence=assessment_evidence,
+    reasons=[
+        "Located evidence agrees with the claimed outcome, direction, and value."
+    ],
+)
+
+assert supported_assessment.status == "claim_supported"
+assert (
+    supported_assessment.claim
+    == "The intervention increased mean jump height by 2.4 cm."
+)
+assert supported_assessment.evidence == assessment_evidence
+assert supported_assessment.evidence[0].page_number == 7
+assert supported_assessment.reasons == [
+    "Located evidence agrees with the claimed outcome, direction, and value."
+]
+
+supported_payload = supported_assessment.to_dict()
+
+assert supported_payload["status"] == "claim_supported"
+assert (
+    supported_payload["claim"]
+    == "The intervention increased mean jump height by 2.4 cm."
+)
+assert supported_payload["evidence"][0]["text"] == assessment_evidence[0].text
+assert supported_payload["evidence"][0]["page_number"] == 7
+assert (
+    supported_payload["evidence"][0]["locator"]
+    == "https://cdn.example/article.pdf"
+)
+assert supported_payload["evidence"][0]["source"] == "openalex"
+assert supported_payload["reasons"] == supported_assessment.reasons
+
+print("PASS: assessment status is explicit")
+print("PASS: original claim remains auditable")
+print("PASS: located evidence remains attached to assessment")
+print("PASS: physical page provenance survives assessment serialisation")
+print("PASS: source and final locator survive assessment serialisation")
+print("PASS: assessment reasons are explicit")
+
+
+for assessment_status in (
+    "claim_supported",
+    "claim_partially_supported",
+    "claim_not_supported",
+    "claim_contradicted",
+):
+    result = academic_claims.ClaimAssessmentResult(
+        status=assessment_status,
+        claim="Synthetic claim.",
+        evidence=assessment_evidence,
+        reasons=["Synthetic assessment reason."],
+    )
+
+    assert result.status == assessment_status
+    assert result.to_dict()["status"] == assessment_status
+
+print("PASS: all four planned assessment outcomes fit the same contract")
+
+
+contradictory_evidence = [
+    academic_claims.ClaimEvidence(
+        text="Mean jump height did not increase by 2.4 cm after the intervention.",
+        locator="https://cdn.example/article.pdf",
+        source="openalex",
+        page_number=8,
+    )
+]
+
+contradicted_assessment = academic_claims.ClaimAssessmentResult(
+    status="claim_contradicted",
+    claim="The intervention increased mean jump height by 2.4 cm.",
+    evidence=contradictory_evidence,
+    reasons=["Synthetic contradiction assessment."],
+)
+
+assert contradicted_assessment.evidence[0].text == contradictory_evidence[0].text
+assert "did not increase" in contradicted_assessment.evidence[0].text
+
+print("PASS: contradictory evidence remains unchanged rather than being rewritten")
+print("PASS: assessment contract records judgement without performing it")
