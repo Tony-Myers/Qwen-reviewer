@@ -317,6 +317,79 @@ def locate_pdf_claim_from_location(
     )
 
 
+def prepare_pdf_claim_support(
+    location: "SourceLocation",
+    claim: str,
+    downloader,
+    max_passages: int = 3,
+    reader_factory=PdfReader,
+) -> ClaimSupportResult:
+    """Compose PDF retrieval, page-aware location, and claim-support state."""
+    try:
+        evidence = locate_pdf_claim_from_location(
+            location,
+            claim,
+            downloader=downloader,
+            max_passages=max_passages,
+            reader_factory=reader_factory,
+        )
+    except SourceRetrievalError as exc:
+        return ClaimSupportResult(
+            status="source_not_retrieved",
+            source_status="not_retrieved",
+            claim_status="not_assessed",
+            doi=location.doi,
+            evidence=[],
+            reasons=[str(exc)],
+        )
+
+    return prepare_page_aware_claim_support(
+        doi=location.doi,
+        evidence=evidence,
+        search_attempted=bool(_claim_terms(claim)),
+    )
+
+
+def prepare_page_aware_claim_support(
+    doi: str | None,
+    evidence: list[ClaimEvidence],
+    search_attempted: bool,
+) -> ClaimSupportResult:
+    """Map page-aware claim location into claim-support state semantics."""
+    if evidence:
+        return ClaimSupportResult(
+            status="claim_located",
+            source_status="retrieved",
+            claim_status="located",
+            doi=doi,
+            evidence=evidence,
+            reasons=["Candidate claim passage located in retrieved source."],
+        )
+
+    if search_attempted:
+        return ClaimSupportResult(
+            status="claim_not_located",
+            source_status="retrieved",
+            claim_status="not_located",
+            doi=doi,
+            evidence=[],
+            reasons=[
+                "Retrieved source was searched but no candidate claim passage was located."
+            ],
+        )
+
+    return ClaimSupportResult(
+        status="claim_not_assessed",
+        source_status="retrieved",
+        claim_status="not_assessed",
+        doi=doi,
+        evidence=[],
+        reasons=[
+            "Source was retrieved but claim location was not meaningfully attempted."
+        ],
+    )
+
+
 def prepare_claim_support(
     retrieved: RetrievedSource,
     claim: str,

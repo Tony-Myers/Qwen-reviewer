@@ -3605,3 +3605,178 @@ assert no_match_evidence == []
 
 print("PASS: successfully searched PDF may legitimately return no candidate")
 print("PASS: retrieval failure remains distinct from claim not located")
+
+print("\n[68] page-aware evidence maps to claim-support location states")
+
+located_page_evidence = [
+    academic_claims.ClaimEvidence(
+        text="Mean jump height increased by 2.4 cm after the intervention.",
+        locator="https://cdn.example/article.pdf",
+        source="openalex",
+        page_number=7,
+    )
+]
+
+located_support = academic_claims.prepare_page_aware_claim_support(
+    doi="10.1234/page-aware-support",
+    evidence=located_page_evidence,
+    search_attempted=True,
+)
+
+assert located_support.status == "claim_located"
+assert located_support.source_status == "retrieved"
+assert located_support.claim_status == "located"
+assert located_support.doi == "10.1234/page-aware-support"
+assert located_support.evidence == located_page_evidence
+assert located_support.evidence[0].page_number == 7
+
+located_payload = located_support.to_dict()
+assert located_payload["evidence"][0]["page_number"] == 7
+
+print("PASS: located page-aware evidence becomes claim_located")
+print("PASS: physical page provenance survives ClaimSupportResult")
+print("PASS: page provenance survives ClaimSupportResult serialisation")
+
+
+not_located_support = academic_claims.prepare_page_aware_claim_support(
+    doi="10.1234/page-aware-support",
+    evidence=[],
+    search_attempted=True,
+)
+
+assert not_located_support.status == "claim_not_located"
+assert not_located_support.source_status == "retrieved"
+assert not_located_support.claim_status == "not_located"
+assert not_located_support.evidence == []
+
+print("PASS: meaningful page-aware search with no candidate becomes claim_not_located")
+
+
+not_assessed_support = academic_claims.prepare_page_aware_claim_support(
+    doi="10.1234/page-aware-support",
+    evidence=[],
+    search_attempted=False,
+)
+
+assert not_assessed_support.status == "claim_not_assessed"
+assert not_assessed_support.source_status == "retrieved"
+assert not_assessed_support.claim_status == "not_assessed"
+assert not_assessed_support.evidence == []
+
+print("PASS: page-aware source without meaningful search remains claim_not_assessed")
+print("PASS: absence of evidence is interpreted using whether search was attempted")
+
+print("\n[69] PDF claim pipeline maps retrieval and location outcomes")
+
+pipeline_location = academic_claims.SourceLocation(
+    status="located",
+    doi="10.1234/pipeline",
+    source="openalex",
+    landing_page_url="https://example.org/article",
+    pdf_url="https://example.org/article.pdf",
+    is_oa=True,
+    reasons=["Synthetic source location."],
+)
+
+
+def pipeline_failed_downloader(url):
+    raise academic_claims.SourceRetrievalError(
+        "Synthetic controlled download failure."
+    )
+
+
+failed_pipeline = academic_claims.prepare_pdf_claim_support(
+    pipeline_location,
+    "Mean jump height increased by 2.4 cm.",
+    downloader=pipeline_failed_downloader,
+)
+
+assert failed_pipeline.status == "source_not_retrieved"
+assert failed_pipeline.source_status == "not_retrieved"
+assert failed_pipeline.claim_status == "not_assessed"
+assert failed_pipeline.doi == "10.1234/pipeline"
+assert failed_pipeline.evidence == []
+
+print("PASS: controlled PDF retrieval failure becomes source_not_retrieved")
+print("PASS: retrieval failure does not become claim_not_located")
+
+
+class PipelineMatchReader:
+    def __init__(self, stream):
+        self.pages = [
+            DownloadedFakePage("Background information."),
+            DownloadedFakePage(
+                "Mean jump height increased by 2.4 cm after the intervention."
+            ),
+        ]
+
+
+def pipeline_success_downloader(url):
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url="https://cdn.example/pipeline.pdf",
+        content_type="application/pdf",
+        content=b"%PDF-synthetic",
+        reasons=["Synthetic successful download."],
+    )
+
+
+located_pipeline = academic_claims.prepare_pdf_claim_support(
+    pipeline_location,
+    "Mean jump height increased by 2.4 cm after the intervention.",
+    downloader=pipeline_success_downloader,
+    reader_factory=PipelineMatchReader,
+)
+
+assert located_pipeline.status == "claim_located"
+assert located_pipeline.source_status == "retrieved"
+assert located_pipeline.claim_status == "located"
+assert located_pipeline.evidence
+assert located_pipeline.evidence[0].page_number == 2
+assert located_pipeline.evidence[0].locator == "https://cdn.example/pipeline.pdf"
+assert located_pipeline.evidence[0].source == "openalex"
+
+print("PASS: successful PDF pipeline becomes claim_located")
+print("PASS: page and final-URL provenance survive full composition")
+
+
+class PipelineNoMatchReader:
+    def __init__(self, stream):
+        self.pages = [
+            DownloadedFakePage(
+                "Participants completed demographic questionnaires."
+            ),
+        ]
+
+
+not_located_pipeline = academic_claims.prepare_pdf_claim_support(
+    pipeline_location,
+    "Mean jump height increased by 2.4 cm.",
+    downloader=pipeline_success_downloader,
+    reader_factory=PipelineNoMatchReader,
+)
+
+assert not_located_pipeline.status == "claim_not_located"
+assert not_located_pipeline.source_status == "retrieved"
+assert not_located_pipeline.claim_status == "not_located"
+assert not_located_pipeline.evidence == []
+
+print("PASS: successful meaningful search with no candidate becomes claim_not_located")
+
+print("\n[70] PDF claim pipeline distinguishes unsearchable claims")
+
+unsearchable_pipeline = academic_claims.prepare_pdf_claim_support(
+    pipeline_location,
+    "the and of",
+    downloader=pipeline_success_downloader,
+    reader_factory=PipelineMatchReader,
+)
+
+assert unsearchable_pipeline.status == "claim_not_assessed"
+assert unsearchable_pipeline.source_status == "retrieved"
+assert unsearchable_pipeline.claim_status == "not_assessed"
+assert unsearchable_pipeline.evidence == []
+
+print("PASS: retrieved PDF with no searchable claim terms becomes claim_not_assessed")
+print("PASS: unsearchable claim is not misreported as claim_not_located")
