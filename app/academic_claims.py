@@ -188,6 +188,30 @@ other provenance field.
 """
 
 
+def assess_located_claim(
+    claim: str,
+    evidence: list[ClaimEvidence],
+    assessor,
+) -> ClaimAssessmentResult:
+    """Assess located evidence through an injected semantic assessor."""
+    prompt = build_claim_assessment_prompt(
+        claim=claim,
+        evidence=evidence,
+    )
+    schema = claim_assessment_output_schema()
+
+    assessor_output = assessor(
+        prompt=prompt,
+        schema=schema,
+    )
+
+    return build_claim_assessment(
+        claim=claim,
+        evidence=evidence,
+        assessor_output=assessor_output,
+    )
+
+
 def build_claim_assessment(
     claim: str,
     evidence: list[ClaimEvidence],

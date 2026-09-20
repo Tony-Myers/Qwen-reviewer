@@ -4311,3 +4311,133 @@ else:
 
 print("PASS: assessor prompt accepts only application-owned ClaimEvidence")
 print("PASS: assessor prompt preserves the semantic-assessment trust boundary")
+
+print("\n[76] claim assessment orchestration preserves the model trust boundary")
+
+orchestration_evidence = [
+    academic_claims.ClaimEvidence(
+        text="Mean jump height increased by 2.4 cm after the intervention.",
+        locator="https://example.org/final-paper.pdf",
+        source="openalex",
+        page_number=3,
+    ),
+]
+
+captured_assessor_call = {}
+
+
+def fake_claim_assessor(*, prompt, schema):
+    captured_assessor_call["prompt"] = prompt
+    captured_assessor_call["schema"] = schema
+    return {
+        "status": "claim_supported",
+        "reason": "The supplied evidence states the claimed direction and value.",
+    }
+
+
+orchestrated = academic_claims.assess_located_claim(
+    claim="The intervention increased mean jump height by 2.4 cm.",
+    evidence=orchestration_evidence,
+    assessor=fake_claim_assessor,
+)
+
+assert orchestrated.status == "claim_supported"
+assert (
+    orchestrated.claim
+    == "The intervention increased mean jump height by 2.4 cm."
+)
+assert orchestrated.evidence is orchestration_evidence
+assert orchestrated.reasons == [
+    "The supplied evidence states the claimed direction and value."
+]
+
+print("PASS: orchestration returns validated ClaimAssessmentResult")
+print("PASS: application-owned claim survives orchestration")
+print("PASS: application-owned evidence survives orchestration unchanged")
+
+
+assert captured_assessor_call["prompt"] == (
+    academic_claims.build_claim_assessment_prompt(
+        claim="The intervention increased mean jump height by 2.4 cm.",
+        evidence=orchestration_evidence,
+    )
+)
+assert captured_assessor_call["schema"] == (
+    academic_claims.claim_assessment_output_schema()
+)
+
+print("PASS: assessor receives the evidence-bounded prompt")
+print("PASS: assessor receives the strict output schema")
+
+
+def provenance_injecting_assessor(*, prompt, schema):
+    return {
+        "status": "claim_supported",
+        "reason": "Synthetic reason.",
+        "page_number": 999,
+    }
+
+
+try:
+    academic_claims.assess_located_claim(
+        claim="Synthetic claim.",
+        evidence=orchestration_evidence,
+        assessor=provenance_injecting_assessor,
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError(
+        "Orchestration accepted assessor-supplied provenance"
+    )
+
+print("PASS: orchestration cannot bypass deterministic output validation")
+
+
+def invalid_status_assessor(*, prompt, schema):
+    return {
+        "status": "probably_supported",
+        "reason": "Synthetic reason.",
+    }
+
+
+try:
+    academic_claims.assess_located_claim(
+        claim="Synthetic claim.",
+        evidence=orchestration_evidence,
+        assessor=invalid_status_assessor,
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError(
+        "Orchestration accepted an invalid assessment status"
+    )
+
+print("PASS: orchestration cannot bypass canonical status validation")
+
+
+assessor_called_without_evidence = False
+
+
+def should_not_be_called(*, prompt, schema):
+    global assessor_called_without_evidence
+    assessor_called_without_evidence = True
+    raise AssertionError("Assessor should not have been called")
+
+
+try:
+    academic_claims.assess_located_claim(
+        claim="Synthetic claim.",
+        evidence=[],
+        assessor=should_not_be_called,
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Assessment without evidence was accepted")
+
+assert assessor_called_without_evidence is False
+
+print("PASS: invalid evidence is rejected before the assessor is called")
+print("PASS: orchestration preserves the semantic-assessment trust boundary")
