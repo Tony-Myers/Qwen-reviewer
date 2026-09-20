@@ -3876,3 +3876,245 @@ assert "did not increase" in contradicted_assessment.evidence[0].text
 
 print("PASS: contradictory evidence remains unchanged rather than being rewritten")
 print("PASS: assessment contract records judgement without performing it")
+
+print("\n[72] assessor output is strictly validated before provenance is attached")
+
+valid_assessor_output = {
+    "status": "claim_supported",
+    "reason": (
+        "The located evidence agrees with the claimed outcome, "
+        "direction, and value."
+    ),
+}
+
+validated_assessment = academic_claims.build_claim_assessment(
+    claim="The intervention increased mean jump height by 2.4 cm.",
+    evidence=assessment_evidence,
+    assessor_output=valid_assessor_output,
+)
+
+assert validated_assessment.status == "claim_supported"
+assert (
+    validated_assessment.claim
+    == "The intervention increased mean jump height by 2.4 cm."
+)
+assert validated_assessment.evidence is assessment_evidence
+assert validated_assessment.reasons == [
+    "The located evidence agrees with the claimed outcome, direction, and value."
+]
+
+print("PASS: valid assessor output builds ClaimAssessmentResult")
+print("PASS: original application-owned claim is retained")
+print("PASS: original application-owned evidence is retained")
+print("PASS: assessor reason is retained")
+
+
+for allowed_status in (
+    "claim_supported",
+    "claim_partially_supported",
+    "claim_not_supported",
+    "claim_contradicted",
+):
+    result = academic_claims.build_claim_assessment(
+        claim="Synthetic claim.",
+        evidence=assessment_evidence,
+        assessor_output={
+            "status": allowed_status,
+            "reason": "Synthetic grounded reason.",
+        },
+    )
+    assert result.status == allowed_status
+
+print("PASS: exactly the four planned assessment statuses are accepted")
+
+
+invalid_statuses = (
+    "supported",
+    "claim_verified",
+    "probably_supported",
+    "claim_located",
+    "",
+)
+
+for invalid_status in invalid_statuses:
+    try:
+        academic_claims.build_claim_assessment(
+            claim="Synthetic claim.",
+            evidence=assessment_evidence,
+            assessor_output={
+                "status": invalid_status,
+                "reason": "Synthetic reason.",
+            },
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            f"Invalid assessor status was accepted: {invalid_status!r}"
+        )
+
+print("PASS: invented or upstream statuses are rejected")
+
+
+for bad_output in (
+    {},
+    {"status": "claim_supported"},
+    {"reason": "Missing status."},
+    {
+        "status": "claim_supported",
+        "reason": "",
+    },
+    {
+        "status": "claim_supported",
+        "reason": "   ",
+    },
+):
+    try:
+        academic_claims.build_claim_assessment(
+            claim="Synthetic claim.",
+            evidence=assessment_evidence,
+            assessor_output=bad_output,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            f"Malformed assessor output was accepted: {bad_output!r}"
+        )
+
+print("PASS: missing and empty required fields are rejected")
+
+
+try:
+    academic_claims.build_claim_assessment(
+        claim="Synthetic claim.",
+        evidence=assessment_evidence,
+        assessor_output={
+            "status": "claim_supported",
+            "reason": "Synthetic reason.",
+            "claim": "Model-rewritten claim.",
+        },
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Unexpected assessor field was accepted")
+
+print("PASS: unexpected fields are rejected")
+print("PASS: assessor cannot supply or rewrite the claim")
+
+
+try:
+    academic_claims.build_claim_assessment(
+        claim="Synthetic claim.",
+        evidence=assessment_evidence,
+        assessor_output={
+            "status": "claim_supported",
+            "reason": "Synthetic reason.",
+            "evidence": [
+                {
+                    "text": "Model-generated evidence.",
+                    "page_number": 999,
+                }
+            ],
+        },
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Model-supplied evidence was accepted")
+
+print("PASS: assessor cannot supply or rewrite evidence provenance")
+
+
+try:
+    academic_claims.build_claim_assessment(
+        claim="Synthetic claim.",
+        evidence=assessment_evidence,
+        assessor_output={
+            "status": "claim_supported",
+            "reason": 42,
+        },
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Non-string assessor reason was accepted")
+
+print("PASS: assessor reason must be text")
+
+
+try:
+    academic_claims.build_claim_assessment(
+        claim="Synthetic claim.",
+        evidence=assessment_evidence,
+        assessor_output="claim_supported",
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Non-object assessor output was accepted")
+
+print("PASS: assessor output must be an object")
+print("PASS: assessor judgement is separated from application-owned provenance")
+
+print("\n[73] semantic assessment requires located application-owned evidence")
+
+for assessment_status in (
+    "claim_supported",
+    "claim_partially_supported",
+    "claim_not_supported",
+    "claim_contradicted",
+):
+    try:
+        academic_claims.build_claim_assessment(
+            claim="Synthetic claim.",
+            evidence=[],
+            assessor_output={
+                "status": assessment_status,
+                "reason": "Synthetic assessment reason.",
+            },
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            f"Assessment without evidence was accepted: {assessment_status!r}"
+        )
+
+print("PASS: no assessment status is accepted without located evidence")
+
+
+try:
+    academic_claims.build_claim_assessment(
+        claim="Synthetic claim.",
+        evidence=None,
+        assessor_output={
+            "status": "claim_supported",
+            "reason": "Synthetic assessment reason.",
+        },
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Assessment with evidence=None was accepted")
+
+print("PASS: missing evidence cannot enter semantic assessment")
+
+
+try:
+    academic_claims.build_claim_assessment(
+        claim="Synthetic claim.",
+        evidence=["model-generated passage"],
+        assessor_output={
+            "status": "claim_supported",
+            "reason": "Synthetic assessment reason.",
+        },
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Non-ClaimEvidence input was accepted")
+
+print("PASS: semantic assessment requires ClaimEvidence objects")
+print("PASS: assessment remains strictly downstream of claim location")

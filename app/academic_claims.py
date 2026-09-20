@@ -79,6 +79,54 @@ class ClaimAssessmentResult:
         }
 
 
+def build_claim_assessment(
+    claim: str,
+    evidence: list[ClaimEvidence],
+    assessor_output: Any,
+) -> ClaimAssessmentResult:
+    """Validate assessor judgement and attach application-owned provenance."""
+    if (
+        not isinstance(evidence, list)
+        or not evidence
+        or not all(isinstance(item, ClaimEvidence) for item in evidence)
+    ):
+        raise ValueError(
+            "Semantic claim assessment requires located ClaimEvidence."
+        )
+
+    if not isinstance(assessor_output, dict):
+        raise ValueError("Assessor output must be an object.")
+
+    expected_fields = {"status", "reason"}
+    if set(assessor_output) != expected_fields:
+        raise ValueError(
+            "Assessor output must contain exactly 'status' and 'reason'."
+        )
+
+    status = assessor_output["status"]
+    reason = assessor_output["reason"]
+
+    allowed_statuses = {
+        "claim_supported",
+        "claim_partially_supported",
+        "claim_not_supported",
+        "claim_contradicted",
+    }
+
+    if not isinstance(status, str) or status not in allowed_statuses:
+        raise ValueError("Assessor output contains an invalid status.")
+
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("Assessor reason must be non-empty text.")
+
+    return ClaimAssessmentResult(
+        status=status,
+        claim=claim,
+        evidence=evidence,
+        reasons=[reason.strip()],
+    )
+
+
 @dataclass
 class DownloadedSource:
     """Raw resource obtained from a discovered scholarly source location.
