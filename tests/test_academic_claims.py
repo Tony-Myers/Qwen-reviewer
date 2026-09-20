@@ -4244,6 +4244,37 @@ assert "absence of support is not contradiction" in assessment_prompt.lower()
 print("PASS: lack of support is explicitly distinguished from contradiction")
 
 
+normalised_assessment_prompt = " ".join(
+    assessment_prompt.lower().split()
+)
+
+referent_rule_phrases = (
+    "same relevant referent",
+    "different referent or context",
+    "does not by itself contradict",
+    "use claim_not_supported, not claim_contradicted",
+    "incompatible numerical value",
+)
+
+for phrase in referent_rule_phrases:
+    assert phrase in normalised_assessment_prompt
+
+print("PASS: prompt distinguishes referent mismatch from contrary evidence")
+
+output_discipline_phrases = (
+    "decide the status before writing the reason",
+    "one concise sentence",
+    "no more than 30 words",
+    "consistent with the selected status",
+    "do not show deliberation",
+)
+
+for phrase in output_discipline_phrases:
+    assert phrase in normalised_assessment_prompt
+
+print("PASS: prompt constrains assessor reasoning to a concise consistent judgement")
+
+
 for component in (
     "direction",
     "numerical value",

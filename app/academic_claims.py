@@ -178,8 +178,23 @@ claim_contradicted
 The supplied evidence clearly establishes a material statement or result that
 is inconsistent with the claim.
 
-Absence of support is not contradiction. Use claim_contradicted only when the
-supplied evidence provides clear contrary evidence.
+Absence of support is not contradiction. A mismatch between the claim and
+evidence is not necessarily contrary evidence. Evidence about a different
+referent or context, such as a different population, intervention or exposure,
+outcome, or comparison, does not by itself contradict the claim. If the
+evidence concerns only a different referent and provides no evidence about the
+referent stated in the claim, use claim_not_supported, not claim_contradicted.
+
+Use claim_contradicted only when the supplied evidence provides clear contrary
+evidence about the same relevant referent and context. An opposite direction
+or incompatible numerical value can be contrary evidence when it concerns the
+same relevant referent and context.
+
+OUTPUT DISCIPLINE
+Decide the status before writing the reason.
+The reason must be one concise sentence of no more than 30 words.
+The reason must be consistent with the selected status.
+Do not show deliberation, self-correction, or reconsideration in the reason.
 
 Return only the required judgement fields: status and reason.
 The reason must explain the judgement from the supplied evidence.
