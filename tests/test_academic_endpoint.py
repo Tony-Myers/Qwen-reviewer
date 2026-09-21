@@ -59,12 +59,19 @@ def fake_ensure_model():
     server.tokenizer = "LOCAL-TOKENIZER"
 
 
-def fake_orchestrator(model, tokenizer, question):
+def fake_orchestrator(
+    model,
+    tokenizer,
+    question,
+    *,
+    source_discoverer=None,
+):
     orchestrator_calls.append(
         {
             "model": model,
             "tokenizer": tokenizer,
             "question": question,
+            "source_discoverer": source_discoverer,
         }
     )
     return FakeResult()
@@ -106,6 +113,11 @@ try:
         orchestrator_calls[0]["question"]
         == "What is relative efficiency in multiple imputation?",
         "complete question passed to orchestrator",
+    )
+
+    check(
+        callable(orchestrator_calls[0]["source_discoverer"]),
+        "production endpoint supplies a source discoverer",
     )
 
     check(
@@ -194,7 +206,7 @@ try:
 
     print("\n[4] malformed local-model structure becomes HTTP 502")
 
-    def malformed_orchestrator(model, tokenizer, question):
+    def malformed_orchestrator(model, tokenizer, question, **kwargs):
         raise academic_chat.AcademicDraftError("synthetic malformed output")
 
     server.academic_orchestrator.run_academic_first_stage = malformed_orchestrator
@@ -218,7 +230,7 @@ try:
 
     print("\n[5] local backend failure becomes HTTP 502")
 
-    def backend_failure(model, tokenizer, question):
+    def backend_failure(model, tokenizer, question, **kwargs):
         raise llm_backend.BackendError("synthetic backend failure")
 
     server.academic_orchestrator.run_academic_first_stage = backend_failure
@@ -242,7 +254,7 @@ try:
 
     print("\n[6] reference-service failure becomes HTTP 502")
 
-    def reference_failure(model, tokenizer, question):
+    def reference_failure(model, tokenizer, question, **kwargs):
         raise RuntimeError("synthetic Crossref/OpenAlex failure")
 
     server.academic_orchestrator.run_academic_first_stage = reference_failure
@@ -262,6 +274,52 @@ try:
         payload["error"] == "Academic reference service unavailable.",
         "reference-service failure is distinguished from local-model failure",
     )
+
+    print("\n[7] production source discoverer uses DOI-only OpenAlex lookup")
+
+    original_openalex_getter = server.get_openalex_work_by_doi
+    openalex_calls = []
+
+    def fake_openalex_getter(doi):
+        openalex_calls.append(doi)
+        return {
+            "doi": "https://doi.org/10.1234/example",
+            "best_oa_location": {
+                "landing_page_url": "https://example.org/article",
+                "pdf_url": "https://example.org/article.pdf",
+                "is_oa": True,
+            },
+        }
+
+    try:
+        server.get_openalex_work_by_doi = fake_openalex_getter
+
+        discovered = server.discover_academic_source(
+            "10.1234/example"
+        )
+
+        check(
+            openalex_calls == ["10.1234/example"],
+            "production source discoverer sends exactly the DOI to OpenAlex",
+        )
+
+        check(
+            discovered.status == "location_found",
+            "production source discoverer returns discovered location",
+        )
+
+        check(
+            discovered.doi == "10.1234/example",
+            "production source discovery retains normalised DOI",
+        )
+
+        check(
+            discovered.pdf_url == "https://example.org/article.pdf",
+            "production source discovery retains discovered PDF URL",
+        )
+
+    finally:
+        server.get_openalex_work_by_doi = original_openalex_getter
 
 finally:
     server.ensure_model = original_ensure_model

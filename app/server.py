@@ -47,8 +47,12 @@ import design_expectations as de  # noqa: E402
 import reviewer_notes as notes  # noqa: E402  standard library only, no model
 import llm_backend  # noqa: E402
 import academic_chat  # noqa: E402
+import academic_claims  # noqa: E402
 import academic_orchestrator  # noqa: E402
-from academic_tools import verify_academic_reference  # noqa: E402
+from academic_tools import (  # noqa: E402
+    get_openalex_work_by_doi,
+    verify_academic_reference,
+)
 from llm_backend import (  # noqa: E402
     BackendError,
     current_backend,
@@ -585,6 +589,14 @@ async def restart_server(request: dict):
     }
 
 
+def discover_academic_source(doi: str) -> academic_claims.SourceLocation:
+    """Discover a scholarly source location using a safe DOI only."""
+    return academic_claims.discover_openalex_source(
+        doi,
+        get_openalex_work_by_doi,
+    )
+
+
 # ---------------------------------------------------------------------------
 # POST /api/chat/academic
 # First-stage Academic Chat orchestration.
@@ -621,6 +633,7 @@ async def academic_chat_first_stage(request: dict):
             model,
             tokenizer,
             question,
+            source_discoverer=discover_academic_source,
         )
     except academic_chat.AcademicDraftError as exc:
         return JSONResponse(
