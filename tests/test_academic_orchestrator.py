@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 import academic_chat
+import academic_claims
 import academic_orchestrator
 import academic_technical
 from academic_tools import (
@@ -792,6 +793,147 @@ check(
     and "claim_verified" not in eligible_source_payload
     and "verified" not in eligible_source_payload,
     "retrieval eligibility does not become claim-support verification",
+)
+
+
+print("\n[17] ineligible identity never reaches source discovery")
+
+discovery_calls = []
+
+
+def fake_source_discoverer(doi):
+    discovery_calls.append(doi)
+    raise AssertionError("Ineligible identity must not reach source discovery.")
+
+
+ineligible_discovery_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=fake_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_source_discoverer,
+)
+
+check(
+    discovery_calls == [],
+    "ineligible retrieval identity causes no source-discovery call",
+)
+
+ineligible_source_claim = ineligible_discovery_result.source_claims[0]
+
+check(
+    ineligible_source_claim.source_discovery.status == "not_attempted",
+    "ineligible source claim records discovery as not attempted",
+)
+
+check(
+    ineligible_source_claim.source_discovery.location is None,
+    "unattempted discovery has no source location",
+)
+
+ineligible_discovery_payload = (
+    ineligible_discovery_result.to_dict()["source_claims"][0]["source_discovery"]
+)
+
+check(
+    ineligible_discovery_payload["status"] == "not_attempted",
+    "not-attempted discovery status serialises",
+)
+
+check(
+    ineligible_discovery_payload["location"] is None,
+    "not-attempted discovery serialises without a location",
+)
+
+
+print("\n[18] eligible identity reaches source discovery by DOI only")
+
+eligible_discovery_calls = []
+
+
+def fake_eligible_source_discoverer(doi):
+    eligible_discovery_calls.append(doi)
+    return academic_claims.SourceLocation(
+        status="location_found",
+        doi=doi,
+        source="openalex",
+        landing_page_url="https://example.org/coherent",
+        pdf_url="https://example.org/coherent.pdf",
+        is_oa=True,
+        reasons=["Synthetic discovered source location."],
+    )
+
+
+eligible_discovery_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_eligible_source_discoverer,
+)
+
+check(
+    eligible_discovery_calls == ["10.1234/coherent"],
+    "eligible source discovery receives exactly the corroborated DOI",
+)
+
+check(
+    SECRET not in repr(eligible_discovery_calls),
+    "confidential question content never reaches source discovery",
+)
+
+check(
+    "Second Work reports the synthetic literature finding."
+    not in repr(eligible_discovery_calls),
+    "source-claim text never reaches source discovery",
+)
+
+eligible_discovered_claim = eligible_discovery_result.source_claims[0]
+
+check(
+    eligible_discovered_claim.source_discovery.status == "attempted",
+    "eligible source claim records discovery as attempted",
+)
+
+check(
+    eligible_discovered_claim.source_discovery.location is not None,
+    "attempted discovery retains discovered source location",
+)
+
+check(
+    eligible_discovered_claim.source_discovery.location.doi
+    == "10.1234/coherent",
+    "discovered location retains safe retrieval DOI",
+)
+
+eligible_discovery_payload = (
+    eligible_discovery_result.to_dict()["source_claims"][0]["source_discovery"]
+)
+
+check(
+    eligible_discovery_payload["status"] == "attempted",
+    "attempted discovery status serialises",
+)
+
+check(
+    eligible_discovery_payload["location"]["doi"] == "10.1234/coherent",
+    "discovered location DOI serialises",
+)
+
+check(
+    eligible_discovery_payload["location"]["pdf_url"]
+    == "https://example.org/coherent.pdf",
+    "discovered PDF location serialises",
+)
+
+check(
+    "support_status" not in eligible_discovery_payload
+    and "claim_verified" not in eligible_discovery_payload,
+    "source discovery does not become claim-support verification",
 )
 
 

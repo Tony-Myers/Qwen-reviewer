@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import academic_chat
+import academic_claims
 import academic_technical
 from academic_tools import AcademicReferenceResult, verify_academic_reference
 
@@ -102,16 +103,38 @@ class VerifiedReferenceProposal:
 
 
 @dataclass
+class SourceDiscoveryResult:
+    """Whether source discovery was attempted for a safe retrieval identity."""
+
+    status: str
+    location: academic_claims.SourceLocation | None
+    reasons: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "location": (
+                self.location.to_dict()
+                if self.location is not None
+                else None
+            ),
+            "reasons": self.reasons,
+        }
+
+
+@dataclass
 class SourceClaimResult:
     claim: academic_chat.SourceClaim
     reference: VerifiedReferenceProposal
     retrieval_identity: RetrievalIdentity
+    source_discovery: SourceDiscoveryResult
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "claim": self.claim.to_dict(),
             "reference": self.reference.to_dict(),
             "retrieval_identity": self.retrieval_identity.to_dict(),
+            "source_discovery": self.source_discovery.to_dict(),
         }
 
 
@@ -223,6 +246,7 @@ def run_academic_first_stage(
         [academic_chat.TechnicalClaim],
         academic_technical.TechnicalVerification,
     ] | None = None,
+    source_discoverer: Callable[[str], Any] | None = None,
 ) -> AcademicFirstStageResult:
     """
     Generate a local academic draft, verify its proposed references and
@@ -268,16 +292,52 @@ def run_academic_first_stage(
             )
         )
 
-    source_claims = [
-        SourceClaimResult(
-            claim=claim,
-            reference=verified_references[claim.reference_index],
-            retrieval_identity=resolve_retrieval_identity(
-                verified_references[claim.reference_index].verification
-            ),
+    source_claims = []
+
+    for claim in draft.source_claims:
+        reference = verified_references[claim.reference_index]
+        retrieval_identity = resolve_retrieval_identity(
+            reference.verification
         )
-        for claim in draft.source_claims
-    ]
+
+        if (
+            retrieval_identity.status == "eligible"
+            and retrieval_identity.doi is not None
+            and source_discoverer is not None
+        ):
+            location = source_discoverer(retrieval_identity.doi)
+            source_discovery = SourceDiscoveryResult(
+                status="attempted",
+                location=location,
+                reasons=["Eligible retrieval identity was sent to source discovery."],
+            )
+        elif retrieval_identity.status != "eligible":
+            source_discovery = SourceDiscoveryResult(
+                status="not_attempted",
+                location=None,
+                reasons=[
+                    "Source discovery was not attempted because "
+                    "the bibliographic identity was not eligible."
+                ],
+            )
+        else:
+            source_discovery = SourceDiscoveryResult(
+                status="not_attempted",
+                location=None,
+                reasons=[
+                    "Source discovery was not attempted because "
+                    "no source discoverer was supplied."
+                ],
+            )
+
+        source_claims.append(
+            SourceClaimResult(
+                claim=claim,
+                reference=reference,
+                retrieval_identity=retrieval_identity,
+                source_discovery=source_discovery,
+            )
+        )
 
     technical_claims = []
 
