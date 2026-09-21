@@ -937,6 +937,78 @@ check(
 )
 
 
+print("\n[19] source-discovery service failure preserves academic result")
+
+unavailable_discovery_calls = []
+
+def unavailable_source_discoverer(doi):
+    unavailable_discovery_calls.append(doi)
+    raise RuntimeError("Synthetic OpenAlex service failure.")
+
+try:
+    unavailable_discovery_result = academic_orchestrator.run_academic_first_stage(
+        model,
+        tokenizer,
+        question,
+        draft_generator=fake_draft_generator,
+        reference_verifier=eligible_reference_verifier,
+        technical_verifier=fake_technical_verifier,
+        source_discoverer=unavailable_source_discoverer,
+    )
+except RuntimeError:
+    unavailable_discovery_result = None
+
+check(
+    unavailable_discovery_calls == ["10.1234/coherent"],
+    "failed source discovery still receives only the eligible DOI",
+)
+
+check(
+    unavailable_discovery_result is not None,
+    "source-discovery service failure does not destroy academic result",
+)
+
+if unavailable_discovery_result is not None:
+    unavailable_claim = unavailable_discovery_result.source_claims[0]
+
+    check(
+        unavailable_claim.source_discovery.status == "unavailable",
+        "source-discovery service failure is recorded as unavailable",
+    )
+
+    check(
+        unavailable_claim.source_discovery.location is None,
+        "unavailable source discovery exposes no source location",
+    )
+
+    unavailable_payload = unavailable_discovery_result.to_dict()
+    unavailable_discovery_payload = (
+        unavailable_payload["source_claims"][0]["source_discovery"]
+    )
+
+    check(
+        unavailable_discovery_payload["status"] == "unavailable",
+        "unavailable discovery status serialises",
+    )
+
+    check(
+        unavailable_discovery_payload["location"] is None,
+        "unavailable discovery serialises without a location",
+    )
+
+    check(
+        unavailable_payload["answer_draft"]
+        == unavailable_discovery_result.answer_draft,
+        "academic draft survives source-discovery service failure",
+    )
+
+    check(
+        "support_status" not in unavailable_discovery_payload
+        and "claim_verified" not in unavailable_discovery_payload,
+        "discovery failure does not become a claim-support conclusion",
+    )
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)

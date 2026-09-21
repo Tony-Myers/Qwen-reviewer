@@ -305,12 +305,22 @@ def run_academic_first_stage(
             and retrieval_identity.doi is not None
             and source_discoverer is not None
         ):
-            location = source_discoverer(retrieval_identity.doi)
-            source_discovery = SourceDiscoveryResult(
-                status="attempted",
-                location=location,
-                reasons=["Eligible retrieval identity was sent to source discovery."],
-            )
+            try:
+                location = source_discoverer(retrieval_identity.doi)
+            except RuntimeError:
+                source_discovery = SourceDiscoveryResult(
+                    status="unavailable",
+                    location=None,
+                    reasons=["Source discovery service was unavailable."],
+                )
+            else:
+                source_discovery = SourceDiscoveryResult(
+                    status="attempted",
+                    location=location,
+                    reasons=[
+                        "Eligible retrieval identity was sent to source discovery."
+                    ],
+                )
         elif retrieval_identity.status != "eligible":
             source_discovery = SourceDiscoveryResult(
                 status="not_attempted",
