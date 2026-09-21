@@ -1333,6 +1333,151 @@ check(
 )
 
 
+print("\n[24] semantic assessment is gated by located evidence")
+
+claim_assessment_calls = []
+
+def fake_claim_assessor(claim, evidence):
+    claim_assessment_calls.append((claim, evidence))
+    return academic_claims.ClaimAssessmentResult(
+        status="supported",
+        claim=claim,
+        evidence=evidence,
+        reasons=["Synthetic semantic assessment."],
+    )
+
+assessed_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_eligible_source_discoverer,
+    source_retriever=fake_source_retriever,
+    claim_locator=fake_claim_locator,
+    claim_assessor=fake_claim_assessor,
+)
+
+check(
+    len(claim_assessment_calls) == 1,
+    "located claim reaches semantic assessment exactly once",
+)
+
+assessed_claim, assessed_evidence = claim_assessment_calls[0]
+
+check(
+    assessed_claim == assessed_result.source_claims[0].claim.claim,
+    "semantic assessor receives only the atomic source claim",
+)
+
+check(
+    assessed_evidence
+    is assessed_result.source_claims[0].claim_location.evidence,
+    "semantic assessor receives application-owned located evidence",
+)
+
+check(
+    assessed_result.source_claims[0].claim_assessment.status == "supported",
+    "semantic assessment is retained separately from claim location",
+)
+
+check(
+    assessed_result.source_claims[0]
+    .claim_assessment.evidence[0].page_number == 7,
+    "semantic assessment retains physical page provenance",
+)
+
+assessed_payload = assessed_result.to_dict()["source_claims"][0]
+
+check(
+    assessed_payload["claim_assessment"]["status"] == "supported",
+    "semantic assessment status serialises",
+)
+
+check(
+    assessed_payload["claim_assessment"]["evidence"][0]["page_number"] == 7,
+    "semantic assessment provenance serialises",
+)
+
+blocked_claim_assessment_calls = []
+
+def claim_assessor_must_not_run(claim, evidence):
+    blocked_claim_assessment_calls.append((claim, evidence))
+    raise AssertionError(
+        "Semantic assessor must not run without located evidence."
+    )
+
+unlocated_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_eligible_source_discoverer,
+    source_retriever=fake_failed_source_retriever,
+    claim_locator=claim_locator_must_not_run,
+    claim_assessor=claim_assessor_must_not_run,
+)
+
+check(
+    blocked_claim_assessment_calls == [],
+    "claim without located evidence never reaches semantic assessment",
+)
+
+check(
+    unlocated_result.source_claims[0].claim_assessment is None,
+    "unattempted semantic assessment remains explicit",
+)
+
+check(
+    unlocated_result.to_dict()["source_claims"][0]
+    ["claim_assessment"] is None,
+    "unattempted semantic assessment serialises explicitly as null",
+)
+
+
+def fake_not_located_claim_locator(retrieved, claim):
+    return academic_claims.ClaimSupportResult(
+        status="claim_not_located",
+        source_status="retrieved",
+        claim_status="not_located",
+        doi=retrieved.doi,
+        evidence=[],
+        reasons=["Synthetic meaningful search found no candidate evidence."],
+    )
+
+not_located_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_eligible_source_discoverer,
+    source_retriever=fake_source_retriever,
+    claim_locator=fake_not_located_claim_locator,
+    claim_assessor=claim_assessor_must_not_run,
+)
+
+check(
+    blocked_claim_assessment_calls == [],
+    "retrieved source without located evidence never reaches semantic assessment",
+)
+
+check(
+    not_located_result.source_claims[0].claim_location.status
+    == "claim_not_located",
+    "claim-not-located state remains distinct from semantic assessment",
+)
+
+check(
+    not_located_result.source_claims[0].claim_assessment is None,
+    "claim-not-located state has no semantic assessment",
+)
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)

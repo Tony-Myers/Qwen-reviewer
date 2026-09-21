@@ -48,6 +48,7 @@ import reviewer_notes as notes  # noqa: E402  standard library only, no model
 import llm_backend  # noqa: E402
 import academic_chat  # noqa: E402
 import academic_claims  # noqa: E402
+import academic_claim_assessor  # noqa: E402
 import academic_orchestrator  # noqa: E402
 from academic_tools import (  # noqa: E402
     get_openalex_work_by_doi,
@@ -604,6 +605,27 @@ def retrieve_academic_source(
     return academic_claims.retrieve_pdf_source_from_location(location)
 
 
+def assess_academic_claim(
+    claim: str,
+    evidence: list[academic_claims.ClaimEvidence],
+) -> academic_claims.ClaimAssessmentResult:
+    """Assess located claim evidence using the configured local model."""
+
+    def assessor(*, prompt, schema):
+        return academic_claim_assessor.generate_claim_assessor_output(
+            model,
+            tokenizer,
+            prompt,
+            schema,
+        )
+
+    return academic_claims.assess_located_claim(
+        claim=claim,
+        evidence=evidence,
+        assessor=assessor,
+    )
+
+
 # ---------------------------------------------------------------------------
 # POST /api/chat/academic
 # First-stage Academic Chat orchestration.
@@ -644,6 +666,7 @@ async def academic_chat_first_stage(request: dict):
             source_discoverer=discover_academic_source,
             source_retriever=retrieve_academic_source,
             claim_locator=academic_claims.prepare_claim_support,
+            claim_assessor=assess_academic_claim,
         )
     except academic_chat.AcademicDraftError as exc:
         return JSONResponse(

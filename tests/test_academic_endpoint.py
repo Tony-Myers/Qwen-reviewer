@@ -68,6 +68,7 @@ def fake_orchestrator(
     source_discoverer=None,
     source_retriever=None,
     claim_locator=None,
+    claim_assessor=None,
 ):
     orchestrator_calls.append(
         {
@@ -77,6 +78,7 @@ def fake_orchestrator(
             "source_discoverer": source_discoverer,
             "source_retriever": source_retriever,
             "claim_locator": claim_locator,
+            "claim_assessor": claim_assessor,
         }
     )
     return FakeResult()
@@ -134,6 +136,11 @@ try:
         orchestrator_calls[0]["claim_locator"]
         is academic_claims.prepare_claim_support,
         "production endpoint supplies the local claim locator",
+    )
+
+    check(
+        callable(orchestrator_calls[0]["claim_assessor"]),
+        "production endpoint supplies a local semantic claim assessor",
     )
 
     check(
@@ -394,6 +401,99 @@ try:
     finally:
         server.academic_claims.retrieve_pdf_source_from_location = (
             original_pdf_retriever
+        )
+
+
+    print("\n[9] production semantic assessor preserves application-owned evidence")
+
+    original_claim_assessor = (
+        server.academic_claim_assessor.generate_claim_assessor_output
+    )
+    claim_assessor_calls = []
+
+    evidence = [
+        academic_claims.ClaimEvidence(
+            text="Synthetic located scholarly evidence.",
+            locator="https://example.org/article.pdf",
+            source="openalex",
+            page_number=7,
+        )
+    ]
+
+    def fake_claim_assessor_output(
+        model,
+        tokenizer,
+        prompt,
+        schema,
+        *,
+        max_tokens=512,
+    ):
+        claim_assessor_calls.append(
+            {
+                "model": model,
+                "tokenizer": tokenizer,
+                "prompt": prompt,
+                "schema": schema,
+            }
+        )
+        return {
+            "status": "claim_supported",
+            "reason": "The supplied evidence directly supports the claim.",
+        }
+
+    try:
+        server.academic_claim_assessor.generate_claim_assessor_output = (
+            fake_claim_assessor_output
+        )
+        server.model = "LOCAL-MODEL"
+        server.tokenizer = "LOCAL-TOKENIZER"
+
+        assessment = server.assess_academic_claim(
+            "Synthetic atomic source claim.",
+            evidence,
+        )
+
+        check(
+            len(claim_assessor_calls) == 1,
+            "production semantic assessor invokes local model adapter exactly once",
+        )
+
+        check(
+            claim_assessor_calls[0]["model"] == "LOCAL-MODEL"
+            and claim_assessor_calls[0]["tokenizer"] == "LOCAL-TOKENIZER",
+            "semantic assessment uses the configured local model",
+        )
+
+        check(
+            "Synthetic atomic source claim."
+            in claim_assessor_calls[0]["prompt"],
+            "semantic assessor prompt contains the atomic source claim",
+        )
+
+        check(
+            "Synthetic located scholarly evidence."
+            in claim_assessor_calls[0]["prompt"],
+            "semantic assessor prompt contains only supplied located evidence",
+        )
+
+        check(
+            assessment.status == "claim_supported",
+            "validated semantic judgement is returned",
+        )
+
+        check(
+            assessment.evidence is evidence,
+            "semantic assessment retains application-owned evidence",
+        )
+
+        check(
+            assessment.evidence[0].page_number == 7,
+            "application-owned physical page provenance survives assessment",
+        )
+
+    finally:
+        server.academic_claim_assessor.generate_claim_assessor_output = (
+            original_claim_assessor
         )
 
 finally:
