@@ -41,6 +41,15 @@ class AcademicReference:
 
 
 @dataclass
+class SourceClaim:
+    claim: str
+    reference_index: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class TechnicalClaim:
     type: str
     concept: str
@@ -55,6 +64,7 @@ class TechnicalClaim:
 class AcademicDraft:
     answer_draft: str
     references: list[AcademicReference]
+    source_claims: list[SourceClaim]
     technical_claims: list[TechnicalClaim]
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,6 +74,7 @@ class AcademicDraft:
 _TOP_LEVEL_FIELDS = {
     "answer_draft",
     "references",
+    "source_claims",
     "technical_claims",
 }
 
@@ -73,6 +84,11 @@ _REFERENCE_FIELDS = {
     "year",
     "venue",
     "doi",
+}
+
+_SOURCE_CLAIM_FIELDS = {
+    "claim",
+    "reference_index",
 }
 
 _TECHNICAL_CLAIM_FIELDS = {
@@ -128,6 +144,26 @@ ACADEMIC_DRAFT_RESPONSE_FORMAT = {
                         "additionalProperties": False,
                     },
                 },
+                "source_claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "claim": {
+                                "type": "string",
+                            },
+                            "reference_index": {
+                                "type": "integer",
+                                "minimum": 0,
+                            },
+                        },
+                        "required": [
+                            "claim",
+                            "reference_index",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
                 "technical_claims": {
                     "type": "array",
                     "items": {
@@ -159,6 +195,7 @@ ACADEMIC_DRAFT_RESPONSE_FORMAT = {
             "required": [
                 "answer_draft",
                 "references",
+                "source_claims",
                 "technical_claims",
             ],
             "additionalProperties": False,
@@ -266,6 +303,37 @@ def _required_nonempty_string(
     return raw.strip()
 
 
+def _parse_source_claim(value: Any, index: int) -> SourceClaim:
+    if not isinstance(value, dict):
+        raise AcademicDraftError(
+            f"source_claims[{index}] must be an object."
+        )
+
+    unexpected = set(value) - _SOURCE_CLAIM_FIELDS
+    if unexpected:
+        raise AcademicDraftError(
+            f"source_claims[{index}] contains unexpected fields: "
+            f"{', '.join(sorted(unexpected))}."
+        )
+
+    claim = value.get("claim")
+    if not isinstance(claim, str) or not claim.strip():
+        raise AcademicDraftError(
+            f"source_claims[{index}].claim must be a non-empty string."
+        )
+
+    reference_index = value.get("reference_index")
+    if isinstance(reference_index, bool) or not isinstance(reference_index, int):
+        raise AcademicDraftError(
+            f"source_claims[{index}].reference_index must be an integer."
+        )
+
+    return SourceClaim(
+        claim=claim.strip(),
+        reference_index=reference_index,
+    )
+
+
 def _parse_technical_claim(value: Any, index: int) -> TechnicalClaim:
     if not isinstance(value, dict):
         raise AcademicDraftError(
@@ -340,16 +408,35 @@ def parse_academic_draft(text: str) -> AcademicDraft:
     if not isinstance(references, list):
         raise AcademicDraftError("references must be an array.")
 
+    source_claims = payload["source_claims"]
+    if not isinstance(source_claims, list):
+        raise AcademicDraftError("source_claims must be an array.")
+
     technical_claims = payload["technical_claims"]
     if not isinstance(technical_claims, list):
         raise AcademicDraftError("technical_claims must be an array.")
 
+    parsed_references = [
+        _parse_reference(value, index)
+        for index, value in enumerate(references)
+    ]
+
+    parsed_source_claims = [
+        _parse_source_claim(value, index)
+        for index, value in enumerate(source_claims)
+    ]
+
+    for source_claim in parsed_source_claims:
+        if not 0 <= source_claim.reference_index < len(parsed_references):
+            raise AcademicDraftError(
+                "source_claims reference_index must identify "
+                "an existing reference."
+            )
+
     return AcademicDraft(
         answer_draft=answer_draft.strip(),
-        references=[
-            _parse_reference(value, index)
-            for index, value in enumerate(references)
-        ],
+        references=parsed_references,
+        source_claims=parsed_source_claims,
         technical_claims=[
             _parse_technical_claim(value, index)
             for index, value in enumerate(technical_claims)
@@ -373,6 +460,7 @@ Return exactly one JSON object and no explanatory text outside it.
 The object must have exactly these top-level fields:
 - "answer_draft": a non-empty string containing your provisional answer.
 - "references": an array of bibliographic reference proposals.
+- "source_claims": an array associating claims with proposed references.
 - "technical_claims": an array of checkable technical claims.
 
 Keep "answer_draft" concise: no more than 150 words. State each proposition
@@ -405,6 +493,22 @@ References are proposals, not verified references. Do not include fields such
 as "verified", "reference_verified", "claim_verified", or confidence scores.
 If you are uncertain about a bibliographic field, use null rather than inventing
 a value. Do not invent a DOI.
+
+Each source claim object must contain exactly:
+- "claim": non-empty string
+- "reference_index": non-negative integer
+
+Use reference_index to identify the entry in the references array proposed to
+support that claim. Source claims are proposals, not verified support. Do not
+include verification status, support status, or confidence scores in a source
+claim. If no source-supported claims are proposed, return an empty
+source_claims array.
+
+Source claims should be specific, self-contained propositions that materially
+depend on the cited literature. Keep each source claim atomic: do not combine
+multiple factual propositions into one claim merely because they share a
+reference. Do not create source claims for statements that do not require
+external source support.
 
 Each technical claim object must contain exactly:
 - "type": non-empty string

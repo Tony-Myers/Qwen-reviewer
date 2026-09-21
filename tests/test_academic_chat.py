@@ -50,6 +50,7 @@ VALID = {
             "doi": None,
         }
     ],
+    "source_claims": [],
     "technical_claims": [
         {
             "type": "formula",
@@ -200,6 +201,7 @@ print("\n[7] empty arrays are valid")
 empty = {
     "answer_draft": "No references or technical claims are proposed.",
     "references": [],
+    "source_claims": [],
     "technical_claims": [],
 }
 empty_draft = ac.parse_academic_draft(json.dumps(empty))
@@ -378,6 +380,143 @@ finally:
 check("empty question caused no generation call",
       empty_calls == [],
       empty_calls)
+
+
+print()
+print("[11] source claims explicitly associate claims with proposed references")
+
+source_claim_payload = dict(VALID)
+source_claim_payload["source_claims"] = [
+    {
+        "claim": (
+            "The number of imputations should reflect the "
+            "fraction of missing information."
+        ),
+        "reference_index": 0,
+    }
+]
+
+source_claim_draft = ac.parse_academic_draft(
+    json.dumps(source_claim_payload)
+)
+
+check(
+    "one source claim parsed",
+    len(source_claim_draft.source_claims) == 1,
+)
+check(
+    "source claim text retained",
+    source_claim_draft.source_claims[0].claim
+    == source_claim_payload["source_claims"][0]["claim"],
+)
+check(
+    "source claim reference index retained",
+    source_claim_draft.source_claims[0].reference_index == 0,
+)
+
+print()
+print("[12] source claims must reference an existing proposed reference")
+
+bad_source_reference = dict(VALID)
+bad_source_reference["source_claims"] = [
+    {
+        "claim": "Synthetic source-supported claim.",
+        "reference_index": 7,
+    }
+]
+
+expect_error(
+    "out-of-range source reference rejected",
+    json.dumps(bad_source_reference),
+    "reference_index must identify an existing reference",
+)
+
+
+negative_source_reference = dict(VALID)
+negative_source_reference["source_claims"] = [
+    {
+        "claim": "Synthetic source-supported claim.",
+        "reference_index": -1,
+    }
+]
+
+expect_error(
+    "negative source reference rejected",
+    json.dumps(negative_source_reference),
+    "reference_index must identify an existing reference",
+)
+
+boolean_source_reference = dict(VALID)
+boolean_source_reference["source_claims"] = [
+    {
+        "claim": "Synthetic source-supported claim.",
+        "reference_index": True,
+    }
+]
+
+expect_error(
+    "boolean source reference rejected",
+    json.dumps(boolean_source_reference),
+    "reference_index must be an integer",
+)
+
+print()
+print("[13] local generation contract requires explicit source claims")
+
+schema = ac.ACADEMIC_DRAFT_RESPONSE_FORMAT[
+    "json_schema"
+]["schema"]
+
+check(
+    "source_claims required by constrained schema",
+    "source_claims" in schema["required"],
+)
+check(
+    "source_claims defined by constrained schema",
+    "source_claims" in schema["properties"],
+)
+
+source_schema = schema["properties"].get("source_claims", {})
+source_item = source_schema.get("items", {})
+
+check(
+    "source claim schema requires claim and reference_index",
+    set(source_item.get("required", []))
+    == {"claim", "reference_index"},
+)
+check(
+    "source claim schema prohibits additional fields",
+    source_item.get("additionalProperties") is False,
+)
+
+prompt = ac.ACADEMIC_DRAFT_SYSTEM_PROMPT
+normalized_prompt = " ".join(prompt.lower().split())
+
+check(
+    "system prompt requires source claims",
+    '"source_claims"' in prompt,
+)
+check(
+    "system prompt explains reference_index",
+    "reference_index" in prompt,
+)
+check(
+    "system prompt keeps source claims provisional",
+    "source claims are proposals" in prompt.lower(),
+)
+
+check(
+    "system prompt requires self-contained source claims",
+    "self-contained propositions" in prompt.lower(),
+)
+check(
+    "system prompt requires atomic source claims",
+    "keep each source claim atomic" in prompt.lower(),
+)
+check(
+    "system prompt limits source claims to literature-dependent propositions",
+    "materially depend on the cited literature" in normalized_prompt,
+)
 
 
 print()
