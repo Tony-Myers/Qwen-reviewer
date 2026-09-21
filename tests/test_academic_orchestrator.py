@@ -1009,6 +1009,164 @@ if unavailable_discovery_result is not None:
     )
 
 
+print("\n[20] discovered source location reaches substantive retrieval")
+
+retrieval_calls = []
+
+def fake_source_retriever(location):
+    retrieval_calls.append(location)
+    return academic_claims.RetrievedSource(
+        status="retrieved",
+        doi=location.doi,
+        source=location.source,
+        text="Synthetic substantive scholarly source text.",
+        locator="https://example.org/coherent.pdf",
+        reasons=["Synthetic source retrieval."],
+    )
+
+retrieval_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_eligible_source_discoverer,
+    source_retriever=fake_source_retriever,
+)
+
+check(
+    len(retrieval_calls) == 1,
+    "successful discovery invokes substantive retrieval exactly once",
+)
+
+check(
+    len(retrieval_calls) == 1
+    and retrieval_calls[0].doi == "10.1234/coherent",
+    "retriever receives discovered source location",
+)
+
+retrieved_claim = retrieval_result.source_claims[0]
+
+check(
+    retrieved_claim.source_retrieval.status == "retrieved",
+    "retrieved source is retained on source claim",
+)
+
+check(
+    retrieved_claim.source_retrieval.text
+    == "Synthetic substantive scholarly source text.",
+    "retrieved substantive text remains auditable",
+)
+
+retrieval_payload = retrieval_result.to_dict()["source_claims"][0]
+
+check(
+    retrieval_payload["source_retrieval"]["status"] == "retrieved",
+    "retrieval status serialises with source claim",
+)
+
+check(
+    "support_status" not in retrieval_payload
+    and "claim_verified" not in retrieval_payload,
+    "successful retrieval does not become claim-support verification",
+)
+
+
+print("\n[21] retrieval requires a successfully discovered location")
+
+blocked_retrieval_calls = []
+
+def retrieval_must_not_run(location):
+    blocked_retrieval_calls.append(location)
+    raise AssertionError(
+        "retrieval must not run without a successfully discovered location"
+    )
+
+# Ineligible bibliographic identity: discovery itself is not attempted.
+ineligible_retrieval_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=fake_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_eligible_source_discoverer,
+    source_retriever=retrieval_must_not_run,
+)
+
+check(
+    blocked_retrieval_calls == [],
+    "ineligible identity never reaches substantive retrieval",
+)
+
+check(
+    ineligible_retrieval_result.source_claims[0].source_retrieval is None,
+    "unattempted discovery has no retrieval result",
+)
+
+# Eligible identity, but discovery service fails.
+unavailable_retrieval_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=unavailable_source_discoverer,
+    source_retriever=retrieval_must_not_run,
+)
+
+check(
+    blocked_retrieval_calls == [],
+    "unavailable discovery never reaches substantive retrieval",
+)
+
+check(
+    unavailable_retrieval_result.source_claims[0].source_retrieval is None,
+    "unavailable discovery has no retrieval result",
+)
+
+# Eligible identity, successful discovery operation, but no location.
+def no_location_source_discoverer(doi):
+    return academic_claims.SourceLocation(
+        status="location_not_found",
+        doi=doi,
+        source="openalex",
+        landing_page_url=None,
+        pdf_url=None,
+        is_oa=None,
+        reasons=["Synthetic source location not found."],
+    )
+
+no_location_retrieval_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=no_location_source_discoverer,
+    source_retriever=retrieval_must_not_run,
+)
+
+check(
+    blocked_retrieval_calls == [],
+    "missing source location never reaches substantive retrieval",
+)
+
+check(
+    no_location_retrieval_result.source_claims[0].source_retrieval is None,
+    "missing source location has no retrieval result",
+)
+
+check(
+    no_location_retrieval_result.to_dict()["source_claims"][0]
+    ["source_retrieval"] is None,
+    "unattempted retrieval serialises explicitly as null",
+)
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)

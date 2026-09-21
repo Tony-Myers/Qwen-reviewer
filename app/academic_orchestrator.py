@@ -128,6 +128,7 @@ class SourceClaimResult:
     reference: VerifiedReferenceProposal
     retrieval_identity: RetrievalIdentity
     source_discovery: SourceDiscoveryResult
+    source_retrieval: academic_claims.RetrievedSource | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -135,6 +136,11 @@ class SourceClaimResult:
             "reference": self.reference.to_dict(),
             "retrieval_identity": self.retrieval_identity.to_dict(),
             "source_discovery": self.source_discovery.to_dict(),
+            "source_retrieval": (
+                self.source_retrieval.to_dict()
+                if self.source_retrieval is not None
+                else None
+            ),
         }
 
 
@@ -247,6 +253,10 @@ def run_academic_first_stage(
         academic_technical.TechnicalVerification,
     ] | None = None,
     source_discoverer: Callable[[str], Any] | None = None,
+    source_retriever: Callable[
+        [academic_claims.SourceLocation],
+        academic_claims.RetrievedSource,
+    ] | None = None,
 ) -> AcademicFirstStageResult:
     """
     Generate a local academic draft, verify its proposed references and
@@ -340,12 +350,25 @@ def run_academic_first_stage(
                 ],
             )
 
+        source_retrieval = None
+
+        if (
+            source_discovery.status == "attempted"
+            and source_discovery.location is not None
+            and source_discovery.location.status == "location_found"
+            and source_retriever is not None
+        ):
+            source_retrieval = source_retriever(
+                source_discovery.location
+            )
+
         source_claims.append(
             SourceClaimResult(
                 claim=claim,
                 reference=reference,
                 retrieval_identity=retrieval_identity,
                 source_discovery=source_discovery,
+                source_retrieval=source_retrieval,
             )
         )
 
