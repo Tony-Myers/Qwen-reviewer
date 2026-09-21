@@ -1167,6 +1167,70 @@ check(
 )
 
 
+print("\n[22] failed substantive retrieval remains auditable")
+
+failed_retrieval_calls = []
+
+def fake_failed_source_retriever(location):
+    failed_retrieval_calls.append(location)
+    return academic_claims.RetrievedSource(
+        status="not_retrieved",
+        doi=location.doi,
+        source=location.source,
+        text=None,
+        locator=None,
+        reasons=["Synthetic PDF retrieval failure."],
+    )
+
+failed_retrieval_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_eligible_source_discoverer,
+    source_retriever=fake_failed_source_retriever,
+)
+
+check(
+    len(failed_retrieval_calls) == 1,
+    "failed substantive retrieval was attempted exactly once",
+)
+
+failed_claim = failed_retrieval_result.source_claims[0]
+
+check(
+    failed_claim.source_retrieval is not None,
+    "attempted failed retrieval remains distinct from unattempted retrieval",
+)
+
+check(
+    failed_claim.source_retrieval is not None
+    and failed_claim.source_retrieval.status == "not_retrieved",
+    "failed retrieval retains not-retrieved status",
+)
+
+failed_payload = failed_retrieval_result.to_dict()["source_claims"][0]
+
+check(
+    failed_payload["source_retrieval"]["status"] == "not_retrieved",
+    "failed retrieval status serialises",
+)
+
+check(
+    failed_payload["source_retrieval"]["reasons"]
+    == ["Synthetic PDF retrieval failure."],
+    "failed retrieval reason remains auditable",
+)
+
+check(
+    "support_status" not in failed_payload
+    and "claim_verified" not in failed_payload,
+    "failed retrieval does not become a claim-support conclusion",
+)
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
