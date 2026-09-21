@@ -8,7 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 import academic_chat
 import academic_orchestrator
 import academic_technical
-from academic_tools import AcademicReferenceResult, VerificationResult
+from academic_tools import (
+    AcademicReferenceResult,
+    CorroborationResult,
+    ReferenceCandidate,
+    VerificationResult,
+)
 
 
 fails = []
@@ -424,6 +429,271 @@ check(
 check(
     result.source_claims[0].claim.reference_index == 1,
     "original model-proposed reference index remains auditable",
+)
+
+
+print("\n[10] conflicting bibliographic identities block retrieval")
+
+doi_candidate = ReferenceCandidate(
+    title="DOI Identity",
+    authors=["A. Author"],
+    year=2020,
+    venue="Journal A",
+    doi="10.1234/doi-identity",
+    work_type="journal-article",
+)
+
+title_candidate = ReferenceCandidate(
+    title="Title Identity",
+    authors=["B. Author"],
+    year=2021,
+    venue="Journal B",
+    doi="10.1234/title-identity",
+    work_type="journal-article",
+)
+
+conflicting_reference = AcademicReferenceResult(
+    crossref_verification=VerificationResult(
+        status="metadata_conflict",
+        candidate=doi_candidate,
+        reasons=["Synthetic DOI/title metadata conflict."],
+        related_candidate=title_candidate,
+    ),
+    doi_corroboration=CorroborationResult(
+        status="corroborated",
+        crossref=doi_candidate,
+        openalex=doi_candidate,
+        same_doi=True,
+        title_similarity=1.0,
+        author_agreement=True,
+        venue_similarity=1.0,
+        year_difference=0,
+        reasons=["Synthetic DOI identity corroboration."],
+    ),
+    related_corroboration=CorroborationResult(
+        status="corroborated",
+        crossref=title_candidate,
+        openalex=title_candidate,
+        same_doi=True,
+        title_similarity=1.0,
+        author_agreement=True,
+        venue_similarity=1.0,
+        year_difference=0,
+        reasons=["Synthetic title identity corroboration."],
+    ),
+    identity_conflict=True,
+    reasons=["Synthetic identity conflict."],
+)
+
+retrieval_identity = academic_orchestrator.resolve_retrieval_identity(
+    conflicting_reference
+)
+
+check(
+    retrieval_identity.status == "not_eligible",
+    "identity conflict blocks automatic source retrieval",
+)
+
+check(
+    retrieval_identity.doi is None,
+    "identity conflict exposes no DOI for automatic retrieval",
+)
+
+
+print("\n[11] coherent verified identity permits retrieval")
+
+coherent_candidate = ReferenceCandidate(
+    title="Coherent Work",
+    authors=["A. Author"],
+    year=2020,
+    venue="Journal A",
+    doi="10.1234/coherent",
+    work_type="journal-article",
+)
+
+coherent_corroboration = CorroborationResult(
+    status="corroborated",
+    crossref=coherent_candidate,
+    openalex=coherent_candidate,
+    same_doi=True,
+    title_similarity=1.0,
+    author_agreement=True,
+    venue_similarity=1.0,
+    year_difference=0,
+    reasons=["Synthetic coherent identity corroboration."],
+)
+
+coherent_reference = AcademicReferenceResult(
+    crossref_verification=VerificationResult(
+        status="verified",
+        candidate=coherent_candidate,
+        reasons=["Synthetic verified bibliographic identity."],
+    ),
+    doi_corroboration=coherent_corroboration,
+    related_corroboration=coherent_corroboration,
+    identity_conflict=False,
+    reasons=["Synthetic coherent bibliographic identity."],
+)
+
+coherent_identity = academic_orchestrator.resolve_retrieval_identity(
+    coherent_reference
+)
+
+check(
+    coherent_identity.status == "eligible",
+    "coherent verified identity permits automatic source retrieval",
+)
+
+check(
+    coherent_identity.doi == "10.1234/coherent",
+    "coherent retrieval identity exposes corroborated DOI",
+)
+
+
+print("\n[12] inconsistent corroboration blocks retrieval")
+
+crossref_candidate = ReferenceCandidate(
+    title="Inconsistent Work",
+    authors=["A. Author"],
+    year=2020,
+    venue="Journal A",
+    doi="10.1234/crossref-identity",
+    work_type="journal-article",
+)
+
+openalex_candidate = ReferenceCandidate(
+    title="Inconsistent Work",
+    authors=["A. Author"],
+    year=2020,
+    venue="Journal A",
+    doi="10.1234/openalex-identity",
+    work_type="journal-article",
+    source="openalex",
+)
+
+inconsistent_corroboration = CorroborationResult(
+    status="corroborated",
+    crossref=crossref_candidate,
+    openalex=openalex_candidate,
+    same_doi=True,
+    title_similarity=1.0,
+    author_agreement=True,
+    venue_similarity=1.0,
+    year_difference=0,
+    reasons=["Synthetic internally inconsistent corroboration."],
+)
+
+inconsistent_reference = AcademicReferenceResult(
+    crossref_verification=VerificationResult(
+        status="verified",
+        candidate=crossref_candidate,
+        reasons=["Synthetic verified bibliographic identity."],
+    ),
+    doi_corroboration=inconsistent_corroboration,
+    related_corroboration=None,
+    identity_conflict=False,
+    reasons=["Synthetic inconsistent corroboration fixture."],
+)
+
+inconsistent_identity = academic_orchestrator.resolve_retrieval_identity(
+    inconsistent_reference
+)
+
+check(
+    inconsistent_identity.status == "not_eligible",
+    "mismatched underlying DOIs override corroborated status",
+)
+
+check(
+    inconsistent_identity.doi is None,
+    "inconsistent corroboration exposes no DOI for retrieval",
+)
+
+
+print("\n[13] DOI-only verified identity permits retrieval")
+
+doi_only_reference = AcademicReferenceResult(
+    crossref_verification=VerificationResult(
+        status="verified",
+        candidate=coherent_candidate,
+        reasons=["Synthetic DOI-only verification."],
+    ),
+    doi_corroboration=coherent_corroboration,
+    related_corroboration=None,
+    identity_conflict=False,
+    reasons=["Synthetic DOI-only corroborated identity."],
+)
+
+doi_only_identity = academic_orchestrator.resolve_retrieval_identity(
+    doi_only_reference
+)
+
+check(
+    doi_only_identity.status == "eligible",
+    "verified DOI-only identity permits automatic source retrieval",
+)
+
+check(
+    doi_only_identity.doi == "10.1234/coherent",
+    "DOI-only retrieval uses cross-database corroborated DOI",
+)
+
+
+print("\n[14] title-only verified identity permits retrieval")
+
+title_only_reference = AcademicReferenceResult(
+    crossref_verification=VerificationResult(
+        status="verified",
+        candidate=coherent_candidate,
+        reasons=["Synthetic title-only verification."],
+    ),
+    doi_corroboration=None,
+    related_corroboration=coherent_corroboration,
+    identity_conflict=False,
+    reasons=["Synthetic title-only corroborated identity."],
+)
+
+title_only_identity = academic_orchestrator.resolve_retrieval_identity(
+    title_only_reference
+)
+
+check(
+    title_only_identity.status == "eligible",
+    "verified title-only identity permits automatic source retrieval",
+)
+
+check(
+    title_only_identity.doi == "10.1234/coherent",
+    "title-only retrieval uses title-derived corroborated DOI",
+)
+
+
+print("\n[15] probable identity remains ineligible")
+
+probable_reference = AcademicReferenceResult(
+    crossref_verification=VerificationResult(
+        status="probable",
+        candidate=coherent_candidate,
+        reasons=["Synthetic probable bibliographic identity."],
+    ),
+    doi_corroboration=coherent_corroboration,
+    related_corroboration=coherent_corroboration,
+    identity_conflict=False,
+    reasons=["Synthetic probable identity with strong corroboration."],
+)
+
+probable_identity = academic_orchestrator.resolve_retrieval_identity(
+    probable_reference
+)
+
+check(
+    probable_identity.status == "not_eligible",
+    "probable bibliographic identity does not permit automatic retrieval",
+)
+
+check(
+    probable_identity.doi is None,
+    "probable identity exposes no DOI despite corroboration",
 )
 
 

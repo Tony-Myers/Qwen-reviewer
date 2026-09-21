@@ -25,6 +25,71 @@ from academic_tools import AcademicReferenceResult, verify_academic_reference
 
 
 @dataclass
+class RetrievalIdentity:
+    """Bibliographic identity permitted to cross into source retrieval."""
+
+    status: str
+    doi: str | None
+    reasons: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "doi": self.doi,
+            "reasons": self.reasons,
+        }
+
+
+def resolve_retrieval_identity(
+    verification: AcademicReferenceResult,
+) -> RetrievalIdentity:
+    """Decide whether bibliographic identity is safe for source retrieval."""
+    if verification.identity_conflict:
+        return RetrievalIdentity(
+            status="not_eligible",
+            doi=None,
+            reasons=[
+                "Conflicting bibliographic identities prevent automatic "
+                "source retrieval."
+            ],
+        )
+
+    if verification.crossref_verification.status == "verified":
+        for corroboration in (
+            verification.doi_corroboration,
+            verification.related_corroboration,
+        ):
+            if (
+                corroboration is not None
+                and corroboration.status == "corroborated"
+                and corroboration.same_doi
+                and corroboration.crossref is not None
+                and corroboration.openalex is not None
+            ):
+                crossref_doi = corroboration.crossref.doi.strip().lower()
+                openalex_doi = corroboration.openalex.doi.strip().lower()
+
+                if crossref_doi and crossref_doi == openalex_doi:
+                    return RetrievalIdentity(
+                        status="eligible",
+                        doi=crossref_doi,
+                        reasons=[
+                            "Verified bibliographic metadata and "
+                            "cross-database DOI corroboration establish "
+                            "a retrieval identity."
+                        ],
+                    )
+
+    return RetrievalIdentity(
+        status="not_eligible",
+        doi=None,
+        reasons=[
+            "No retrieval-eligible bibliographic identity has been established."
+        ],
+    )
+
+
+@dataclass
 class VerifiedReferenceProposal:
     proposed_reference: academic_chat.AcademicReference
     verification: AcademicReferenceResult
