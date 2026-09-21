@@ -61,6 +61,12 @@ def fake_draft_generator(model, tokenizer, supplied_question):
                 doi=None,
             ),
         ],
+        source_claims=[
+            academic_chat.SourceClaim(
+                claim="Second Work reports the synthetic literature finding.",
+                reference_index=1,
+            )
+        ],
         technical_claims=[
             academic_chat.TechnicalClaim(
                 type="formula",
@@ -135,6 +141,11 @@ print("\n[2] external verification boundary is bibliographic only")
 check(
     len(verification_calls) == 2,
     "each proposed reference is verified exactly once",
+)
+
+check(
+    len(verification_calls) == len(result.references),
+    "source-claim resolution causes no additional reference verification",
 )
 
 expected_fields = {
@@ -361,6 +372,58 @@ check(
 check(
     conflict_payload["answer_draft"] == "A provisional local answer.",
     "blocked draft remains available for auditability",
+)
+
+
+print("\n[9] source claim resolves to its verified reference proposal")
+
+check(
+    len(result.source_claims) == 1,
+    "source claim retained by orchestration",
+)
+
+check(
+    result.source_claims[0].claim.claim
+    == "Second Work reports the synthetic literature finding.",
+    "original source claim retained unchanged",
+)
+
+check(
+    result.source_claims[0].reference.proposed_reference.title
+    == "Second Work",
+    "source claim resolves to intended proposed reference",
+)
+
+check(
+    result.source_claims[0].reference.verification
+    is result.references[1].verification,
+    "source claim carries intended bibliographic verification",
+)
+
+source_claim_payload = result.to_dict()["source_claims"][0]
+
+check(
+    source_claim_payload["claim"]["claim"]
+    == "Second Work reports the synthetic literature finding.",
+    "source claim serialises unchanged",
+)
+
+check(
+    source_claim_payload["reference"]["proposed_reference"]["title"]
+    == "Second Work",
+    "resolved source reference serialises explicitly",
+)
+
+check(
+    "support_status" not in source_claim_payload
+    and "claim_verified" not in source_claim_payload
+    and "verified" not in source_claim_payload,
+    "orchestration does not invent claim-support status",
+)
+
+check(
+    result.source_claims[0].claim.reference_index == 1,
+    "original model-proposed reference index remains auditable",
 )
 
 

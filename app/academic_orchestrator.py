@@ -37,6 +37,18 @@ class VerifiedReferenceProposal:
 
 
 @dataclass
+class SourceClaimResult:
+    claim: academic_chat.SourceClaim
+    reference: VerifiedReferenceProposal
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "claim": self.claim.to_dict(),
+            "reference": self.reference.to_dict(),
+        }
+
+
+@dataclass
 class TechnicalClaimResult:
     claim: academic_chat.TechnicalClaim
     verification: academic_technical.TechnicalVerification
@@ -110,6 +122,7 @@ def assess_academic_release(
 class AcademicFirstStageResult:
     answer_draft: str
     references: list[VerifiedReferenceProposal]
+    source_claims: list[SourceClaimResult]
     technical_claims: list[TechnicalClaimResult]
     release: AcademicReleaseAssessment
 
@@ -119,6 +132,10 @@ class AcademicFirstStageResult:
             "references": [
                 reference.to_dict()
                 for reference in self.references
+            ],
+            "source_claims": [
+                claim.to_dict()
+                for claim in self.source_claims
             ],
             "technical_claims": [
                 claim.to_dict()
@@ -141,13 +158,15 @@ def run_academic_first_stage(
     ] | None = None,
 ) -> AcademicFirstStageResult:
     """
-    Generate a local academic draft and verify its proposed references and
-    supported deterministic technical claims.
+    Generate a local academic draft, verify its proposed references and
+    deterministic technical claims, and resolve source-claim proposals to
+    their corresponding verified-reference proposals.
 
     The full question is passed only to the local draft generator. Reference
     verification receives only the five bibliographic fields defined by the
-    AcademicReference contract. Technical verification receives only each
-    structured TechnicalClaim.
+    AcademicReference contract. Source-claim resolution is local and does not
+    establish that a reference supports its associated claim. Technical
+    verification receives only each structured TechnicalClaim.
     """
     if draft_generator is None:
         draft_generator = academic_chat.generate_academic_draft
@@ -182,6 +201,14 @@ def run_academic_first_stage(
             )
         )
 
+    source_claims = [
+        SourceClaimResult(
+            claim=claim,
+            reference=verified_references[claim.reference_index],
+        )
+        for claim in draft.source_claims
+    ]
+
     technical_claims = []
 
     for claim in draft.technical_claims:
@@ -199,6 +226,7 @@ def run_academic_first_stage(
     return AcademicFirstStageResult(
         answer_draft=draft.answer_draft,
         references=verified_references,
+        source_claims=source_claims,
         technical_claims=technical_claims,
         release=release,
     )
