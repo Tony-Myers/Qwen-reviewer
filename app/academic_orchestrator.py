@@ -105,11 +105,13 @@ class VerifiedReferenceProposal:
 class SourceClaimResult:
     claim: academic_chat.SourceClaim
     reference: VerifiedReferenceProposal
+    retrieval_identity: RetrievalIdentity
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "claim": self.claim.to_dict(),
             "reference": self.reference.to_dict(),
+            "retrieval_identity": self.retrieval_identity.to_dict(),
         }
 
 
@@ -270,6 +272,9 @@ def run_academic_first_stage(
         SourceClaimResult(
             claim=claim,
             reference=verified_references[claim.reference_index],
+            retrieval_identity=resolve_retrieval_identity(
+                verified_references[claim.reference_index].verification
+            ),
         )
         for claim in draft.source_claims
     ]

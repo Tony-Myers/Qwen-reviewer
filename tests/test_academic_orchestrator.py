@@ -405,7 +405,29 @@ check(
     "source claim carries intended bibliographic verification",
 )
 
+
+check(
+    result.source_claims[0].retrieval_identity.status == "not_eligible",
+    "source claim carries retrieval identity",
+)
+
+check(
+    result.source_claims[0].retrieval_identity.doi is None,
+    "source claim with uncorroborated reference exposes no retrieval DOI",
+)
+
 source_claim_payload = result.to_dict()["source_claims"][0]
+
+
+check(
+    source_claim_payload["retrieval_identity"]["status"] == "not_eligible",
+    "retrieval identity status serialises",
+)
+
+check(
+    source_claim_payload["retrieval_identity"]["doi"] is None,
+    "ineligible retrieval identity serialises without DOI",
+)
 
 check(
     source_claim_payload["claim"]["claim"]
@@ -694,6 +716,82 @@ check(
 check(
     probable_identity.doi is None,
     "probable identity exposes no DOI despite corroboration",
+)
+
+
+print("\n[16] eligible retrieval identity propagates through orchestration")
+
+def eligible_reference_verifier(**kwargs):
+    if kwargs["title"] == "Second Work":
+        return AcademicReferenceResult(
+            crossref_verification=VerificationResult(
+                status="verified",
+                candidate=coherent_candidate,
+                reasons=["Synthetic verified source-claim identity."],
+            ),
+            doi_corroboration=None,
+            related_corroboration=coherent_corroboration,
+            identity_conflict=False,
+            reasons=["Synthetic eligible source-claim identity."],
+        )
+
+    return AcademicReferenceResult(
+        crossref_verification=VerificationResult(
+            status="verified",
+            candidate=None,
+            reasons=["Synthetic unrelated reference result."],
+        ),
+        doi_corroboration=None,
+        related_corroboration=None,
+        identity_conflict=False,
+        reasons=["Synthetic unrelated reference result."],
+    )
+
+
+eligible_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+)
+
+eligible_source_claim = eligible_result.source_claims[0]
+
+check(
+    eligible_source_claim.reference.proposed_reference.title == "Second Work",
+    "eligible retrieval identity remains attached to intended source reference",
+)
+
+check(
+    eligible_source_claim.retrieval_identity.status == "eligible",
+    "eligible retrieval identity propagates to source claim",
+)
+
+check(
+    eligible_source_claim.retrieval_identity.doi == "10.1234/coherent",
+    "source claim carries safe corroborated retrieval DOI",
+)
+
+eligible_source_payload = eligible_result.to_dict()["source_claims"][0]
+
+check(
+    eligible_source_payload["retrieval_identity"]["status"] == "eligible",
+    "eligible retrieval status serialises",
+)
+
+check(
+    eligible_source_payload["retrieval_identity"]["doi"]
+    == "10.1234/coherent",
+    "eligible retrieval DOI serialises",
+)
+
+check(
+    "support_status" not in eligible_source_payload
+    and "claim_verified" not in eligible_source_payload
+    and "verified" not in eligible_source_payload,
+    "retrieval eligibility does not become claim-support verification",
 )
 
 
