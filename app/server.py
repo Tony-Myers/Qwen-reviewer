@@ -643,6 +643,7 @@ async def academic_chat_first_stage(request: dict):
             question,
             source_discoverer=discover_academic_source,
             source_retriever=retrieve_academic_source,
+            claim_locator=academic_claims.prepare_claim_support,
         )
     except academic_chat.AcademicDraftError as exc:
         return JSONResponse(

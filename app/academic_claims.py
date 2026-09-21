@@ -364,9 +364,17 @@ class RetrievedSource:
     text: str | None
     locator: str | None
     reasons: list[str]
+    pages: list[ExtractedPage] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "status": self.status,
+            "doi": self.doi,
+            "source": self.source,
+            "text": self.text,
+            "locator": self.locator,
+            "reasons": self.reasons,
+        }
 
 
 def _claim_terms(value: str) -> set[str]:
@@ -678,11 +686,20 @@ def prepare_claim_support(
             ],
         )
 
-    evidence = locate_claim_passages(
-        retrieved,
-        claim,
-        max_passages=max_passages,
-    )
+    if retrieved.pages is not None:
+        evidence = locate_claim_passages_in_pages(
+            retrieved.pages,
+            claim,
+            locator=retrieved.locator,
+            source=retrieved.source,
+            max_passages=max_passages,
+        )
+    else:
+        evidence = locate_claim_passages(
+            retrieved,
+            claim,
+            max_passages=max_passages,
+        )
 
     if not evidence:
         return ClaimSupportResult(
@@ -897,7 +914,8 @@ def discover_openalex_source(doi: str, work_getter) -> SourceLocation:
 def retrieve_pdf_source_from_location(
     location: SourceLocation,
     downloader=None,
-    extractor=extract_pdf_text,
+    extractor=None,
+    reader_factory=PdfReader,
 ) -> RetrievedSource:
     """Download and extract a discovered PDF source location."""
     if downloader is None:
@@ -925,11 +943,55 @@ def retrieve_pdf_source_from_location(
             reasons=["PDF source download failed."],
         )
 
-    return extract_downloaded_source(
-        downloaded,
-        doi=location.doi,
+    if extractor is not None:
+        return extract_downloaded_source(
+            downloaded,
+            doi=location.doi,
+            source=location.source,
+            extractor=extractor,
+        )
+
+    try:
+        pages = extract_pdf_pages(
+            downloaded.content,
+            reader_factory=reader_factory,
+        )
+    except SourceRetrievalError:
+        return RetrievedSource(
+            status="not_retrieved",
+            doi=_normalise_doi(location.doi),
+            source=location.source,
+            text=None,
+            locator=None,
+            reasons=["Source text extraction failed."],
+        )
+
+    text = "\n\n".join(
+        page.text
+        for page in pages
+        if page.text
+    )
+
+    if not text.strip():
+        return RetrievedSource(
+            status="not_retrieved",
+            doi=_normalise_doi(location.doi),
+            source=location.source,
+            text=None,
+            locator=None,
+            reasons=["Extracted source content was empty."],
+        )
+
+    return RetrievedSource(
+        status="retrieved",
+        doi=_normalise_doi(location.doi),
         source=location.source,
-        extractor=extractor,
+        text=text,
+        locator=downloaded.final_url,
+        reasons=[
+            "Substantive source text was extracted from downloaded content."
+        ],
+        pages=pages,
     )
 
 

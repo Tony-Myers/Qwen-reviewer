@@ -4475,6 +4475,80 @@ print("PASS: orchestration preserves the semantic-assessment trust boundary")
 
 
 print()
+print("[77] PDF retrieval preserves extracted physical pages")
+
+page_aware_download_calls = []
+page_aware_reader_calls = []
+
+def page_aware_downloader(url):
+    page_aware_download_calls.append(url)
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url="https://example.org/final-paper.pdf",
+        content_type="application/pdf",
+        content=b"%PDF-page-aware-retrieval",
+        reasons=["Synthetic PDF download."],
+    )
+
+class RetrievalPage:
+    def __init__(self, text):
+        self._text = text
+
+    def extract_text(self):
+        return self._text
+
+class RetrievalReader:
+    def __init__(self, stream):
+        page_aware_reader_calls.append(stream.read())
+        self.pages = [
+            RetrievalPage("Introduction and background."),
+            RetrievalPage(
+                "Results show mean jump height increased by 2.4 cm."
+            ),
+        ]
+
+page_aware_location = academic_claims.SourceLocation(
+    status="location_found",
+    doi="10.1234/page-aware",
+    source="openalex",
+    landing_page_url=None,
+    pdf_url="https://example.org/paper.pdf",
+    is_oa=True,
+    reasons=["Synthetic source location."],
+)
+
+page_aware_retrieved = academic_claims.retrieve_pdf_source_from_location(
+    page_aware_location,
+    downloader=page_aware_downloader,
+    reader_factory=RetrievalReader,
+)
+
+assert page_aware_download_calls == [
+    "https://example.org/paper.pdf"
+]
+assert page_aware_reader_calls == [
+    b"%PDF-page-aware-retrieval"
+]
+assert page_aware_retrieved.status == "retrieved"
+assert page_aware_retrieved.text == (
+    "Introduction and background.\n\n"
+    "Results show mean jump height increased by 2.4 cm."
+)
+assert len(page_aware_retrieved.pages) == 2
+assert page_aware_retrieved.pages[0].page_number == 1
+assert page_aware_retrieved.pages[1].page_number == 2
+assert "2.4 cm" in page_aware_retrieved.pages[1].text
+assert "pages" not in page_aware_retrieved.to_dict()
+
+print("PASS: PDF retrieval downloads the source exactly once")
+print("PASS: internal page representation is not duplicated in serialised retrieval")
+print("PASS: PDF retrieval parses the downloaded PDF exactly once")
+print("PASS: retrieval retains flattened substantive text")
+print("PASS: retrieval retains physical page provenance")
+
+
+print()
 print("[78] semantic assessment maps to bounded application presentation")
 
 presentation_evidence = [
@@ -4545,3 +4619,47 @@ assert set(academic_claims._CLAIM_PRESENTATION_STATEMENTS) == set(
 )
 
 print("PASS: every canonical semantic status has exactly one presentation policy")
+
+print()
+print("[79] retrieved PDF pages drive claim location without re-parsing")
+
+retained_page_source = academic_claims.RetrievedSource(
+    status="retrieved",
+    doi="10.1234/retained-pages",
+    source="openalex",
+    text=(
+        "Background material.\n\n"
+        "Mean jump height increased by 2.4 cm."
+    ),
+    locator="https://example.org/final-paper.pdf",
+    reasons=["Synthetic retrieved PDF."],
+    pages=[
+        academic_claims.ExtractedPage(
+            page_number=1,
+            text="Background material.",
+        ),
+        academic_claims.ExtractedPage(
+            page_number=6,
+            text="Mean jump height increased by 2.4 cm.",
+        ),
+    ],
+)
+
+retained_page_result = academic_claims.prepare_claim_support(
+    retained_page_source,
+    "Mean jump height increased by 2.4 cm.",
+)
+
+assert retained_page_result.status == "claim_located"
+assert retained_page_result.claim_status == "located"
+assert retained_page_result.evidence
+assert retained_page_result.evidence[0].page_number == 6
+assert (
+    retained_page_result.evidence[0].locator
+    == "https://example.org/final-paper.pdf"
+)
+assert retained_page_result.evidence[0].source == "openalex"
+
+print("PASS: retained PDF pages are preferred for claim location")
+print("PASS: physical page provenance reaches claim-support preparation")
+print("PASS: claim location requires no second PDF download or parse")

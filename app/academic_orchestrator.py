@@ -129,6 +129,7 @@ class SourceClaimResult:
     retrieval_identity: RetrievalIdentity
     source_discovery: SourceDiscoveryResult
     source_retrieval: academic_claims.RetrievedSource | None = None
+    claim_location: academic_claims.ClaimSupportResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -139,6 +140,11 @@ class SourceClaimResult:
             "source_retrieval": (
                 self.source_retrieval.to_dict()
                 if self.source_retrieval is not None
+                else None
+            ),
+            "claim_location": (
+                self.claim_location.to_dict()
+                if self.claim_location is not None
                 else None
             ),
         }
@@ -257,6 +263,10 @@ def run_academic_first_stage(
         [academic_claims.SourceLocation],
         academic_claims.RetrievedSource,
     ] | None = None,
+    claim_locator: Callable[
+        [academic_claims.RetrievedSource, str],
+        academic_claims.ClaimSupportResult,
+    ] | None = None,
 ) -> AcademicFirstStageResult:
     """
     Generate a local academic draft, verify its proposed references and
@@ -362,6 +372,18 @@ def run_academic_first_stage(
                 source_discovery.location
             )
 
+        claim_location = None
+
+        if (
+            source_retrieval is not None
+            and source_retrieval.status == "retrieved"
+            and claim_locator is not None
+        ):
+            claim_location = claim_locator(
+                source_retrieval,
+                claim.claim,
+            )
+
         source_claims.append(
             SourceClaimResult(
                 claim=claim,
@@ -369,6 +391,7 @@ def run_academic_first_stage(
                 retrieval_identity=retrieval_identity,
                 source_discovery=source_discovery,
                 source_retrieval=source_retrieval,
+                claim_location=claim_location,
             )
         )
 

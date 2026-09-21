@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 import academic_chat
+import academic_claims
 import llm_backend
 import server
 
@@ -66,6 +67,7 @@ def fake_orchestrator(
     *,
     source_discoverer=None,
     source_retriever=None,
+    claim_locator=None,
 ):
     orchestrator_calls.append(
         {
@@ -74,6 +76,7 @@ def fake_orchestrator(
             "question": question,
             "source_discoverer": source_discoverer,
             "source_retriever": source_retriever,
+            "claim_locator": claim_locator,
         }
     )
     return FakeResult()
@@ -125,6 +128,12 @@ try:
     check(
         callable(orchestrator_calls[0]["source_retriever"]),
         "production endpoint supplies a substantive source retriever",
+    )
+
+    check(
+        orchestrator_calls[0]["claim_locator"]
+        is academic_claims.prepare_claim_support,
+        "production endpoint supplies the local claim locator",
     )
 
     check(

@@ -1231,6 +1231,108 @@ check(
 )
 
 
+print("\n[23] claim location is gated by successful substantive retrieval")
+
+claim_location_calls = []
+
+def fake_claim_locator(retrieved, claim):
+    claim_location_calls.append((retrieved, claim))
+    return academic_claims.ClaimSupportResult(
+        status="claim_located",
+        source_status="retrieved",
+        claim_status="located",
+        doi=retrieved.doi,
+        evidence=[
+            academic_claims.ClaimEvidence(
+                text="Synthetic candidate evidence.",
+                locator=retrieved.locator,
+                source=retrieved.source,
+                page_number=7,
+            )
+        ],
+        reasons=[
+            "Synthetic candidate claim passage located."
+        ],
+    )
+
+located_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_eligible_source_discoverer,
+    source_retriever=fake_source_retriever,
+    claim_locator=fake_claim_locator,
+)
+
+check(
+    len(claim_location_calls) == 1,
+    "successful substantive retrieval reaches claim location exactly once",
+)
+
+located_retrieved, located_claim_text = claim_location_calls[0]
+
+check(
+    located_retrieved is located_result.source_claims[0].source_retrieval,
+    "claim locator receives the application-owned retrieved source",
+)
+
+check(
+    located_claim_text == located_result.source_claims[0].claim.claim,
+    "claim locator receives only the source claim selected for location",
+)
+
+check(
+    located_result.source_claims[0].claim_location.status == "claim_located",
+    "claim-location result is retained separately from retrieval",
+)
+
+located_payload = located_result.to_dict()["source_claims"][0]
+
+check(
+    located_payload["claim_location"]["evidence"][0]["page_number"] == 7,
+    "claim-location provenance serialises",
+)
+
+blocked_claim_location_calls = []
+
+def claim_locator_must_not_run(retrieved, claim):
+    blocked_claim_location_calls.append((retrieved, claim))
+    raise AssertionError(
+        "Claim locator must not run without successful substantive retrieval."
+    )
+
+failed_location_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_eligible_source_discoverer,
+    source_retriever=fake_failed_source_retriever,
+    claim_locator=claim_locator_must_not_run,
+)
+
+check(
+    blocked_claim_location_calls == [],
+    "failed substantive retrieval never reaches claim location",
+)
+
+check(
+    failed_location_result.source_claims[0].claim_location is None,
+    "unattempted claim location remains explicit after failed retrieval",
+)
+
+check(
+    failed_location_result.to_dict()["source_claims"][0]
+    ["claim_location"] is None,
+    "unattempted claim location serialises explicitly as null",
+)
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
