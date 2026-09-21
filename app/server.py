@@ -597,13 +597,21 @@ def discover_academic_source(doi: str) -> academic_claims.SourceLocation:
     )
 
 
+def retrieve_academic_source(
+    location: academic_claims.SourceLocation,
+) -> academic_claims.RetrievedSource:
+    """Retrieve substantive scholarly text from a discovered PDF."""
+    return academic_claims.retrieve_pdf_source_from_location(location)
+
+
 # ---------------------------------------------------------------------------
 # POST /api/chat/academic
 # First-stage Academic Chat orchestration.
 #
-# The complete question is passed to the local model. External bibliographic
-# services receive only reference metadata proposed by that local model.
-# Bibliographic verification does not establish support for technical claims.
+# The complete question is passed only to the local model. External
+# bibliographic/discovery services receive only bibliographic metadata or
+# identifiers, while source retrieval receives only a discovered source URL.
+# Bibliographic verification or source retrieval does not establish claim support.
 # ---------------------------------------------------------------------------
 @app.post("/api/chat/academic")
 async def academic_chat_first_stage(request: dict):
@@ -634,6 +642,7 @@ async def academic_chat_first_stage(request: dict):
             tokenizer,
             question,
             source_discoverer=discover_academic_source,
+            source_retriever=retrieve_academic_source,
         )
     except academic_chat.AcademicDraftError as exc:
         return JSONResponse(

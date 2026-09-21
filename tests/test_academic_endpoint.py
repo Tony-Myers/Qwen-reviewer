@@ -65,6 +65,7 @@ def fake_orchestrator(
     question,
     *,
     source_discoverer=None,
+    source_retriever=None,
 ):
     orchestrator_calls.append(
         {
@@ -72,6 +73,7 @@ def fake_orchestrator(
             "tokenizer": tokenizer,
             "question": question,
             "source_discoverer": source_discoverer,
+            "source_retriever": source_retriever,
         }
     )
     return FakeResult()
@@ -118,6 +120,11 @@ try:
     check(
         callable(orchestrator_calls[0]["source_discoverer"]),
         "production endpoint supplies a source discoverer",
+    )
+
+    check(
+        callable(orchestrator_calls[0]["source_retriever"]),
+        "production endpoint supplies a substantive source retriever",
     )
 
     check(
@@ -320,6 +327,65 @@ try:
 
     finally:
         server.get_openalex_work_by_doi = original_openalex_getter
+
+
+    print("\n[8] production source retriever delegates to validated PDF retrieval")
+
+    original_pdf_retriever = (
+        server.academic_claims.retrieve_pdf_source_from_location
+    )
+    pdf_retrieval_calls = []
+
+    source_location = server.academic_claims.SourceLocation(
+        status="location_found",
+        doi="10.1234/example",
+        source="openalex",
+        landing_page_url="https://example.org/article",
+        pdf_url="https://example.org/article.pdf",
+        is_oa=True,
+        reasons=["Synthetic discovered source location."],
+    )
+
+    expected_retrieved = server.academic_claims.RetrievedSource(
+        status="retrieved",
+        doi="10.1234/example",
+        source="openalex",
+        text="Synthetic extracted scholarly PDF text.",
+        locator="https://example.org/article.pdf",
+        reasons=["Synthetic PDF retrieval."],
+    )
+
+    def fake_pdf_retriever(location):
+        pdf_retrieval_calls.append(location)
+        return expected_retrieved
+
+    try:
+        server.academic_claims.retrieve_pdf_source_from_location = (
+            fake_pdf_retriever
+        )
+
+        retrieved = server.retrieve_academic_source(source_location)
+
+        check(
+            len(pdf_retrieval_calls) == 1,
+            "production source retriever delegates exactly once",
+        )
+
+        check(
+            len(pdf_retrieval_calls) == 1
+            and pdf_retrieval_calls[0] is source_location,
+            "production source retriever passes discovered location unchanged",
+        )
+
+        check(
+            retrieved is expected_retrieved,
+            "production source retriever returns PDF retrieval result unchanged",
+        )
+
+    finally:
+        server.academic_claims.retrieve_pdf_source_from_location = (
+            original_pdf_retriever
+        )
 
 finally:
     server.ensure_model = original_ensure_model
