@@ -4131,15 +4131,19 @@ def concern_confidence(
                        "extracted manuscript")
     if quotes:
         return ("High", "every quotation was located in the manuscript")
-    # A decimal occurring somewhere in manuscript prose does not establish
-    # that the value cited by a concern has been located.  Numeric promotion
-    # therefore uses only application-identified table evidence.
+    # A matching decimal establishes less than a verified quotation. Even
+    # within application-identified table evidence, the same value can occur
+    # in an unrelated row or table, and a mixed claim can cite other values
+    # from narrative text. Numeric coincidence therefore supports provenance
+    # only; it does not promote the concern to the strongest evidence state.
     table_numbers = set(
         re.findall(r"\d+\.\d+", _normalise_numeric_artefacts(table_text))
     )
     cited = re.findall(r"(?<![\d.])\d+\.\d+(?!\d)", group_text)
     if cited and any(n in table_numbers for n in cited):
-        return ("High", "the cited values were located in the extracted tables")
+        return ("Moderate", "at least one cited value was located in extracted "
+                            "table evidence, but numeric matching alone does "
+                            "not establish the concern")
     return ("Moderate", "the concern is an inference; no verbatim quotation or "
                         "table value supports it directly")
 

@@ -85,7 +85,13 @@ for name, report in (("bold markers", REPORT_A), ("plain markers", REPORT_B)):
     ok("verified quotation -> High", "Confidence: High" in annotated)
     ok("self-citation -> Low",
        "Confidence: Low — the evidence cites this pipeline's own summary" in annotated)
-    ok("table value -> High", annotated.count("Confidence: High") == 2, annotated.count("Confidence: High"))
+    ok("bare table value -> Moderate",
+       "Confidence: Moderate — at least one cited value was located in extracted "
+       "table evidence, but numeric matching alone does not establish the concern."
+       in annotated)
+    ok("only verified quotation -> High",
+       annotated.count("Confidence: High") == 1,
+       annotated.count("Confidence: High"))
     ok("one line per concern", annotated.count("* Confidence:") == 3,
        str(annotated.count("* Confidence:")))
     ok("running twice changes nothing",
@@ -149,6 +155,26 @@ ok("an unrelated occurrence of the same decimal is not High",
 ok("an unrelated occurrence is not described as a located table value",
    "located in the extracted tables" not in _numeric_reason,
    _numeric_reason)
+
+
+print("\n[partial numeric matches are not complete located evidence]")
+_PARTIAL_NUMERIC = """
+* Concern: The numerical results are inconsistent between the table and narrative.
+* Evidence: Table 4 gives 0.211, whereas the Results section reports 0.221.
+* Why it matters: The discrepancy changes the reported result.
+"""
+_PARTIAL_TABLE = """[TABLE_START]
+Table 4. ML model performance
+glm 0.998 0.013 0.134 0.211
+[TABLE_END]"""
+_partial_level, _partial_reason = rp.concern_confidence(
+    _PARTIAL_NUMERIC, "", _PARTIAL_TABLE
+)
+ok("a partial numeric match remains Moderate",
+   _partial_level == "Moderate", (_partial_level, _partial_reason))
+ok("numeric matching alone does not establish the concern",
+   "numeric matching alone does not establish the concern" in _partial_reason,
+   _partial_reason)
 
 # A thinking-mode run wrote every field of a concern on one line. The table then
 # carried the whole paragraph as the item, and defaulted every row to High
