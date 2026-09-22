@@ -370,23 +370,26 @@ ok("the counters are reset per review",
    "llm_backend.reset_reasoning_stats()" in server_src,
    "otherwise the header reports the previous review")
 
-# Thinking, vision and reasoning statistics are process-wide mutable state.
-# Individual generations are serialised by model_lock, but a second review
-# must not enter these review-wide contexts while the first review owns them.
+# Review-wide thinking, vision, and reasoning accounting are execution-context
+# local. Reviews therefore need not monopolise a lifecycle lock; only actual
+# model generations remain serialised by model_lock.
 _review_start = server_src.index("def _run_review(")
 _review_end = server_src.index("\ndef _chunk_reasoning(", _review_start)
 _review_src = server_src[_review_start:_review_end]
 
-ok("reviews have a distinct lifecycle lock",
-   "review_lock = threading.Lock()" in server_src,
-   "model_lock protects generations, not review-wide mutable state")
-ok("the lifecycle lock owns the whole mutable review state",
-   "with review_lock:" in _review_src
-   and _review_src.index("with review_lock:")
-       < _review_src.index("llm_backend.reset_reasoning_stats()")
+ok("reviews do not hold a lifecycle lock",
+   "review_lock = threading.Lock()" not in server_src
+   and "with review_lock:" not in _review_src,
+   "context-local review state should allow independent reviews to interleave")
+ok("review-local modes still own the whole review",
+   _review_src.index("llm_backend.reset_reasoning_stats()")
        < _review_src.index("with llm_backend.thinking(want_thinking), rp.vision(want_vision):")
        < _review_src.index("_run_review_inner(job_id, file_path, domain, tmp_dir)"),
-   "two reviews can otherwise overwrite thinking, vision, or reasoning counters")
+   "thinking, vision, and reasoning accounting must still span the review")
+ok("model generations remain serialised",
+   server_src.count("with model_lock") >= 5
+   and "with model_lock, _chunk_reasoning(job_id):" in server_src,
+   "removing the lifecycle lock must not make model generation concurrent")
 
 ok("the hybrid is accepted", '"synthesis", "hybrid", "2"' in server_src)
 # Passes repeat the synthesis, which is the stage that reasons: three passes of

@@ -274,11 +274,10 @@ SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8080
 model = None
 tokenizer = None
+# The model itself remains shared, so individual generations are serialised.
+# Review-wide thinking, vision, and reasoning accounting are context-local and
+# do not require a whole-review lifecycle lock.
 model_lock = threading.Lock()
-# Thinking mode, vision mode, and reasoning counters are process-wide mutable
-# state. Only one review may own that state at a time. model_lock remains the
-# narrower lock that serialises individual model generations.
-review_lock = threading.Lock()
 restart_lock = threading.Lock()
 restart_scheduled = False
 
@@ -1173,16 +1172,13 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
     """Run the full review pipeline (called in background thread)."""
     ensure_model()
 
-    # Thinking, vision, and reasoning statistics are process-wide mutable
-    # state. A review owns them for its whole lifecycle so another review
-    # cannot change its mode or reset its counters between generations.
-    with review_lock:
-        want_thinking = review_jobs.get(job_id, {}).get("thinking")
-        want_vision = review_jobs.get(job_id, {}).get("vision")
-        # Counters are per review, so the header reports this run and not the last.
-        llm_backend.reset_reasoning_stats()
-        with llm_backend.thinking(want_thinking), rp.vision(want_vision):
-            _run_review_inner(job_id, file_path, domain, tmp_dir)
+    want_thinking = review_jobs.get(job_id, {}).get("thinking")
+    want_vision = review_jobs.get(job_id, {}).get("vision")
+    # All three are execution-context local: concurrent reviews keep their own
+    # modes and reasoning accounting while model generations remain serialised.
+    llm_backend.reset_reasoning_stats()
+    with llm_backend.thinking(want_thinking), rp.vision(want_vision):
+        _run_review_inner(job_id, file_path, domain, tmp_dir)
 
 
 def _chunk_reasoning(job_id: str):
