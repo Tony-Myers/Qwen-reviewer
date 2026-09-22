@@ -389,7 +389,9 @@ userInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKe
 
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtMd(t) {
-  t = t.replace(/```(\w*)\n([\s\S]*?)```/g, (_,l,c) => '<pre><code>' + esc(c.trim()) + '</code></pre>');
+  // Chat content is untrusted: escape it before introducing controlled markup.
+  t = esc(t);
+  t = t.replace(/```(\w*)\n([\s\S]*?)```/g, (_,l,c) => '<pre><code>' + c.trim() + '</code></pre>');
   t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
   t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   t = t.replace(/\*(.+?)\*/g, '<em>$1</em>');
