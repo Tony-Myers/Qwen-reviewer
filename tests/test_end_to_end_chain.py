@@ -21,9 +21,12 @@ import review_pipeline as rp
 pdf = root/"inputs/The-impact-of-crowd-noise-on-officiating-in-MuayThai.pdf"
 text, table_blocks = rp.load_document(pdf)
 final_report = (Path(__file__).resolve().parent / "sample_report.md").read_text()
-citation_source = text + "\n" + "\n".join(b for _, b in table_blocks)
+table_source = "\n".join(b for _, b in table_blocks)
+citation_source = text + "\n" + table_source
 
-final_report = rp.annotate_concern_confidence(final_report, citation_source)
+final_report = rp.annotate_concern_confidence(
+    final_report, citation_source, table_source
+)
 report_problems = (rp.verify_report_citations(final_report, citation_source)
                    + rp.overclaim_problems(final_report))
 final_report = rp.mark_unverified_quotations(final_report, citation_source)

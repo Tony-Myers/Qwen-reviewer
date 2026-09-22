@@ -30,6 +30,10 @@ SOURCE = ("Table 4. ML model performance. glm 0.998 0.013 0.134 0.211\n"
           "In ML, the best model is typically selected based on model performance "
           "on the training sets, which in our case was the glm model.\n"
           "Twenty-seven recreational cyclists completed baseline tests.\n")
+TABLE_SOURCE = """[TABLE_START]
+Table 4. ML model performance
+glm 0.998 0.013 0.134 0.211
+[TABLE_END]"""
 
 # Style A: bold markers, as the cycling run produced them
 REPORT_A = """# Overall synopsis
@@ -77,7 +81,7 @@ def ok(label, cond, detail=""):
 
 for name, report in (("bold markers", REPORT_A), ("plain markers", REPORT_B)):
     print(f"\n[{name}]")
-    annotated = rp.annotate_concern_confidence(report, SOURCE)
+    annotated = rp.annotate_concern_confidence(report, SOURCE, TABLE_SOURCE)
     ok("verified quotation -> High", "Confidence: High" in annotated)
     ok("self-citation -> Low",
        "Confidence: Low — the evidence cites this pipeline's own summary" in annotated)
@@ -85,7 +89,7 @@ for name, report in (("bold markers", REPORT_A), ("plain markers", REPORT_B)):
     ok("one line per concern", annotated.count("* Confidence:") == 3,
        str(annotated.count("* Confidence:")))
     ok("running twice changes nothing",
-       rp.annotate_concern_confidence(annotated, SOURCE) == annotated)
+       rp.annotate_concern_confidence(annotated, SOURCE, TABLE_SOURCE) == annotated)
     ok("no concern text lost", "Subgroup analyses lack multiplicity" in annotated)
 
     table = rp.format_action_list(annotated)
@@ -122,6 +126,29 @@ for label, bad in (("empty", ""),
     except Exception as exc:
         ok(f"{label}: survives", False, f"{type(exc).__name__}: {exc}")
 ok("no table when nothing to list", rp.format_action_list("# Overall synopsis\n* x\n") == "")
+
+print("\n[numeric coincidence is not located evidence]")
+# A decimal appearing somewhere in the manuscript is not evidence that the
+# concern's cited value has been located.  In particular, a conventional
+# alpha threshold must not validate an unrelated effect estimate with the
+# same decimal representation.
+_NUMERIC_COINCIDENCE = """
+* Concern: The reported treatment effect of 0.05 is inconsistent with Table 2.
+* Evidence: The treatment effect is 0.05.
+* Why it matters: The interpretation depends on the reported estimate.
+"""
+_NUMERIC_SOURCE = """
+Methods
+Statistical significance was assessed using alpha = 0.05.
+"""
+_numeric_level, _numeric_reason = rp.concern_confidence(
+    _NUMERIC_COINCIDENCE, _NUMERIC_SOURCE
+)
+ok("an unrelated occurrence of the same decimal is not High",
+   _numeric_level != "High", (_numeric_level, _numeric_reason))
+ok("an unrelated occurrence is not described as a located table value",
+   "located in the extracted tables" not in _numeric_reason,
+   _numeric_reason)
 
 # A thinking-mode run wrote every field of a concern on one line. The table then
 # carried the whole paragraph as the item, and defaulted every row to High

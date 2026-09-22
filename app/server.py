@@ -1373,8 +1373,11 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
 
         # Mechanical citation check: quotations must be findable in the
         # manuscript, and evidence must not cite the pipeline's own summary.
-        citation_source = text + "\n" + "\n".join(b for _, b in table_blocks)
-        final_report = rp.annotate_concern_confidence(final_report, citation_source)
+        table_source = "\n".join(b for _, b in table_blocks)
+        citation_source = text + "\n" + table_source
+        final_report = rp.annotate_concern_confidence(
+            final_report, citation_source, table_source
+        )
         report_problems = (rp.verify_report_citations(final_report, citation_source)
                            + rp.evidence_echo_problems(final_report)
                            + rp.overclaim_problems(final_report))

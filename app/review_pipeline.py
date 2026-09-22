@@ -4079,7 +4079,11 @@ def report_reliability_banner(report_text: str) -> str:
     )
 
 
-def concern_confidence(group_text: str, source_text: str) -> Tuple[str, str]:
+def concern_confidence(
+    group_text: str,
+    source_text: str,
+    table_text: str = "",
+) -> Tuple[str, str]:
     """
     Confidence in one concern, computed rather than asked for.
 
@@ -4127,17 +4131,24 @@ def concern_confidence(group_text: str, source_text: str) -> Tuple[str, str]:
                        "extracted manuscript")
     if quotes:
         return ("High", "every quotation was located in the manuscript")
-    source_numbers = set(
-        re.findall(r"\d+\.\d+", _normalise_numeric_artefacts(source_text))
+    # A decimal occurring somewhere in manuscript prose does not establish
+    # that the value cited by a concern has been located.  Numeric promotion
+    # therefore uses only application-identified table evidence.
+    table_numbers = set(
+        re.findall(r"\d+\.\d+", _normalise_numeric_artefacts(table_text))
     )
     cited = re.findall(r"(?<![\d.])\d+\.\d+(?!\d)", group_text)
-    if cited and any(n in source_numbers for n in cited):
+    if cited and any(n in table_numbers for n in cited):
         return ("High", "the cited values were located in the extracted tables")
     return ("Moderate", "the concern is an inference; no verbatim quotation or "
                         "table value supports it directly")
 
 
-def annotate_concern_confidence(report_text: str, source_text: str) -> str:
+def annotate_concern_confidence(
+    report_text: str,
+    source_text: str,
+    table_text: str = "",
+) -> str:
     """Append a computed Confidence line to each directly supported concern."""
     lines = (report_text or "").splitlines()
     bounds = None
@@ -4165,7 +4176,9 @@ def annotate_concern_confidence(report_text: str, source_text: str) -> str:
     out.extend(body[:covered])
     for begin, end in groups:
         chunk = body[begin:end]
-        level, reason = concern_confidence("\n".join(chunk), source_text)
+        level, reason = concern_confidence(
+            "\n".join(chunk), source_text, table_text
+        )
         while chunk and not chunk[-1].strip():
             chunk.pop()
         chunk.append(f"* Confidence: {level} — {reason}.")
@@ -6876,10 +6889,13 @@ def main() -> int:
             print(f"\n  {stale}\n")
             final_report = f"> **{stale}**\n\n" + final_report
 
-        citation_source = "\n".join(per_file_source_text.values()) + "\n" + "\n".join(
+        table_source = "\n".join(
             block for tables in per_file_tables.values() for _, block in tables
         )
-        final_report = annotate_concern_confidence(final_report, citation_source)
+        citation_source = "\n".join(per_file_source_text.values()) + "\n" + table_source
+        final_report = annotate_concern_confidence(
+            final_report, citation_source, table_source
+        )
         report_problems = (verify_report_citations(final_report, citation_source)
                            + evidence_echo_problems(final_report)
                            + overclaim_problems(final_report))
