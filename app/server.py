@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.responses import StreamingResponse
 
@@ -259,12 +258,6 @@ def answer_notes_question(question: str, job_id: str = "") -> dict:
 # App setup
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Local Qwen Server")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ---------------------------------------------------------------------------
 # Global state

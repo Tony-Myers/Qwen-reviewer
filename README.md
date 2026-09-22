@@ -18,6 +18,14 @@ identified public scholarly source may be downloaded for local examination.
 The complete Academic Chat question, manuscript text, local model prompts, and
 local semantic claim assessment are not sent to those external services.
 
+**Local network boundary.** The web application and `llama-server` bind to
+`127.0.0.1` by default and are intended to be used from the same machine. The
+web interface uses same-origin API requests; cross-origin browser access is not
+enabled. The application does not provide authentication, so changing the app
+or model-server host to `0.0.0.0`, a LAN address, or another non-loopback
+address changes the security boundary and should only be done with appropriate
+network access controls in place.
+
 The project is named for the model family it was first built on, but carries no
 version number: the underlying model has moved several times and will move
 again. Changing model is a configuration change, not a rewrite.
