@@ -218,6 +218,25 @@ check("a clean table is left alone", rp.table_looks_damaged(CLEAN_TABLE) == "",
       rp.table_looks_damaged(CLEAN_TABLE))
 check("vision is off unless asked for", rp.VISION_TABLES is False)
 
+# A per-review vision choice must remain local to the execution context that
+# owns it. Otherwise a concurrent caller can inherit another review's temporary
+# vision setting.
+import threading as _threading
+
+_vision_default = rp.vision_enabled()
+_seen_vision_in_other_thread = []
+with rp.vision(not _vision_default):
+    _thread = _threading.Thread(
+        target=lambda: _seen_vision_in_other_thread.append(rp.vision_enabled())
+    )
+    _thread.start()
+    _thread.join()
+
+check("a vision override does not leak into another thread",
+      _seen_vision_in_other_thread == [_vision_default],
+      f"worker saw {_seen_vision_in_other_thread!r}, "
+      f"default was {_vision_default!r}")
+
 blocks = [(21, DETACHED), (19, CLEAN_TABLE)]
 same, notes = rp.rescue_damaged_tables(ROOT / "nothing.pdf", blocks)
 # Vision off is now stated rather than silent: a header that says nothing

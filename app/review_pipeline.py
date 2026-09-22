@@ -26,6 +26,7 @@ import sys
 import math
 import unicodedata
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -2901,25 +2902,26 @@ VISION_TABLES = os.environ.get("QWEN_VISION_TABLES", "").strip().lower() in (
 VISION_DPI = int(os.environ.get("QWEN_VISION_DPI", "200"))
 
 # VISION_TABLES is the process default, set by --vision at start-up. A single
-# review can override it, so the browser can offer vision per run in the same
-# way it offers a reasoning mode, without restarting the server.
-_VISION_OVERRIDE: Optional[bool] = None
+# review can override it without exposing that temporary choice to concurrent
+# reviews or other execution contexts.
+_VISION_OVERRIDE: ContextVar[Optional[bool]] = ContextVar(
+    "vision_override", default=None
+)
 
 
 def vision_enabled() -> bool:
-    return VISION_TABLES if _VISION_OVERRIDE is None else _VISION_OVERRIDE
+    override = _VISION_OVERRIDE.get()
+    return VISION_TABLES if override is None else override
 
 
 @contextmanager
 def vision(enabled: Optional[bool]):
     """Force vision on or off for the duration of one review."""
-    global _VISION_OVERRIDE
-    previous = _VISION_OVERRIDE
-    _VISION_OVERRIDE = enabled
+    token = _VISION_OVERRIDE.set(enabled)
     try:
         yield
     finally:
-        _VISION_OVERRIDE = previous
+        _VISION_OVERRIDE.reset(token)
 MAX_VISION_PAGES = int(os.environ.get("QWEN_VISION_MAX_PAGES", "6"))
 
 VISION_TABLE_PROMPT = (
