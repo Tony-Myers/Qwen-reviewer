@@ -906,7 +906,12 @@ async def start_review(
     # Save uploaded file to temp directory
     job_id = uuid.uuid4().hex[:12]
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"review_{job_id}_"))
-    file_path = tmp_dir / file.filename
+    # The client-supplied filename is metadata only. The filesystem basename
+    # is application-controlled so absolute paths and traversal components
+    # cannot determine where an upload is written. Preserve only the suffix
+    # because document extraction dispatches on file type.
+    suffix = Path(file.filename or "").suffix.lower()
+    file_path = tmp_dir / f"upload{suffix}"
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
