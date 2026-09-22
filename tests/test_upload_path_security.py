@@ -133,8 +133,172 @@ with tempfile.TemporaryDirectory() as root:
         server.threading.Thread = original_thread
 
 
+# ---------------------------------------------------------------------------
+# File-type and size boundaries
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as boundary_root:
+    boundary_root = Path(boundary_root)
+
+    original_mkdtemp = server.tempfile.mkdtemp
+    original_thread = server.threading.Thread
+    original_max_upload = getattr(server, "MAX_REVIEW_UPLOAD_BYTES", None)
+    had_max_upload = hasattr(server, "MAX_REVIEW_UPLOAD_BYTES")
+
+    created_dirs = []
+
+    def boundary_mkdtemp(*, prefix):
+        nonlocal_holder = boundary_mkdtemp
+        path = boundary_root / f"tmp_{nonlocal_holder.next_number}"
+        nonlocal_holder.next_number += 1
+        path.mkdir()
+        created_dirs.append(path)
+        return str(path)
+
+    boundary_mkdtemp.next_number = 0
+
+    try:
+        server.tempfile.mkdtemp = boundary_mkdtemp
+        server.threading.Thread = FakeThread
+
+        print("\n[unsupported file type is rejected before temp storage]")
+        FakeThread.calls.clear()
+        created_dirs.clear()
+
+        upload = UploadFile(
+            filename="manuscript.exe",
+            file=io.BytesIO(b"not a manuscript"),
+        )
+
+        status = None
+        try:
+            asyncio.run(
+                server.start_review(
+                    file=upload,
+                    domain="general",
+                    thinking="",
+                    vision="",
+                )
+            )
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+
+        check(
+            "unsupported suffix is rejected with 400",
+            status == 400,
+            f"status={status}",
+        )
+        check(
+            "unsupported suffix creates no temp directory",
+            created_dirs == [],
+            [str(p) for p in created_dirs],
+        )
+        check(
+            "unsupported suffix starts no review thread",
+            FakeThread.calls == [],
+            len(FakeThread.calls),
+        )
+
+        print("\n[missing file extension is rejected]")
+        FakeThread.calls.clear()
+        created_dirs.clear()
+
+        upload = UploadFile(
+            filename="manuscript",
+            file=io.BytesIO(b"not dispatchable"),
+        )
+
+        status = None
+        try:
+            asyncio.run(
+                server.start_review(
+                    file=upload,
+                    domain="general",
+                    thinking="",
+                    vision="",
+                )
+            )
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+
+        check(
+            "missing suffix is rejected with 400",
+            status == 400,
+            f"status={status}",
+        )
+        check(
+            "missing suffix creates no temp directory",
+            created_dirs == [],
+            [str(p) for p in created_dirs],
+        )
+        check(
+            "missing suffix starts no review thread",
+            FakeThread.calls == [],
+            len(FakeThread.calls),
+        )
+
+        print("\n[oversized upload is stopped and cleaned up]")
+        FakeThread.calls.clear()
+        created_dirs.clear()
+
+        # Tiny limit keeps this regression test cheap. Production will use a
+        # substantially larger constant.
+        server.MAX_REVIEW_UPLOAD_BYTES = 16
+
+        upload = UploadFile(
+            filename="large.pdf",
+            file=io.BytesIO(b"x" * 17),
+        )
+
+        status = None
+        try:
+            asyncio.run(
+                server.start_review(
+                    file=upload,
+                    domain="general",
+                    thinking="",
+                    vision="",
+                )
+            )
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+
+        check(
+            "oversized upload is rejected with 413",
+            status == 413,
+            f"status={status}",
+        )
+        check(
+            "oversized upload starts no review thread",
+            FakeThread.calls == [],
+            len(FakeThread.calls),
+        )
+        check(
+            "oversized upload created storage before size was known",
+            len(created_dirs) == 1,
+            [str(p) for p in created_dirs],
+        )
+        check(
+            "oversized partial upload and temp directory are removed",
+            len(created_dirs) == 1 and not created_dirs[0].exists(),
+            [str(p) for p in created_dirs],
+        )
+
+    finally:
+        server.tempfile.mkdtemp = original_mkdtemp
+        server.threading.Thread = original_thread
+
+        if had_max_upload:
+            server.MAX_REVIEW_UPLOAD_BYTES = original_max_upload
+        else:
+            try:
+                del server.MAX_REVIEW_UPLOAD_BYTES
+            except AttributeError:
+                pass
+
+
 if fails:
     print(f"\nFAILED: {len(fails)} check(s)")
     raise SystemExit(1)
 
-print("\nPASS: upload paths are application-controlled and contained")
+print("\nPASS: review uploads are contained, type-checked, size-bounded, and cleaned up")

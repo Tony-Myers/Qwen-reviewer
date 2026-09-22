@@ -899,6 +899,13 @@ async def chat_completions(request: dict):
 # ---------------------------------------------------------------------------
 # POST /api/review — file upload, runs pipeline in background
 # ---------------------------------------------------------------------------
+
+SUPPORTED_REVIEW_SUFFIXES = {
+    ".pdf", ".txt", ".md", ".docx", ".csv", ".xlsx", ".xlsm"
+}
+MAX_REVIEW_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MiB
+REVIEW_UPLOAD_CHUNK_BYTES = 1024 * 1024      # 1 MiB
+
 @app.post("/api/review")
 async def start_review(
     file: UploadFile = File(...),
@@ -906,17 +913,45 @@ async def start_review(
     thinking: str = Form(""),
     vision: str = Form(""),
 ):
-    # Save uploaded file to temp directory
+    # Validate the extraction type before creating any server-side storage.
+    # The suffix is dispatch metadata only; the client-supplied basename never
+    # determines the filesystem destination.
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in SUPPORTED_REVIEW_SUFFIXES:
+        supported = ", ".join(sorted(SUPPORTED_REVIEW_SUFFIXES))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported manuscript file type. Supported types: {supported}.",
+        )
+
     job_id = uuid.uuid4().hex[:12]
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"review_{job_id}_"))
-    # The client-supplied filename is metadata only. The filesystem basename
-    # is application-controlled so absolute paths and traversal components
-    # cannot determine where an upload is written. Preserve only the suffix
-    # because document extraction dispatches on file type.
-    suffix = Path(file.filename or "").suffix.lower()
     file_path = tmp_dir / f"upload{suffix}"
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+
+    # Do not trust Content-Length: stream the upload through an application
+    # limit so chunked/misreported requests cannot write without bound.
+    written = 0
+    try:
+        with open(file_path, "wb") as destination:
+            while True:
+                chunk = file.file.read(REVIEW_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_REVIEW_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            "Manuscript upload exceeds the "
+                            f"{MAX_REVIEW_UPLOAD_BYTES // (1024 * 1024)} MiB limit."
+                        ),
+                    )
+                destination.write(chunk)
+    except Exception:
+        # No background review owns this directory yet, so rejection must
+        # remove any partially written upload here.
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
 
     # "" leaves the process default alone; "1"/"0" force one mode for this
     # review only, so the two can be alternated over real use and compared.
