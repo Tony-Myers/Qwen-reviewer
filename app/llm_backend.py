@@ -75,6 +75,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -544,17 +545,18 @@ class ChatPrompt(str):
         return obj
 
 
-# Per-run override of the thinking default, so a single review can be run one
-# way while the process default stays the other. Generation is serialised under
-# the app server's model lock, so a process-wide switch held for the duration of
-# one review is safe; the context manager restores it even on failure, which a
-# bare setter would not.
-_THINKING_OVERRIDE: Optional[bool] = None
+# Per-context override of the thinking default. Reviews run in background
+# threads while chat requests may build prompts concurrently, so a process-wide
+# override would leak one review's reasoning mode into unrelated work.
+_THINKING_OVERRIDE: ContextVar[Optional[bool]] = ContextVar(
+    "thinking_override", default=None
+)
 
 
 def _thinking_default() -> bool:
-    if _THINKING_OVERRIDE is not None:
-        return _THINKING_OVERRIDE
+    override = _THINKING_OVERRIDE.get()
+    if override is not None:
+        return override
     return _env_flag("LLAMA_ENABLE_THINKING", False)
 
 
@@ -631,14 +633,15 @@ def thinking_token_allowance() -> int:
 @contextlib.contextmanager
 def thinking(enabled: Optional[bool]):
     """Run a block with thinking forced on or off. None leaves it alone."""
-    global _THINKING_OVERRIDE
-    previous = _THINKING_OVERRIDE
-    if enabled is not None:
-        _THINKING_OVERRIDE = bool(enabled)
+    if enabled is None:
+        yield
+        return
+
+    token = _THINKING_OVERRIDE.set(bool(enabled))
     try:
         yield
     finally:
-        _THINKING_OVERRIDE = previous
+        _THINKING_OVERRIDE.reset(token)
 
 
 def _plain_text_preview(messages: List[Dict[str, Any]]) -> str:

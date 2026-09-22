@@ -58,6 +58,23 @@ with llm_backend.thinking(True):
         ok("nesting works", llm_backend.thinking_enabled() is False)
     ok("the outer setting comes back", llm_backend.thinking_enabled() is True)
 
+# A review runs in a background thread while ordinary chat may build prompts
+# elsewhere. Its temporary reasoning choice must therefore remain local to the
+# execution context that owns it.
+import threading as _threading
+
+_seen_in_other_thread = []
+with llm_backend.thinking(not base):
+    _thread = _threading.Thread(
+        target=lambda: _seen_in_other_thread.append(llm_backend.thinking_enabled())
+    )
+    _thread.start()
+    _thread.join()
+
+ok("a thinking override does not leak into another thread",
+   _seen_in_other_thread == [base],
+   f"worker saw {_seen_in_other_thread!r}, default was {base!r}")
+
 print("\n[reasoning is counted, not assumed]")
 # Requesting thinking and getting it are different things. Three paths fail
 # silently -- a rejected chat_template_kwargs, an empty <think></think> pair,
