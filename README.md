@@ -6,8 +6,17 @@ statistical framework the authors used, critiques each section against the
 expectations appropriate to that framework, and writes a review report with an
 evidence appendix.
 
-**No manuscript text leaves the machine.** Everything runs against a local
-model server; there are no API calls to anyone.
+**No manuscript text leaves the machine.** Manuscript review, reviewer notes,
+Academic Chat model inference, and substantive claim assessment run locally
+against the configured local model.
+
+Academic Chat can make deliberately limited external scholarly requests.
+Bibliographic metadata or identifiers may be sent to Crossref and OpenAlex to
+verify a proposed reference. Once a safe retrieval identity has been
+established, its DOI may be sent to OpenAlex for source discovery, and an
+identified public scholarly source may be downloaded for local examination.
+The complete Academic Chat question, manuscript text, local model prompts, and
+local semantic claim assessment are not sent to those external services.
 
 The project is named for the model family it was first built on, but carries no
 version number: the underlying model has moved several times and will move
