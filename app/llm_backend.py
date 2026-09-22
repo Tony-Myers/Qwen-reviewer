@@ -196,106 +196,103 @@ _STRAY_THINK_TAG_RE = re.compile(r"</?think>", re.IGNORECASE)
 # Reasoning accounting
 # ---------------------------------------------------------------------------
 # Asking for thinking mode and getting it are two different things, and the
-# report header used to record only the request. Three paths fail silently:
-# the server can reject ``chat_template_kwargs`` and the request is retried
-# without it; a chat template can emit an empty ``<think></think>`` pair; and a
-# server running ``--reasoning-format deepseek`` returns the reasoning in its
-# own field, where a check for ``<think>`` in the content sees nothing. All
-# three produce a report headed "thinking" that contains no reasoning at all.
-#
-# So count what the model actually emitted. Only the *inner* text of a span is
-# counted, which is why an empty pair registers as nothing. Generation is
-# serialised under the app server's model lock, so plain module state suffices.
-_REASONING_GENERATIONS = 0
-_REASONING_WITH_SPANS = 0
-_REASONING_CHARS = 0
-_REASONING_PENDING = 0
-_TEMPLATE_KWARGS_DROPPED = False
-# The most recent reasoning span, kept so it can be looked at. The pipeline
-# discards reasoning by design -- it must never reach a report -- but a run
-# whose reasoning fills the whole budget cannot be diagnosed without reading
-# it. Bounded, and overwritten by every generation.
-_LAST_REASONING = ""
+# report header records what the model actually emitted. The accounting belongs
+# to the execution context that produced it: concurrent reviews or chat calls
+# must not reset or add to one another's counters.
+@dataclass(frozen=True)
+class _ReasoningState:
+    generations: int = 0
+    with_reasoning: int = 0
+    chars: int = 0
+    pending: int = 0
+    template_kwargs_dropped: bool = False
+    last_reasoning: str = ""
+    retries: int = 0
+    fallbacks: int = 0
+    last_finish_reason: str = ""
+
+
+_REASONING_STATE: ContextVar[_ReasoningState] = ContextVar(
+    "reasoning_state", default=_ReasoningState()
+)
+
+# The most recent reasoning span is diagnostic only and must never reach the
+# report. Keep it bounded even though the state itself is context-local.
 _LAST_REASONING_LIMIT = 200_000
-# How often recovery was needed. A fixed allowance cannot be right for every
-# prompt -- three guesses, three failures -- so a generation whose reasoning
-# overruns is retried with a larger budget, and finally in instruct mode. Both
-# are recorded, because a review that quietly repaired itself is still a review
-# whose thinking did not fit.
-_REASONING_RETRIES = 0
-_THINKING_FALLBACKS = 0
-# Why the server stopped generating: "stop" for a finished answer, "length"
-# when the budget ran out. An answer cut off mid-sentence is as much a budget
-# failure as no answer at all, and looks far more convincing in a report.
-_LAST_FINISH_REASON = ""
+
+
+def _reasoning_state() -> _ReasoningState:
+    return _REASONING_STATE.get()
+
+
+def _replace_reasoning_state(**changes: Any) -> _ReasoningState:
+    current = _reasoning_state()
+    values = {
+        "generations": current.generations,
+        "with_reasoning": current.with_reasoning,
+        "chars": current.chars,
+        "pending": current.pending,
+        "template_kwargs_dropped": current.template_kwargs_dropped,
+        "last_reasoning": current.last_reasoning,
+        "retries": current.retries,
+        "fallbacks": current.fallbacks,
+        "last_finish_reason": current.last_finish_reason,
+    }
+    values.update(changes)
+    updated = _ReasoningState(**values)
+    _REASONING_STATE.set(updated)
+    return updated
 
 
 def reset_reasoning_stats() -> None:
-    """Zero the reasoning counters. Called once at the start of a review."""
-    global _REASONING_GENERATIONS, _REASONING_WITH_SPANS
-    global _REASONING_CHARS, _REASONING_PENDING, _TEMPLATE_KWARGS_DROPPED
-    global _LAST_REASONING, _REASONING_RETRIES, _THINKING_FALLBACKS
-    global _LAST_FINISH_REASON
-    _REASONING_GENERATIONS = 0
-    _REASONING_WITH_SPANS = 0
-    _REASONING_CHARS = 0
-    _REASONING_PENDING = 0
-    _TEMPLATE_KWARGS_DROPPED = False
-    _LAST_REASONING = ""
-    _REASONING_RETRIES = 0
-    _THINKING_FALLBACKS = 0
-    _LAST_FINISH_REASON = ""
+    """Zero the reasoning counters for the current execution context."""
+    _REASONING_STATE.set(_ReasoningState())
 
 
 def reasoning_stats() -> Dict[str, Any]:
-    """
-    What the model actually emitted since the last reset.
-
-    ``generations``    completed generate() calls
-    ``with_reasoning`` how many of those carried a non-empty reasoning span
-    ``chars``          total characters of reasoning, tags excluded
-    ``template_kwargs_dropped``
-                       True if the server rejected ``chat_template_kwargs``, in
-                       which case ``enable_thinking`` never reached the template
-    """
+    """What the model actually emitted in the current execution context."""
+    state = _reasoning_state()
     return {
-        "generations": _REASONING_GENERATIONS,
-        "with_reasoning": _REASONING_WITH_SPANS,
-        "chars": _REASONING_CHARS,
-        "template_kwargs_dropped": _TEMPLATE_KWARGS_DROPPED,
-        "retries": _REASONING_RETRIES,
-        "fallbacks": _THINKING_FALLBACKS,
+        "generations": state.generations,
+        "with_reasoning": state.with_reasoning,
+        "chars": state.chars,
+        "template_kwargs_dropped": state.template_kwargs_dropped,
+        "retries": state.retries,
+        "fallbacks": state.fallbacks,
     }
 
 
 def _note_reasoning_chars(count: int, text: str = "") -> None:
     """Record reasoning seen within the generation currently in flight."""
-    global _REASONING_CHARS, _REASONING_PENDING, _LAST_REASONING
-    if count > 0:
-        _REASONING_CHARS += count
-        _REASONING_PENDING += count
-        if text:
-            _LAST_REASONING = text[:_LAST_REASONING_LIMIT]
+    if count <= 0:
+        return
+    state = _reasoning_state()
+    _replace_reasoning_state(
+        chars=state.chars + count,
+        pending=state.pending + count,
+        last_reasoning=(
+            text[:_LAST_REASONING_LIMIT] if text else state.last_reasoning
+        ),
+    )
 
 
 def last_reasoning() -> str:
     """The reasoning from the most recent generation that emitted any."""
-    return _LAST_REASONING
+    return _reasoning_state().last_reasoning
 
 
 def _note_reasoning_retry() -> None:
-    global _REASONING_RETRIES
-    _REASONING_RETRIES += 1
+    state = _reasoning_state()
+    _replace_reasoning_state(retries=state.retries + 1)
 
 
 def _note_thinking_fallback() -> None:
-    global _THINKING_FALLBACKS
-    _THINKING_FALLBACKS += 1
+    state = _reasoning_state()
+    _replace_reasoning_state(fallbacks=state.fallbacks + 1)
 
 
 def _note_template_kwargs_dropped() -> None:
-    global _TEMPLATE_KWARGS_DROPPED
-    _TEMPLATE_KWARGS_DROPPED = True
+    _replace_reasoning_state(template_kwargs_dropped=True)
 
 
 def _close_generation() -> int:
@@ -303,16 +300,15 @@ def _close_generation() -> int:
     End of one generation: fold whatever reasoning it carried into totals.
 
     Returns the reasoning characters this generation carried, so the caller can
-    tell an empty answer that follows reasoning from an empty answer that does
-    not. The first is a budget that ran out mid-thought; the second is a model
-    that had nothing to say.
+    distinguish an answer lost to reasoning from an ordinary empty answer.
     """
-    global _REASONING_GENERATIONS, _REASONING_WITH_SPANS, _REASONING_PENDING
-    _REASONING_GENERATIONS += 1
-    carried = _REASONING_PENDING
-    if carried > 0:
-        _REASONING_WITH_SPANS += 1
-    _REASONING_PENDING = 0
+    state = _reasoning_state()
+    carried = state.pending
+    _replace_reasoning_state(
+        generations=state.generations + 1,
+        with_reasoning=state.with_reasoning + (1 if carried > 0 else 0),
+        pending=0,
+    )
     return carried
 
 
@@ -349,7 +345,7 @@ def _one_generation(model: Any, messages: List[Dict[str, Any]], budget: int,
     """
     text = model.complete(messages=messages, max_tokens=int(budget),
                           sampler=sampler, enable_thinking=enable_thinking)
-    truncated = _LAST_FINISH_REASON == "length"
+    truncated = _reasoning_state().last_finish_reason == "length"
     text = strip_reasoning(text)
     return text, _close_generation(), truncated
 
@@ -1034,11 +1030,12 @@ def available_context(default: int = 32768) -> int:
 
 
 def _extract_chat_text(response: Dict[str, Any]) -> str:
-    global _LAST_FINISH_REASON
     choices = response.get("choices") or []
     if not choices:
         raise BackendError(f"llama-server returned no choices: {response!r}"[:500])
-    _LAST_FINISH_REASON = str(choices[0].get("finish_reason") or "")
+    _replace_reasoning_state(
+        last_finish_reason=str(choices[0].get("finish_reason") or "")
+    )
     message = choices[0].get("message") or {}
     # llama-server run with --reasoning-format deepseek (its current default)
     # returns the reasoning span in this field rather than inline, so counting

@@ -124,6 +124,33 @@ ok("reset clears everything",
                                      "retries": 0, "fallbacks": 0},
    str(llm_backend.reasoning_stats()))
 
+# Reasoning accounting belongs to the review that produced it. Resetting or
+# recording reasoning in another execution context must not alter this one's
+# counters.
+llm_backend.reset_reasoning_stats()
+llm_backend._note_reasoning_chars(37)
+llm_backend._close_generation()
+_before_other_thread = llm_backend.reasoning_stats().copy()
+_other_thread_stats = []
+
+def _exercise_other_reasoning_context():
+    llm_backend.reset_reasoning_stats()
+    llm_backend._note_reasoning_chars(11)
+    llm_backend._close_generation()
+    _other_thread_stats.append(llm_backend.reasoning_stats().copy())
+
+_reasoning_thread = _threading.Thread(target=_exercise_other_reasoning_context)
+_reasoning_thread.start()
+_reasoning_thread.join()
+
+ok("reasoning statistics do not leak across threads",
+   _before_other_thread["chars"] == 37
+   and _other_thread_stats
+   and _other_thread_stats[0]["chars"] == 11
+   and llm_backend.reasoning_stats() == _before_other_thread,
+   f"owner={llm_backend.reasoning_stats()!r}, "
+   f"worker={_other_thread_stats!r}, before={_before_other_thread!r}")
+
 backend_src = (ROOT / "app" / "llm_backend.py").read_text()
 ok("a rejected chat_template_kwargs is recorded, not just swallowed",
    "_note_template_kwargs_dropped()" in backend_src)
@@ -209,12 +236,12 @@ class _FakeServerModel(llm_backend.LlamaServerModel):
 
     def complete(self, messages, max_tokens, sampler, enable_thinking):
         self.calls.append((max_tokens, enable_thinking))
-        llm_backend._LAST_FINISH_REASON = "stop"
+        llm_backend._replace_reasoning_state(last_finish_reason="stop")
         if not enable_thinking:
             return "an instruct answer"
         if max_tokens >= self.needs:
             return "<think>" + "r" * 500 + "</think>\nthe answer"
-        llm_backend._LAST_FINISH_REASON = "length"
+        llm_backend._replace_reasoning_state(last_finish_reason="length")
         return "<think>" + "r" * (max_tokens * 4) + "</think>"
 
 
@@ -249,12 +276,12 @@ class _TruncatingModel(_FakeServerModel):
     def complete(self, messages, max_tokens, sampler, enable_thinking):
         self.calls.append((max_tokens, enable_thinking))
         if not enable_thinking:
-            llm_backend._LAST_FINISH_REASON = "stop"
+            llm_backend._replace_reasoning_state(last_finish_reason="stop")
             return "an instruct answer"
         if max_tokens >= self.needs:
-            llm_backend._LAST_FINISH_REASON = "stop"
+            llm_backend._replace_reasoning_state(last_finish_reason="stop")
             return "<think>" + "r" * 500 + "</think>\nthe whole answer."
-        llm_backend._LAST_FINISH_REASON = "length"
+        llm_backend._replace_reasoning_state(last_finish_reason="length")
         return "<think>" + "r" * (max_tokens * 4) + "</think>\nthe answer breaks off"
 
 
