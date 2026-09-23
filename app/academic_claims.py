@@ -13,6 +13,7 @@ from io import BytesIO
 import httpcore
 import ipaddress
 import re
+import socket
 from pypdf import PdfReader
 from pypdf.errors import PyPdfError
 from typing import Any
@@ -1547,6 +1548,25 @@ def fetch_with_validated_destinations(
     return response
 
 
+def resolve_system_http_hostname(hostname: str) -> list[str]:
+    """Resolve a hostname using system DNS for subsequent address validation."""
+    records = socket.getaddrinfo(
+        hostname,
+        0,
+        type=socket.SOCK_STREAM,
+    )
+
+    addresses = []
+
+    for _family, _socktype, _proto, _canonname, sockaddr in records:
+        address = sockaddr[0]
+
+        if address not in addresses:
+            addresses.append(address)
+
+    return addresses
+
+
 def download_validated_http_source(
     url: str,
     requester=request_validated_http_hop,
@@ -1554,6 +1574,9 @@ def download_validated_http_source(
     resolver=None,
 ) -> DownloadedSource:
     """Download a source through the validated HTTP retrieval path."""
+    if resolver is None:
+        resolver = resolve_system_http_hostname
+
     response, final_url = _fetch_with_validated_destinations_and_final_url(
         url,
         requester=requester,

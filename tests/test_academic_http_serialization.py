@@ -406,3 +406,217 @@ assert any(
 print("PASS: real httpcore transport failure becomes not_retrieved")
 print("PASS: failed transport retains bibliographic provenance")
 print("PASS: failed transport does not invent source text or locator")
+
+print("\n[8] production downloader resolves hostnames by default")
+
+import socket
+
+
+original_getaddrinfo = socket.getaddrinfo
+default_dns_calls = []
+default_download_requests = []
+
+
+def fake_getaddrinfo(host, port, *args, **kwargs):
+    default_dns_calls.append((host, port))
+
+    if host == "journal.example":
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("8.8.8.8", port),
+            ),
+        ]
+
+    raise AssertionError(f"Unexpected DNS hostname: {host}")
+
+
+def default_requester(url, destination):
+    default_download_requests.append(
+        (url, destination.hostname, list(destination.addresses))
+    )
+    return academic_claims.HTTPHopResponse(
+        status_code=200,
+        location=None,
+        content_type="application/pdf",
+        content=b"default-resolver-pdf",
+    )
+
+
+socket.getaddrinfo = fake_getaddrinfo
+
+try:
+    default_downloaded = academic_claims.download_validated_http_source(
+        "https://journal.example/article.pdf",
+        requester=default_requester,
+    )
+finally:
+    socket.getaddrinfo = original_getaddrinfo
+
+
+assert default_downloaded.status == "downloaded"
+assert default_downloaded.content == b"default-resolver-pdf"
+
+assert default_dns_calls == [
+    ("journal.example", 0),
+]
+
+assert default_download_requests == [
+    (
+        "https://journal.example/article.pdf",
+        "journal.example",
+        ["8.8.8.8"],
+    ),
+]
+
+print("PASS: production downloader performs DNS resolution by default")
+print("PASS: default DNS answer passes through destination validation")
+print("PASS: requester receives only the validated numeric destination")
+
+print("\n[9] production default resolver preserves DNS security boundary")
+
+original_getaddrinfo = socket.getaddrinfo
+
+
+def make_dns_record(address, port=0):
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    sockaddr = (
+        (address, port, 0, 0)
+        if family == socket.AF_INET6
+        else (address, port)
+    )
+    return (
+        family,
+        socket.SOCK_STREAM,
+        socket.IPPROTO_TCP,
+        "",
+        sockaddr,
+    )
+
+
+# Public answers, including a redirect, must be independently resolved.
+redirect_dns_calls = []
+redirect_requests = []
+
+
+def redirect_getaddrinfo(host, port, *args, **kwargs):
+    redirect_dns_calls.append((host, port))
+
+    answers = {
+        "journal.example": ["8.8.8.8"],
+        "cdn.example": ["1.1.1.1"],
+    }
+
+    return [
+        make_dns_record(address, port)
+        for address in answers[host]
+    ]
+
+
+def redirect_requester(url, destination):
+    redirect_requests.append(
+        (url, destination.hostname, list(destination.addresses))
+    )
+
+    if destination.hostname == "journal.example":
+        return academic_claims.HTTPHopResponse(
+            status_code=302,
+            location="https://cdn.example/article.pdf",
+            content_type="text/html",
+            content=b"",
+        )
+
+    return academic_claims.HTTPHopResponse(
+        status_code=200,
+        location=None,
+        content_type="application/pdf",
+        content=b"redirected-pdf",
+    )
+
+
+socket.getaddrinfo = redirect_getaddrinfo
+
+try:
+    redirected_download = academic_claims.download_validated_http_source(
+        "https://journal.example/article",
+        requester=redirect_requester,
+    )
+finally:
+    socket.getaddrinfo = original_getaddrinfo
+
+
+assert redirected_download.content == b"redirected-pdf"
+assert redirect_dns_calls == [
+    ("journal.example", 0),
+    ("cdn.example", 0),
+]
+assert redirect_requests == [
+    (
+        "https://journal.example/article",
+        "journal.example",
+        ["8.8.8.8"],
+    ),
+    (
+        "https://cdn.example/article.pdf",
+        "cdn.example",
+        ["1.1.1.1"],
+    ),
+]
+
+
+# Unsafe or unusable DNS results must fail before requester invocation.
+dns_failure_cases = [
+    ("private", ["127.0.0.1"], None),
+    ("mixed", ["8.8.8.8", "127.0.0.1"], None),
+    ("empty", [], None),
+    ("failure", None, socket.gaierror("synthetic DNS failure")),
+]
+
+for case_name, addresses, dns_error in dns_failure_cases:
+    requester_called = []
+
+    def boundary_getaddrinfo(host, port, *args, **kwargs):
+        if dns_error is not None:
+            raise dns_error
+
+        return [
+            make_dns_record(address, port)
+            for address in addresses
+        ]
+
+    def boundary_requester(url, destination):
+        requester_called.append((url, destination))
+        raise AssertionError(
+            f"{case_name}: unsafe destination reached requester"
+        )
+
+    socket.getaddrinfo = boundary_getaddrinfo
+
+    try:
+        try:
+            academic_claims.download_validated_http_source(
+                "https://journal.example/article.pdf",
+                requester=boundary_requester,
+            )
+        except academic_claims.SourceRetrievalError:
+            pass
+        else:
+            raise AssertionError(
+                f"{case_name}: expected SourceRetrievalError"
+            )
+    finally:
+        socket.getaddrinfo = original_getaddrinfo
+
+    assert requester_called == [], (
+        f"{case_name}: requester must not run before safe DNS validation"
+    )
+
+
+print("PASS: redirect hostname is independently resolved and validated")
+print("PASS: private DNS answer is rejected before transport")
+print("PASS: mixed public/private DNS answer is rejected before transport")
+print("PASS: empty DNS answer is rejected before transport")
+print("PASS: DNS resolution failure becomes SourceRetrievalError")
