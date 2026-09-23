@@ -75,6 +75,8 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import threading
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,6 +136,72 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+class InferenceBusyError(BackendError):
+    """Inference could not be admitted because the local scheduler is full."""
+
+
+class InferenceScheduler:
+    """
+    Bound process-local access to model inference.
+
+    One caller may own the backend at a time. ``max_waiters`` limits callers
+    waiting behind that active inference; callers beyond that bound fail
+    immediately rather than creating an unbounded queue.
+    """
+
+    def __init__(self, max_waiters: int, wait_timeout: float) -> None:
+        if isinstance(max_waiters, bool) or not isinstance(max_waiters, int):
+            raise TypeError("max_waiters must be an integer")
+        if max_waiters < 0:
+            raise ValueError("max_waiters must be non-negative")
+
+        try:
+            resolved_timeout = float(wait_timeout)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("wait_timeout must be a number") from exc
+        if resolved_timeout <= 0:
+            raise ValueError("wait_timeout must be positive")
+
+        self.max_waiters = max_waiters
+        self.wait_timeout = resolved_timeout
+        self._condition = threading.Condition()
+        self._active = False
+        self._waiters = 0
+
+    @contextmanager
+    def admit(self):
+        with self._condition:
+            if not self._active:
+                self._active = True
+            else:
+                if self._waiters >= self.max_waiters:
+                    raise InferenceBusyError(
+                        "Local inference queue is full; try again when the "
+                        "current model work has finished."
+                    )
+
+                self._waiters += 1
+                try:
+                    admitted = self._condition.wait_for(
+                        lambda: not self._active,
+                        timeout=self.wait_timeout,
+                    )
+                    if not admitted:
+                        raise InferenceBusyError(
+                            "Timed out waiting for local model inference."
+                        )
+                    self._active = True
+                finally:
+                    self._waiters -= 1
+
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._active = False
+                self._condition.notify_all()
 
 
 def _env_int(name: str, default: int) -> int:
@@ -1186,37 +1254,52 @@ def load(model_id: str, *args: Any, **kwargs: Any):
     return handle, GGUFTokenizer(model_path)
 
 
+_INFERENCE_SCHEDULER = InferenceScheduler(
+    max_waiters=_env_int("QWEN_INFERENCE_MAX_WAITERS", 2),
+    wait_timeout=float(_env_int("QWEN_INFERENCE_WAIT_TIMEOUT", 1800)),
+)
+
+
 def generate(model: Any, tokenizer: Any, prompt: Any = None,
              max_tokens: int = 1200, sampler: Any = None,
              verbose: bool = False, **kwargs: Any) -> str:
     """
     Signature-compatible replacement for ``mlx_lm.generate``.
 
+    Every logical generation obtains one process-local scheduler admission.
+    Recovery retries and thinking fallbacks therefore retain the same slot,
+    while excess callers cannot accumulate in an unbounded inference queue.
+
     Returns the generated text with any reasoning span removed.
     """
     if prompt is None:
         prompt = kwargs.pop("prompt", "")
 
-    if isinstance(model, (LlamaServerModel, LlamaCppModel)):
-        messages, enable_thinking = _as_messages(prompt)
-        if isinstance(sampler, Sampler) or sampler is None:
-            resolved_sampler = sampler
-        else:
-            resolved_sampler = None  # an mlx sampler is meaningless here
-        # The allowance follows the flag resolved for this prompt, not the
-        # process default, so a mixed run cannot borrow the wrong budget.
-        return _generate_with_recovery(model, messages, int(max_tokens),
-                                       resolved_sampler, enable_thinking)
+    with _INFERENCE_SCHEDULER.admit():
+        if isinstance(model, (LlamaServerModel, LlamaCppModel)):
+            messages, enable_thinking = _as_messages(prompt)
+            if isinstance(sampler, Sampler) or sampler is None:
+                resolved_sampler = sampler
+            else:
+                resolved_sampler = None  # an mlx sampler is meaningless here
+            # The allowance follows the flag resolved for this prompt, not the
+            # process default, so a mixed run cannot borrow the wrong budget.
+            return _generate_with_recovery(
+                model, messages, int(max_tokens),
+                resolved_sampler, enable_thinking,
+            )
 
-    from mlx_lm import generate as _mlx_generate  # noqa: WPS433
-    text = _mlx_generate(
-        model, tokenizer,
-        prompt=str(prompt),
-        max_tokens=max_tokens,
-        sampler=_to_mlx_sampler(sampler),
-        verbose=verbose,
-        **kwargs,
-    )
-    text = strip_reasoning(text)
-    _reject_if_reasoning_ate_the_answer(text, _close_generation(), max_tokens)
-    return text
+        from mlx_lm import generate as _mlx_generate  # noqa: WPS433
+        text = _mlx_generate(
+            model, tokenizer,
+            prompt=str(prompt),
+            max_tokens=max_tokens,
+            sampler=_to_mlx_sampler(sampler),
+            verbose=verbose,
+            **kwargs,
+        )
+        text = strip_reasoning(text)
+        _reject_if_reasoning_ate_the_answer(
+            text, _close_generation(), max_tokens,
+        )
+        return text

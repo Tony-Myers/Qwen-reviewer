@@ -267,10 +267,9 @@ SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8080
 model = None
 tokenizer = None
-# The model itself remains shared, so individual generations are serialised.
-# Review-wide thinking, vision, and reasoning accounting are context-local and
-# do not require a whole-review lifecycle lock.
-model_lock = threading.Lock()
+# Review-wide thinking, vision, and reasoning accounting are context-local.
+# Individual generations are serialised and bounded centrally by
+# llm_backend.generate(), so the server does not maintain a second model lock.
 restart_lock = threading.Lock()
 restart_scheduled = False
 
@@ -863,11 +862,10 @@ async def chat_completions(request: dict):
                            repetition_penalty=repetition_penalty,
                            presence_penalty=presence_penalty)
 
-    with model_lock:
-        output = generate(
-            model, tokenizer, prompt=prompt,
-            max_tokens=max_tokens, sampler=sampler, verbose=False,
-        )
+    output = generate(
+        model, tokenizer, prompt=prompt,
+        max_tokens=max_tokens, sampler=sampler, verbose=False,
+    )
 
     output = rp.clean_model_output(output)
     output = rp.clean_markdown_math_artifacts(output)
@@ -1273,7 +1271,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         for i, chunk_text in enumerate(chunks, start=1):
             _add_progress(job_id, f"Reviewing chunk {i}/{len(chunks)}...")
             chunk = rp.DocChunk(source_name=file_path.name, chunk_id=i, text=chunk_text)
-            with model_lock, _chunk_reasoning(job_id):
+            with _chunk_reasoning(job_id):
                 reviewed = rp.review_chunk(
                     model, tokenizer, chunk,
                     method_expectations=method_expectations,
@@ -1287,13 +1285,12 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
 
         # File-level synthesis
         _add_progress(job_id, "Synthesising file-level review...")
-        with model_lock:
-            file_summary = rp.synthesize_file_review(
-                model, tokenizer, file_path.name, combined,
-                method_expectations=method_expectations,
-                manifest_summary=manifest_summary,
-                tables_text=tables_text,
-            )
+        file_summary = rp.synthesize_file_review(
+            model, tokenizer, file_path.name, combined,
+            method_expectations=method_expectations,
+            manifest_summary=manifest_summary,
+            tables_text=tables_text,
+        )
 
         file_summaries = [(file_path.name, file_summary)]
         all_manifests = [manifest]
@@ -1329,23 +1326,21 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             temperature = None if attempt == 0 else rp.REPEAT_PASS_TEMPERATURE
             print(f"[synthesis] pass {attempt + 1} of {passes} "
                   f"(temperature={temperature or rp.TEMPERATURE})", flush=True)
-            with model_lock:
-                draft = rp.synthesize_report(
-                    model, tokenizer, file_summaries,
-                    all_manifests=all_manifests,
-                    tables_text=tables_text,
-                    temperature=temperature,
-                )
+            draft = rp.synthesize_report(
+                model, tokenizer, file_summaries,
+                all_manifests=all_manifests,
+                tables_text=tables_text,
+                temperature=temperature,
+            )
 
             corrections = rp.programmatic_post_checks(draft, manifest)
             all_corrections.extend(corrections)
             _add_progress(job_id, f"Validating report against evidence{label}...")
             before = rp.count_report_items(draft)
-            with model_lock:
-                draft = rp.validate_report_against_evidence(
-                    model, tokenizer, draft, file_summaries,
-                    programmatic_corrections=corrections if corrections else None,
-                )
+            draft = rp.validate_report_against_evidence(
+                model, tokenizer, draft, file_summaries,
+                programmatic_corrections=corrections if corrections else None,
+            )
             after = rp.count_report_items(draft)
             for index in (0, 1):
                 raw_total[index] += before[index]

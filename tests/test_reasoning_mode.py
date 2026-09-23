@@ -371,8 +371,9 @@ ok("the counters are reset per review",
    "otherwise the header reports the previous review")
 
 # Review-wide thinking, vision, and reasoning accounting are execution-context
-# local. Reviews therefore need not monopolise a lifecycle lock; only actual
-# model generations remain serialised by model_lock.
+# local. Reviews therefore need not monopolise a lifecycle lock. Actual model
+# generation is serialised centrally at llm_backend.generate(), so individual
+# server call sites must not maintain a second inference lock.
 _review_start = server_src.index("def _run_review(")
 _review_end = server_src.index("\ndef _chunk_reasoning(", _review_start)
 _review_src = server_src[_review_start:_review_end]
@@ -386,10 +387,14 @@ ok("review-local modes still own the whole review",
        < _review_src.index("with llm_backend.thinking(want_thinking), rp.vision(want_vision):")
        < _review_src.index("_run_review_inner(job_id, file_path, domain, tmp_dir)"),
    "thinking, vision, and reasoning accounting must still span the review")
-ok("model generations remain serialised",
-   server_src.count("with model_lock") >= 5
-   and "with model_lock, _chunk_reasoning(job_id):" in server_src,
-   "removing the lifecycle lock must not make model generation concurrent")
+ok("server has no duplicate model lock",
+   "model_lock = threading.Lock()" not in server_src
+   and "with model_lock" not in server_src,
+   "llm_backend.generate() now owns bounded inference admission")
+backend_src = (ROOT / "app" / "llm_backend.py").read_text()
+ok("generation owns bounded inference admission",
+   "with _INFERENCE_SCHEDULER.admit():" in backend_src,
+   "all model callers must converge on the backend scheduler")
 
 ok("the hybrid is accepted", '"synthesis", "hybrid", "2"' in server_src)
 # Passes repeat the synthesis, which is the stage that reasons: three passes of
@@ -412,7 +417,7 @@ import review_pipeline as rp3  # noqa: E402
 ok("one thinking pass by default", rp3.THINKING_PASSES == 1,
    str(rp3.THINKING_PASSES))
 ok("the chunk loop can step back into instruct",
-   "with model_lock, _chunk_reasoning(job_id):" in server_src,
+   "with _chunk_reasoning(job_id):" in server_src,
    "otherwise the hybrid is just a thinking run")
 ok("the header names the hybrid",
    'thinking (synthesis and validation only)' in server_src)
