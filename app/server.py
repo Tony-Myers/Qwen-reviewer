@@ -1223,15 +1223,28 @@ def _reasoning_header_lines(scope: str = "review",
 
 def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
     """Run the full review pipeline (called in background thread)."""
-    ensure_model()
+    try:
+        ensure_model()
 
-    want_thinking = review_jobs.get(job_id, {}).get("thinking")
-    want_vision = review_jobs.get(job_id, {}).get("vision")
-    # All three are execution-context local: concurrent reviews keep their own
-    # modes and reasoning accounting while model generations remain serialised.
-    llm_backend.reset_reasoning_stats()
-    with llm_backend.thinking(want_thinking), rp.vision(want_vision):
-        _run_review_inner(job_id, file_path, domain, tmp_dir)
+        want_thinking = review_jobs.get(job_id, {}).get("thinking")
+        want_vision = review_jobs.get(job_id, {}).get("vision")
+        # All three are execution-context local: concurrent reviews keep their own
+        # modes and reasoning accounting while model generations remain serialised.
+        llm_backend.reset_reasoning_stats()
+        with llm_backend.thinking(want_thinking), rp.vision(want_vision):
+            _run_review_inner(job_id, file_path, domain, tmp_dir)
+    except Exception as e:
+        if job_id in review_jobs:
+            review_jobs[job_id]["status"] = "error"
+            review_jobs[job_id]["error"] = f"{e}\n{traceback.format_exc()}"
+            _add_progress(job_id, f"Error: {e}")
+    finally:
+        # Worker-level failures can happen before _run_review_inner() acquires
+        # ownership of cleanup, so the thread boundary guarantees it as well.
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def _chunk_reasoning(job_id: str):
