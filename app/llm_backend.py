@@ -103,6 +103,8 @@ __all__ = [
     "thinking_token_allowance",
     "is_gguf_model",
     "BackendError",
+    "InferenceCancelledError",
+    "inference_cancellation",
     "Sampler",
     "ChatPrompt",
 ]
@@ -142,6 +144,10 @@ class InferenceBusyError(BackendError):
     """Inference could not be admitted because the local scheduler is full."""
 
 
+class InferenceCancelledError(BackendError):
+    """Inference was cancelled before it acquired the local backend."""
+
+
 class InferenceScheduler:
     """
     Bound process-local access to model inference.
@@ -171,9 +177,25 @@ class InferenceScheduler:
         self._waiters = 0
 
     @contextmanager
-    def admit(self):
+    def admit(self, cancelled=None):
+        """
+        Admit one inference, optionally abandoning a queued wait cooperatively.
+
+        ``cancelled`` is a zero-argument predicate owned by the caller. It is
+        consulted only before backend admission; an inference already executing
+        is deliberately not interrupted here.
+        """
+        if cancelled is not None and cancelled():
+            raise InferenceCancelledError(
+                "Local model inference was cancelled before admission."
+            )
+
         with self._condition:
             if not self._active:
+                if cancelled is not None and cancelled():
+                    raise InferenceCancelledError(
+                        "Local model inference was cancelled before admission."
+                    )
                 self._active = True
             else:
                 if self._waiters >= self.max_waiters:
@@ -183,15 +205,32 @@ class InferenceScheduler:
                     )
 
                 self._waiters += 1
+                deadline = time.monotonic() + self.wait_timeout
                 try:
-                    admitted = self._condition.wait_for(
-                        lambda: not self._active,
-                        timeout=self.wait_timeout,
-                    )
-                    if not admitted:
-                        raise InferenceBusyError(
-                            "Timed out waiting for local model inference."
+                    while self._active:
+                        if cancelled is not None and cancelled():
+                            raise InferenceCancelledError(
+                                "Local model inference was cancelled while waiting."
+                            )
+
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise InferenceBusyError(
+                                "Timed out waiting for local model inference."
+                            )
+
+                        # Polling is bounded so caller-owned cancellation can be
+                        # noticed even while the active inference still holds
+                        # the condition and therefore emits no notification.
+                        self._condition.wait(timeout=min(0.1, remaining))
+
+                    # Slot release and cancellation can race. Cancellation wins
+                    # until this caller has actually acquired backend ownership.
+                    if cancelled is not None and cancelled():
+                        raise InferenceCancelledError(
+                            "Local model inference was cancelled before admission."
                         )
+
                     self._active = True
                 finally:
                     self._waiters -= 1
@@ -1254,6 +1293,26 @@ def load(model_id: str, *args: Any, **kwargs: Any):
     return handle, GGUFTokenizer(model_path)
 
 
+_INFERENCE_CANCELLATION: ContextVar[Any] = ContextVar(
+    "inference_cancellation", default=None
+)
+
+
+@contextmanager
+def inference_cancellation(predicate):
+    """
+    Supply a caller-owned cancellation predicate to inference admission.
+
+    The override is execution-context local, so cancelling one review cannot
+    affect concurrent chat, Academic Chat, or another review.
+    """
+    token = _INFERENCE_CANCELLATION.set(predicate)
+    try:
+        yield
+    finally:
+        _INFERENCE_CANCELLATION.reset(token)
+
+
 _INFERENCE_SCHEDULER = InferenceScheduler(
     max_waiters=_env_int("QWEN_INFERENCE_MAX_WAITERS", 2),
     wait_timeout=float(_env_int("QWEN_INFERENCE_WAIT_TIMEOUT", 1800)),
@@ -1275,7 +1334,9 @@ def generate(model: Any, tokenizer: Any, prompt: Any = None,
     if prompt is None:
         prompt = kwargs.pop("prompt", "")
 
-    with _INFERENCE_SCHEDULER.admit():
+    with _INFERENCE_SCHEDULER.admit(
+        cancelled=_INFERENCE_CANCELLATION.get(),
+    ):
         if isinstance(model, (LlamaServerModel, LlamaCppModel)):
             messages, enable_thinking = _as_messages(prompt)
             if isinstance(sampler, Sampler) or sampler is None:

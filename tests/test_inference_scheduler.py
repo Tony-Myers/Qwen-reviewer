@@ -500,3 +500,223 @@ if failures:
     raise SystemExit(1)
 
 print("\nPASS: scheduler configuration is explicit and validated")
+
+
+print("\n[queued inference can be cancelled before admission]")
+
+scheduler = Scheduler(max_waiters=1, wait_timeout=5.0)
+holder_entered = threading.Event()
+release_holder = threading.Event()
+waiter_started = threading.Event()
+cancel_waiter = threading.Event()
+waiter_finished = threading.Event()
+waiter_acquired = threading.Event()
+waiter_errors = []
+
+
+def cancellable_holder():
+    with scheduler.admit():
+        holder_entered.set()
+        release_holder.wait(2.0)
+
+
+def cancellable_waiter():
+    waiter_started.set()
+    try:
+        with scheduler.admit(cancelled=cancel_waiter.is_set):
+            waiter_acquired.set()
+    except Exception as exc:
+        waiter_errors.append(exc)
+    finally:
+        waiter_finished.set()
+
+
+holder_thread = threading.Thread(target=cancellable_holder)
+waiter_thread = threading.Thread(target=cancellable_waiter)
+
+try:
+    holder_thread.start()
+    ok(
+        "cancellation holder acquired inference",
+        holder_entered.wait(1.0),
+    )
+
+    waiter_thread.start()
+    ok(
+        "cancellable inference entered the queue",
+        waiter_started.wait(1.0),
+    )
+
+    # The holder deliberately remains active. Cancellation must therefore wake
+    # the waiter rather than relying on normal inference-slot release.
+    time.sleep(0.05)
+    started = time.monotonic()
+    cancel_waiter.set()
+
+    ok(
+        "cancelled waiter leaves the queue promptly",
+        waiter_finished.wait(0.50),
+        "queued cancellation did not wake within 0.5 seconds",
+    )
+    elapsed = time.monotonic() - started
+
+    ok(
+        "cancelled waiter never acquires inference",
+        not waiter_acquired.is_set(),
+    )
+    ok(
+        "queued cancellation is prompt",
+        elapsed < 0.50,
+        f"cancellation took {elapsed:.3f}s",
+    )
+    ok(
+        "cancelled waiter reports a distinct cancellation exception",
+        bool(waiter_errors)
+        and type(waiter_errors[0]).__name__ == "InferenceCancelledError",
+        repr(waiter_errors),
+    )
+    ok(
+        "cancelled waiter releases waiting capacity",
+        scheduler._waiters == 0,
+        f"waiters={scheduler._waiters}",
+    )
+finally:
+    release_holder.set()
+    holder_thread.join(2.0)
+    waiter_thread.join(2.0)
+
+
+if failures:
+    print(f"\nFAILED: {failures} check(s)")
+    raise SystemExit(1)
+
+print("\nPASS: queued inference cancellation is prompt and does not reach the backend")
+
+
+print("\n[public generate propagates execution-context cancellation]")
+
+has_context = hasattr(llm_backend, "inference_cancellation")
+
+ok(
+    "llm_backend exposes an inference cancellation context",
+    has_context,
+    "generate() has no execution-context mechanism for scheduler cancellation",
+)
+
+if has_context:
+    original_scheduler = llm_backend._INFERENCE_SCHEDULER
+    llm_backend._INFERENCE_SCHEDULER = Scheduler(
+        max_waiters=1,
+        wait_timeout=5.0,
+    )
+
+    public_holder_entered = threading.Event()
+    public_release_holder = threading.Event()
+    public_cancel = threading.Event()
+    public_waiter_finished = threading.Event()
+    public_waiter_backend_called = threading.Event()
+    public_waiter_errors = []
+
+
+    class CancellationContextModel(llm_backend.LlamaServerModel):
+        def __init__(self):
+            pass
+
+        def complete(
+            self,
+            messages,
+            max_tokens,
+            sampler,
+            enable_thinking,
+        ):
+            content = messages[-1]["content"]
+
+            if content == "holder":
+                public_holder_entered.set()
+                public_release_holder.wait(2.0)
+                return "holder complete"
+
+            public_waiter_backend_called.set()
+            return "waiter should not run"
+
+
+    context_model = CancellationContextModel()
+
+
+    def context_holder():
+        llm_backend.generate(
+            context_model,
+            None,
+            prompt=[{"role": "user", "content": "holder"}],
+            max_tokens=10,
+        )
+
+
+    def context_waiter():
+        try:
+            with llm_backend.inference_cancellation(public_cancel.is_set):
+                llm_backend.generate(
+                    context_model,
+                    None,
+                    prompt=[{"role": "user", "content": "waiter"}],
+                    max_tokens=10,
+                )
+        except Exception as exc:
+            public_waiter_errors.append(exc)
+        finally:
+            public_waiter_finished.set()
+
+
+    holder_thread = threading.Thread(target=context_holder)
+    waiter_thread = threading.Thread(target=context_waiter)
+
+    try:
+        holder_thread.start()
+        ok(
+            "public cancellation holder reaches backend",
+            public_holder_entered.wait(1.0),
+        )
+
+        waiter_thread.start()
+        time.sleep(0.05)
+
+        started = time.monotonic()
+        public_cancel.set()
+
+        ok(
+            "context-cancelled public generate exits promptly",
+            public_waiter_finished.wait(0.50),
+            "public generate remained queued after its context was cancelled",
+        )
+        elapsed = time.monotonic() - started
+
+        ok(
+            "context-cancelled public generate never reaches backend",
+            not public_waiter_backend_called.is_set(),
+        )
+        ok(
+            "public cancellation remains prompt",
+            elapsed < 0.50,
+            f"cancellation took {elapsed:.3f}s",
+        )
+        ok(
+            "public generate surfaces InferenceCancelledError",
+            bool(public_waiter_errors)
+            and isinstance(
+                public_waiter_errors[0],
+                llm_backend.InferenceCancelledError,
+            ),
+            repr(public_waiter_errors),
+        )
+    finally:
+        public_release_holder.set()
+        holder_thread.join(2.0)
+        waiter_thread.join(2.0)
+        llm_backend._INFERENCE_SCHEDULER = original_scheduler
+
+
+if failures:
+    print(f"\nFAILED: {failures} check(s)")
+    raise SystemExit(1)
+
+print("\nPASS: public generation propagates context-local cancellation")

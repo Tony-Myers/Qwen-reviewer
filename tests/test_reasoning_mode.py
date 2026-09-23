@@ -360,7 +360,7 @@ ok("the endpoint accepts it", 'thinking: str = Form("")' in server_src)
 # The vision choice joined it on the same statement, so this looks for the
 # context manager rather than the whole line it used to occupy alone.
 ok("it is held for the whole review",
-   "with llm_backend.thinking(want_thinking)" in server_src)
+   "llm_backend.thinking(want_thinking)" in server_src)
 ok("and the vision choice is held the same way",
    "rp.vision(want_vision)" in server_src)
 ok("blank means the server default", 'want_thinking = None' in server_src)
@@ -370,8 +370,8 @@ ok("the counters are reset per review",
    "llm_backend.reset_reasoning_stats()" in server_src,
    "otherwise the header reports the previous review")
 
-# Review-wide thinking, vision, and reasoning accounting are execution-context
-# local. Reviews therefore need not monopolise a lifecycle lock. Actual model
+# Review-wide thinking, vision, cancellation, and reasoning accounting are
+# execution-context local. Reviews therefore need not monopolise a lifecycle lock. Actual model
 # generation is serialised centrally at llm_backend.generate(), so individual
 # server call sites must not maintain a second inference lock.
 _review_start = server_src.index("def _run_review(")
@@ -384,16 +384,18 @@ ok("reviews do not hold a lifecycle lock",
    "context-local review state should allow independent reviews to interleave")
 ok("review-local modes still own the whole review",
    _review_src.index("llm_backend.reset_reasoning_stats()")
-       < _review_src.index("with llm_backend.thinking(want_thinking), rp.vision(want_vision):")
+       < _review_src.index("llm_backend.thinking(want_thinking)")
+       < _review_src.index("rp.vision(want_vision)")
+       < _review_src.index("llm_backend.inference_cancellation(review_cancelled)")
        < _review_src.index("_run_review_inner(job_id, file_path, domain, tmp_dir)"),
-   "thinking, vision, and reasoning accounting must still span the review")
+   "thinking, vision, cancellation, and reasoning accounting must still span the review")
 ok("server has no duplicate model lock",
    "model_lock = threading.Lock()" not in server_src
    and "with model_lock" not in server_src,
    "llm_backend.generate() now owns bounded inference admission")
 backend_src = (ROOT / "app" / "llm_backend.py").read_text()
 ok("generation owns bounded inference admission",
-   "with _INFERENCE_SCHEDULER.admit():" in backend_src,
+   "with _INFERENCE_SCHEDULER.admit(" in backend_src,
    "all model callers must converge on the backend scheduler")
 
 ok("the hybrid is accepted", '"synthesis", "hybrid", "2"' in server_src)

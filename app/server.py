@@ -999,6 +999,7 @@ async def start_review(
         "appendix": None,
         "error": None,
         "filename": file.filename,
+        "cancel_requested": False,
     }
 
     # Run review in background thread
@@ -1009,6 +1010,41 @@ async def start_review(
     thread.start()
 
     return {"job_id": job_id, "status": "running"}
+
+
+class ReviewCancelled(Exception):
+    """Internal control flow for a cooperatively cancelled review."""
+
+
+def _check_review_cancelled(job_id: str):
+    """Stop a review at the next safe boundary after cancellation is requested."""
+    job = review_jobs.get(job_id)
+    if job and job.get("cancel_requested"):
+        raise ReviewCancelled("Review cancelled by user.")
+
+
+@app.post("/api/review/{job_id}/cancel")
+async def cancel_review(job_id: str):
+    """Request cooperative cancellation of a running review."""
+    job = review_jobs.get(job_id)
+    if not job:
+        return JSONResponse({"error": "Unknown job"}, status_code=404)
+
+    status = job.get("status")
+    if status == "running":
+        job["cancel_requested"] = True
+        return {"job_id": job_id, "status": "cancelling"}
+
+    if status == "cancelled":
+        return {"job_id": job_id, "status": "cancelled"}
+
+    return JSONResponse(
+        {
+            "error": f"Review is already {status}.",
+            "status": status,
+        },
+        status_code=409,
+    )
 
 
 @app.post("/api/review/{job_id}/ask")
@@ -1228,11 +1264,25 @@ def _run_review(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
 
         want_thinking = review_jobs.get(job_id, {}).get("thinking")
         want_vision = review_jobs.get(job_id, {}).get("vision")
-        # All three are execution-context local: concurrent reviews keep their own
-        # modes and reasoning accounting while model generations remain serialised.
+        # Review-local execution context keeps reasoning, vision, and
+        # cancellation isolated while model generations remain serialised.
         llm_backend.reset_reasoning_stats()
-        with llm_backend.thinking(want_thinking), rp.vision(want_vision):
+
+        def review_cancelled():
+            job = review_jobs.get(job_id)
+            return bool(job and job.get("cancel_requested"))
+
+        with (
+            llm_backend.thinking(want_thinking),
+            rp.vision(want_vision),
+            llm_backend.inference_cancellation(review_cancelled),
+        ):
             _run_review_inner(job_id, file_path, domain, tmp_dir)
+    except llm_backend.InferenceCancelledError:
+        if job_id in review_jobs:
+            review_jobs[job_id]["status"] = "cancelled"
+            review_jobs[job_id]["error"] = None
+            _add_progress(job_id, "Review cancelled.")
     except Exception as e:
         if job_id in review_jobs:
             review_jobs[job_id]["status"] = "error"
@@ -1262,9 +1312,11 @@ def _chunk_reasoning(job_id: str):
 
 def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
     try:
+        _check_review_cancelled(job_id)
         _add_progress(job_id, f"Reading {file_path.name}...")
         text, table_blocks, extraction_notes = rp.load_document(file_path)
 
+        _check_review_cancelled(job_id)
         _add_progress(job_id, "Structuring evidence...")
         derived = rp.detect_derived_input(text)
         if derived:
@@ -1309,6 +1361,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         # Chunk review
         chunk_outputs = []
         for i, chunk_text in enumerate(chunks, start=1):
+            _check_review_cancelled(job_id)
             _add_progress(job_id, f"Reviewing chunk {i}/{len(chunks)}...")
             chunk = rp.DocChunk(source_name=file_path.name, chunk_id=i, text=chunk_text)
             with _chunk_reasoning(job_id):
@@ -1324,6 +1377,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         )
 
         # File-level synthesis
+        _check_review_cancelled(job_id)
         _add_progress(job_id, "Synthesising file-level review...")
         file_summary = rp.synthesize_file_review(
             model, tokenizer, file_path.name, combined,
@@ -1358,6 +1412,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         raw_total = [0, 0]
         all_corrections = []
         for attempt in range(passes):
+            _check_review_cancelled(job_id)
             label = f" (pass {attempt + 1} of {passes})" if passes > 1 else ""
             _add_progress(job_id, f"Synthesising final report{label}...")
             # The first pass stays at the standard low temperature and becomes
@@ -1375,6 +1430,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
 
             corrections = rp.programmatic_post_checks(draft, manifest)
             all_corrections.extend(corrections)
+            _check_review_cancelled(job_id)
             _add_progress(job_id, f"Validating report against evidence{label}...")
             before = rp.count_report_items(draft)
             draft = rp.validate_report_against_evidence(
@@ -1496,11 +1552,17 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         # Kept so the reviewer can ask where the paper says something. It is
         # the same extracted text the report was built from, so an answer and a
         # concern are checked against exactly the same source.
+        _check_review_cancelled(job_id)
         review_jobs[job_id]["text"] = text
         review_jobs[job_id]["report"] = final_report
         review_jobs[job_id]["appendix"] = appendix_lines
         review_jobs[job_id]["status"] = "complete"
         _add_progress(job_id, "Review complete.")
+
+    except (ReviewCancelled, llm_backend.InferenceCancelledError):
+        review_jobs[job_id]["status"] = "cancelled"
+        review_jobs[job_id]["error"] = None
+        _add_progress(job_id, "Review cancelled.")
 
     except Exception as e:
         review_jobs[job_id]["status"] = "error"
@@ -1547,6 +1609,13 @@ async def review_status(job_id: str):
                 break
             elif job["status"] == "error":
                 data = json.dumps({"type": "error", "message": job.get("error", "Unknown error")})
+                yield f"data: {data}\n\n"
+                break
+            elif job["status"] == "cancelled":
+                data = json.dumps({
+                    "type": "cancelled",
+                    "message": "Review cancelled.",
+                })
                 yield f"data: {data}\n\n"
                 break
 
