@@ -1420,9 +1420,20 @@ def request_validated_http_hop(
         http2=False,
     )
 
+    host = parsed.hostname or ""
+
+    if ":" in host:
+        host = f"[{host}]"
+
+    authority = host
+
+    if port != default_port:
+        authority = f"{authority}:{port}"
+
     request = httpcore.Request(
         method="GET",
         url=url,
+        headers=[(b"Host", authority.encode("ascii"))],
     )
 
     response = None
