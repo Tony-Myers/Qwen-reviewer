@@ -2,7 +2,7 @@
 """
 Runs the exact post-synthesis chain that server.py performs, on a stored
 report. The other suites exercise each function alone; this one exercises the
-wiring and its ORDER -- the confidence computation and the citation check both
+wiring and its ORDER -- the evidence-match computation and the citation check both
 read quotation marks, so stripping them may only happen after both have run.
 Reverse that and the check reports a clean report, which is the worst possible
 failure of a tool whose job is to say what to trust.
@@ -37,7 +37,7 @@ final_report += rp.format_citation_check(report_problems)
 
 print("chain completed, no exception")
 print("length:", len(final_report), "chars")
-print("confidence lines:", final_report.count("* Confidence:"))
+print("evidence-match lines:", final_report.count("* Evidence match:"))
 print("not-verbatim tags:", final_report.count("*[not verbatim"))
 print("action table:", "# Items by evidence" in final_report)
 print("citation section:", "# Citation check" in final_report)
@@ -52,7 +52,7 @@ def check(label, cond, detail=""):
     if not cond: fails.append(label)
 
 check("chain produced a report", len(final_report) > 1000)
-check("every concern got a confidence line", final_report.count("* Confidence:") == 3)
+check("every concern got an evidence-match line", final_report.count("* Evidence match:") == 3)
 check("unverified spans were tagged", final_report.count("*[not verbatim") >= 1)
 check("the action table rendered", "# Items by evidence" in final_report)
 check("the citation section rendered", "# Citation check" in final_report)

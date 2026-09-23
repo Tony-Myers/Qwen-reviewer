@@ -453,7 +453,7 @@ ok("the hybrid is tallied apart from full thinking",
    "pooling them would hide which of the two helps")
 
 print("\n[it scores what it finds]")
-REPORT = (INSTR + "* Confidence: High — every quotation was located in the manuscript.\n"
+REPORT = (INSTR + "* Evidence match: High — every quotation was located in the manuscript.\n"
           "* Cites this pipeline's own summary rather than the manuscript: ...x\n"
           "* Quotation not found in the manuscript: \"y\"\n")
 sc = tally._sweep.score(REPORT)

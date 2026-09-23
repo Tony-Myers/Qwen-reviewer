@@ -4068,7 +4068,7 @@ def report_reliability_banner(report_text: str) -> str:
     authors acted on. The banner therefore says what it measures and stops
     instructing the reader what to conclude from it.
     """
-    levels = re.findall(r"^\s*[-*]?\s*\**\s*Confidence:?\**\s*:?\s*(\w+)",
+    levels = re.findall(r"^\s*[-*]?\s*\**\s*Evidence\s+match:?\**\s*:?\s*(\w+)",
                         report_text or "", re.M | re.I)
     if not levels or any(level.lower() == "high" for level in levels):
         return ""
@@ -4155,7 +4155,7 @@ def annotate_concern_confidence(
     source_text: str,
     table_text: str = "",
 ) -> str:
-    """Append a computed Confidence line to each directly supported concern."""
+    """Recompute an application-owned Evidence match line for every concern."""
     lines = (report_text or "").splitlines()
     bounds = None
     for index, line in enumerate(lines):
@@ -4172,22 +4172,27 @@ def annotate_concern_confidence(
         return report_text
     start, stop = bounds
     body = lines[start:stop]
-    if any("Confidence:" in line for line in body):
-        return report_text
     out: List[str] = []
     groups = _concern_groups(body)
     if not groups:
         return report_text
     covered = groups[0][0]
     out.extend(body[:covered])
+    label_re = re.compile(
+        r"^\s*[-*]?\s*\**\s*(?:Confidence|Evidence\s+match):?\**\s*:",
+        re.I,
+    )
     for begin, end in groups:
-        chunk = body[begin:end]
+        chunk = [
+            line for line in body[begin:end]
+            if not label_re.match(line)
+        ]
         level, reason = concern_confidence(
             "\n".join(chunk), source_text, table_text
         )
         while chunk and not chunk[-1].strip():
             chunk.pop()
-        chunk.append(f"* Confidence: {level} — {reason}.")
+        chunk.append(f"* Evidence match: {level} — {reason}.")
         chunk.append("")
         out.extend(chunk)
     return "\n".join(lines[:start] + out + lines[stop:])
@@ -4208,7 +4213,9 @@ _EVIDENCE_RANK = {
     "moderate": ("Reasoned", 1),
     "low": ("Unquoted", 2),
 }
-_CONFIDENCE_RE = re.compile(r"^\s*[-*]?\s*\**\s*Confidence:?\**\s*:?\s*(\w+)", re.I)
+_EVIDENCE_MATCH_RE = re.compile(
+    r"^\s*[-*]?\s*\**\s*Evidence\s+match:?\**\s*:?\s*(\w+)", re.I
+)
 
 
 def format_action_list(report_text: str) -> str:
@@ -4233,7 +4240,7 @@ def format_action_list(report_text: str) -> str:
             title = title[:inline.start()].strip().rstrip(".").strip()
         confidence = ""
         for line in chunk:
-            found = _CONFIDENCE_RE.match(line)
+            found = _EVIDENCE_MATCH_RE.match(line)
             if found:
                 confidence = found.group(1).lower()
                 break

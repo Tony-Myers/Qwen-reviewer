@@ -49,13 +49,13 @@ def ok(label, cond, detail=""):
 REPORT = """
 # Directly supported concerns
 * Concern: One.
-* Confidence: High — every quotation was located in the manuscript.
+* Evidence match: High — every quotation was located in the manuscript.
 * Concern: Two.
-* Confidence: High — the cited values were located in the extracted tables.
+* Evidence match: High — the cited values were located in the extracted tables.
 * Concern: Three.
-* Confidence: Moderate — the concern is an inference.
+* Evidence match: Moderate — the concern is an inference.
 * Concern: Four.
-* Confidence: Low — the evidence cites this pipeline's own summary rather than the manuscript.
+* Evidence match: Low — the evidence cites this pipeline's own summary rather than the manuscript.
 
 # Citation check
 * Cites this pipeline's own summary rather than the manuscript: ...notes

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Covers the report-structure additions: severity tiers, computed per-concern
-confidence, the prioritised action table and the verdict-phrasing detector.
+evidence match, the prioritised action table and the verdict-phrasing detector.
 
-Confidence is computed from the checks the pipeline already performs rather
+Evidence match is computed from the checks the pipeline already performs rather
 than asked of the model, because a model's stated confidence is a token
 prediction: the run that inverted this corpus's medication finding asserted it
 without hedging. The action table is rendered from the severity labels already
@@ -82,18 +82,18 @@ def ok(label, cond, detail=""):
 for name, report in (("bold markers", REPORT_A), ("plain markers", REPORT_B)):
     print(f"\n[{name}]")
     annotated = rp.annotate_concern_confidence(report, SOURCE, TABLE_SOURCE)
-    ok("verified quotation -> High", "Confidence: High" in annotated)
+    ok("verified quotation -> High", "Evidence match: High" in annotated)
     ok("self-citation -> Low",
-       "Confidence: Low — the evidence cites this pipeline's own summary" in annotated)
+       "Evidence match: Low — the evidence cites this pipeline's own summary" in annotated)
     ok("bare table value -> Moderate",
-       "Confidence: Moderate — at least one cited value was located in extracted "
+       "Evidence match: Moderate — at least one cited value was located in extracted "
        "table evidence, but numeric matching alone does not establish the concern."
        in annotated)
     ok("only verified quotation -> High",
-       annotated.count("Confidence: High") == 1,
-       annotated.count("Confidence: High"))
-    ok("one line per concern", annotated.count("* Confidence:") == 3,
-       str(annotated.count("* Confidence:")))
+       annotated.count("Evidence match: High") == 1,
+       annotated.count("Evidence match: High"))
+    ok("one line per concern", annotated.count("* Evidence match:") == 3,
+       str(annotated.count("* Evidence match:")))
     ok("running twice changes nothing",
        rp.annotate_concern_confidence(annotated, SOURCE, TABLE_SOURCE) == annotated)
     ok("no concern text lost", "Subgroup analyses lack multiplicity" in annotated)
@@ -184,10 +184,10 @@ _ONE_LINE = ("# Directly supported concerns\n"
              "- Concern: The prior specification needs clarification. Severity: "
              "Substantive. Evidence: the prior is a Student's t. Why it matters: "
              "it should be positive.\n"
-             "* Confidence: High — every quotation was located.\n\n"
+             "* Evidence match: High — every quotation was located.\n\n"
              "- Concern: The ACWR calculation could be clarified. Evidence: a "
              "decay constant in days.\n"
-             "* Confidence: Moderate — an inference.\n\n"
+             "* Evidence match: Moderate — an inference.\n\n"
              "# Verification prompts\n"
              "- Check: whether season was modelled. Reason: it spans two seasons.\n")
 _table = rp.format_action_list(_ONE_LINE)
@@ -195,7 +195,7 @@ ok("a run-together concern is cut at the next field",
    "| Quoted | The prior specification needs clarification |" in _table, _table)
 ok("a stray severity label does not reach the item text",
    "Severity" not in _table, _table)
-ok("its own confidence still places it",
+ok("its evidence match still places it",
    "| Reasoned | The ACWR calculation could be clarified |" in _table, _table)
 ok("a run-together check drops its reason",
    "| Question | Whether season was modelled |" in _table, _table)
@@ -203,7 +203,7 @@ ok("the field-per-line form still works",
    "| Quoted | Something is wrong. |" in rp.format_action_list(
        "# Directly supported concerns\n* Concern: Something is wrong.\n"
        "Evidence: The text states, \"a quotation\".\n"
-       "* Confidence: High — every quotation was located.\n"))
+       "* Evidence match: High — every quotation was located.\n"))
 ok("clean report yields no overclaims", rp.overclaim_problems("A measured statement.") == [])
 
 print("\n[an unfinished synthesis is refused, not published]")

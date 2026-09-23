@@ -216,8 +216,8 @@ ok("banner appears when nothing is High",
    "carries a quotation that could be located" in rp.report_reliability_banner(all_low)
    and "not about whether they are right" in rp.report_reliability_banner(all_low))
 ok("no banner once a concern is High",
-   rp.report_reliability_banner(all_low.replace("Confidence: Low", "Confidence: High", 1)) == "")
-ok("no banner without confidence lines",
+   rp.report_reliability_banner(all_low.replace("Evidence match: Low", "Evidence match: High", 1)) == "")
+ok("no banner without evidence-match lines",
    rp.report_reliability_banner("# Overall synopsis\n* x") == "")
 ok("no banner on empty input", rp.report_reliability_banner("") == "")
 

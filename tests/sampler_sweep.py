@@ -82,7 +82,7 @@ CONFIGS = {
                  "QWEN_SYNTHESIS_MAX_TOKENS": "4000"},
 }
 
-_CONF = re.compile(r"^\s*[-*]?\s*\**\s*Confidence:?\**\s*:?\s*(\w+)", re.M | re.I)
+_CONF = re.compile(r"^\s*[-*]?\s*\**\s*Evidence\s+match:?\**\s*:?\s*(\w+)", re.M | re.I)
 
 
 def score(report: str) -> dict:
