@@ -455,10 +455,21 @@ def _is_valid_model_choice(value: str) -> bool:
     return "/" in value or value.lower() in MODEL_ALIAS_MAP or value.startswith((".", "~"))
 
 
+_model_load_lock = threading.Lock()
+
+
 def ensure_model():
-    """Load the model if not yet loaded."""
+    """Load the model once if it is not yet available."""
     global model, tokenizer
-    if model is None:
+    if model is not None:
+        return
+
+    with _model_load_lock:
+        # Another readiness caller may have loaded the model while this caller
+        # waited for the lock.
+        if model is not None:
+            return
+
         print(f"Loading model: {MODEL_NAME}")
         try:
             model, tokenizer = load(MODEL_NAME)
@@ -651,10 +662,11 @@ async def academic_chat_first_stage(request: dict):
             status_code=400,
         )
 
-    ensure_model()
+    await asyncio.to_thread(ensure_model)
 
     try:
-        result = academic_orchestrator.run_academic_first_stage(
+        result = await asyncio.to_thread(
+            academic_orchestrator.run_academic_first_stage,
             model,
             tokenizer,
             question,
@@ -719,10 +731,11 @@ async def academic_chat_draft(request: dict):
             status_code=400,
         )
 
-    ensure_model()
+    await asyncio.to_thread(ensure_model)
 
     try:
-        draft = academic_chat.generate_academic_draft(
+        draft = await asyncio.to_thread(
+            academic_chat.generate_academic_draft,
             model,
             tokenizer,
             question,
@@ -817,7 +830,7 @@ async def academic_verify_reference(request: dict):
 # ---------------------------------------------------------------------------
 @app.post("/v1/chat/completions")
 async def chat_completions(request: dict):
-    ensure_model()
+    await asyncio.to_thread(ensure_model)
 
     messages = request.get("messages", [])
     max_tokens = request.get("max_tokens", 1200)
@@ -862,9 +875,14 @@ async def chat_completions(request: dict):
                            repetition_penalty=repetition_penalty,
                            presence_penalty=presence_penalty)
 
-    output = generate(
-        model, tokenizer, prompt=prompt,
-        max_tokens=max_tokens, sampler=sampler, verbose=False,
+    output = await asyncio.to_thread(
+        generate,
+        model,
+        tokenizer,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        sampler=sampler,
+        verbose=False,
     )
 
     output = rp.clean_model_output(output)
@@ -1029,13 +1047,21 @@ async def ask_about_review(job_id: str, request: dict):
             detail=f"Unknown source '{mode}'. Ask the manuscript or the reviewer notes.",
         )
 
-    ensure_model()
+    await asyncio.to_thread(ensure_model)
     if mode == SOURCE_NOTES:
-        return answer_notes_question(question, job_id=job_id)
+        return await asyncio.to_thread(
+            answer_notes_question,
+            question,
+            job_id=job_id,
+        )
 
     history = request.get("history") or []
-    answer, problems = rp.answer_manuscript_question(
-        model, tokenizer, question, job["text"],
+    answer, problems = await asyncio.to_thread(
+        rp.answer_manuscript_question,
+        model,
+        tokenizer,
+        question,
+        job["text"],
         report_text=job.get("report") or "",
         history=history,
     )
