@@ -61,7 +61,7 @@ print("-" * len(header))
 totals = {"tables": 0, "shortfall": 0, "frag": 0, "degraded": 0, "models": 0}
 for pdf in pdfs:
     try:
-        text, blocks = rp.load_document(pdf)
+        text, blocks, _extraction_notes = rp.load_document(pdf)
     except Exception as exc:
         print(f"{pdf.stem[:42]:42s}  FAILED TO READ: {type(exc).__name__}")
         continue

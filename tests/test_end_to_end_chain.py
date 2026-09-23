@@ -19,7 +19,7 @@ import review_pipeline as rp
 
 # Exactly the chain server.py::_run_review performs after synthesis.
 pdf = root/"inputs/The-impact-of-crowd-noise-on-officiating-in-MuayThai.pdf"
-text, table_blocks = rp.load_document(pdf)
+text, table_blocks, _extraction_notes = rp.load_document(pdf)
 final_report = (Path(__file__).resolve().parent / "sample_report.md").read_text()
 table_source = "\n".join(b for _, b in table_blocks)
 citation_source = text + "\n" + table_source

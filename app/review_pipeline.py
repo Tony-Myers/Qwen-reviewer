@@ -2873,12 +2873,6 @@ def _strip_abutting_line_numbers(lines: List[str],
     return removed
 
 
-# Set by load_document so the report can say what was done to the text before
-# anything read it. A silent repair is the failure mode this pipeline keeps
-# finding in itself.
-LAST_EXTRACTION_NOTES: List[str] = []
-
-
 # ---------------------------------------------------------------------------
 # Reading damaged tables from the page image
 # ---------------------------------------------------------------------------
@@ -3065,22 +3059,24 @@ def rescue_damaged_tables(pdf_path: Path,
     return table_blocks + added, notes
 
 
-def load_document(path: Path) -> Tuple[str, List[Tuple[int, str]]]:
+def load_document(
+    path: Path,
+) -> Tuple[str, List[Tuple[int, str]], List[str]]:
     text, tables = _read_document(path)
-    LAST_EXTRACTION_NOTES.clear()
+    extraction_notes: List[str] = []
     text, removed = strip_marginal_line_numbers(text)
     if removed:
-        LAST_EXTRACTION_NOTES.append(
+        extraction_notes.append(
             f"{removed} marginal line number(s) removed before analysis; the "
             f"manuscript is line numbered for review"
         )
     if path.suffix.lower() == ".pdf":
         try:
             tables, notes = rescue_damaged_tables(path, tables)
-            LAST_EXTRACTION_NOTES.extend(notes)
+            extraction_notes.extend(notes)
         except Exception:                                   # noqa: BLE001
             pass
-    return text, tables
+    return text, tables, extraction_notes
 
 
 def _read_document(path: Path) -> Tuple[str, List[Tuple[int, str]]]:
@@ -6745,7 +6741,7 @@ def main() -> int:
     for path in input_paths:
         print(f"Reading: {path}")
         try:
-            text, table_blocks = load_document(path)
+            text, table_blocks, _extraction_notes = load_document(path)
         except Exception as e:
             file_summaries.append((path.name, f"Failed to read file: {e}"))
             per_file_tables[path.name] = []

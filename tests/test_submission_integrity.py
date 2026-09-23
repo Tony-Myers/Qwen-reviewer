@@ -103,7 +103,7 @@ pdf = Path("/tmp/rpan/RPAN-2026-0184_reviewer.pdf")
 if not pdf.exists():
     print("  SKIP  PDF not staged")
 else:
-    text, blocks = rp.load_document(pdf)
+    text, blocks, _extraction_notes = rp.load_document(pdf)
     w = rp.submission_integrity_warning(text)
     ok("fires on the submitted manuscript", bool(w), w[:80])
     ok("reports a double-figure count",

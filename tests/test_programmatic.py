@@ -41,7 +41,7 @@ def check(l,c,d=""):
     print(f"  {'PASS' if c else 'FAIL'}  {l}" + (f"  {d}" if not c and d else ""))
     if not c: fails.append(l)
 
-paper_text, tb = rp.load_document(_paper())
+paper_text, tb, _extraction_notes = rp.load_document(_paper())
 def _derived_sample() -> str:
     """A real evidence appendix: the pipeline's own output, which must never be
     mistaken for a manuscript. Written by this pipeline, so it is a genuine

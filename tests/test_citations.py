@@ -43,7 +43,7 @@ def check(l,c,d=""):
     print(f"  {'PASS' if c else 'FAIL'}  {l}" + (f"  {d}" if not c and d else ""))
     if not c: fails.append(l)
 
-text, table_blocks = rp.load_document(_paper())
+text, table_blocks, _extraction_notes = rp.load_document(_paper())
 SOURCE = text + "\n" + "\n".join(b for _, b in table_blocks)
 
 # Verbatim from the run-3 report.

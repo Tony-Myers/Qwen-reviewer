@@ -49,7 +49,7 @@ def main() -> int:
         return 2
 
     print(f"Loading {args.paper.name}...")
-    text, table_blocks = rp.load_document(args.paper)
+    text, table_blocks, _extraction_notes = rp.load_document(args.paper)
     manifest = rp.structure_evidence(args.paper.name, text, table_blocks)
     method_expectations = rp.get_method_expectations(
         manifest.method_class, additional_classes=manifest.additional_method_classes)

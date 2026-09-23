@@ -40,7 +40,7 @@ def check(l,c,d=""):
     print(f"  {'PASS' if c else 'FAIL'}  {l}" + (f"  {d}" if not c and d else ""))
     if not c: fails.append(l)
 
-text, table_blocks = rp.load_document(_paper())
+text, table_blocks, _extraction_notes = rp.load_document(_paper())
 print(f"\n[1] extraction feeds the prompt builder")
 check("tables extracted", len(table_blocks) > 0, f"{len(table_blocks)}")
 tp = rp.tables_for_prompt(table_blocks)

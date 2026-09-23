@@ -175,7 +175,7 @@ check("numbering that restarts each page is still caught",
           "".join("".join("body text %d\n" % i for i in range(1, 31))
                   for _ in range(3)))[1] == 90)
 check("the removal is reported, not silent",
-      "LAST_EXTRACTION_NOTES" in PIPELINE_SRC.read_text(encoding="utf-8")
+      "extraction_notes" in PIPELINE_SRC.read_text(encoding="utf-8")
       and "Extraction: " in (ROOT / "app" / "server.py").read_text(encoding="utf-8"))
 
 print("\n[10] mathematical italic letters do not hide a statistic")

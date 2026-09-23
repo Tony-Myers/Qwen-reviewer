@@ -1225,7 +1225,7 @@ def _chunk_reasoning(job_id: str):
 def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
     try:
         _add_progress(job_id, f"Reading {file_path.name}...")
-        text, table_blocks = rp.load_document(file_path)
+        text, table_blocks, extraction_notes = rp.load_document(file_path)
 
         _add_progress(job_id, "Structuring evidence...")
         derived = rp.detect_derived_input(text)
@@ -1432,7 +1432,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             # mode afterwards; without it the comparison is unrecoverable.
             # Said out loud, because a silent repair to the text everything
             # else reads is the failure mode this pipeline keeps finding.
-            + "".join(f"Extraction: {note}\n" for note in rp.LAST_EXTRACTION_NOTES)
+            + "".join(f"Extraction: {note}\n" for note in extraction_notes)
             + _reasoning_header_lines(
                 review_jobs.get(job_id, {}).get("thinking_scope", "review"),
                 passes_note)

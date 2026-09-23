@@ -72,8 +72,8 @@ def diagnose(path: Path) -> None:
     print(path.name)
     print("=" * 78)
 
-    text, _tables = rp.load_document(path)
-    for note in rp.LAST_EXTRACTION_NOTES:
+    text, _tables, extraction_notes = rp.load_document(path)
+    for note in extraction_notes:
         print(f"  extraction: {note}")
     print(f"  document: {len(text):,} chars")
 
