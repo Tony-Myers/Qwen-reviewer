@@ -14,6 +14,7 @@ import httpcore
 import ipaddress
 import re
 import socket
+import time
 from pypdf import PdfReader
 from pypdf.errors import PyPdfError
 from typing import Any
@@ -1227,6 +1228,64 @@ def fetch_validated_http_source(
     return downloaded
 
 
+class DeadlineNetworkStream(httpcore.NetworkStream):
+    """Cap each blocking network operation by one absolute deadline."""
+
+    def __init__(self, stream, deadline: float, monotonic=time.monotonic):
+        self._stream = stream
+        self._deadline = deadline
+        self._monotonic = monotonic
+
+    def _remaining_timeout(self, timeout: float | None) -> float:
+        remaining = self._deadline - self._monotonic()
+
+        if remaining <= 0:
+            raise httpcore.TimeoutException(
+                "HTTP source retrieval exceeded its time limit."
+            )
+
+        if timeout is None:
+            return remaining
+
+        return min(timeout, remaining)
+
+    def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return self._stream.read(
+            max_bytes,
+            timeout=self._remaining_timeout(timeout),
+        )
+
+    def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        self._stream.write(
+            buffer,
+            timeout=self._remaining_timeout(timeout),
+        )
+
+    def close(self) -> None:
+        self._stream.close()
+
+    def start_tls(
+        self,
+        ssl_context,
+        server_hostname: str | None = None,
+        timeout: float | None = None,
+    ):
+        stream = self._stream.start_tls(
+            ssl_context=ssl_context,
+            server_hostname=server_hostname,
+            timeout=self._remaining_timeout(timeout),
+        )
+
+        return DeadlineNetworkStream(
+            stream,
+            deadline=self._deadline,
+            monotonic=self._monotonic,
+        )
+
+    def get_extra_info(self, info: str):
+        return self._stream.get_extra_info(info)
+
+
 class ValidatedAddressSyncBackend(httpcore.SyncBackend):
     """Connect only to network addresses validated before backend creation.
 
@@ -1235,8 +1294,16 @@ class ValidatedAddressSyncBackend(httpcore.SyncBackend):
     delegated only to a supplied canonical public IP address.
     """
 
-    def __init__(self, validated_addresses: list[str]):
+    def __init__(
+        self,
+        validated_addresses: list[str],
+        deadline: float | None = None,
+        monotonic=time.monotonic,
+    ):
         super().__init__()
+
+        self._deadline = deadline
+        self._monotonic = monotonic
 
         if not validated_addresses:
             raise SourceRetrievalError(
@@ -1270,12 +1337,34 @@ class ValidatedAddressSyncBackend(httpcore.SyncBackend):
         local_address: str | None = None,
         socket_options=None,
     ):
-        return super().connect_tcp(
+        if self._deadline is not None:
+            remaining = self._deadline - self._monotonic()
+
+            if remaining <= 0:
+                raise httpcore.ConnectTimeout(
+                    "HTTP source retrieval exceeded its time limit."
+                )
+
+            if timeout is None:
+                timeout = remaining
+            else:
+                timeout = min(timeout, remaining)
+
+        stream = super().connect_tcp(
             host=self._validated_addresses[0],
             port=port,
             timeout=timeout,
             local_address=local_address,
             socket_options=socket_options,
+        )
+
+        if self._deadline is None:
+            return stream
+
+        return DeadlineNetworkStream(
+            stream,
+            deadline=self._deadline,
+            monotonic=self._monotonic,
         )
 
 
@@ -1374,10 +1463,22 @@ def request_validated_http_hop(
     destination: ValidatedHTTPDestination,
     connection_factory=httpcore.HTTPConnection,
     max_bytes: int = 20 * 1024 * 1024,
+    deadline: float | None = None,
+    monotonic=time.monotonic,
 ) -> HTTPHopResponse:
     """Issue one HTTP GET using only the already-validated destination."""
     if max_bytes < 0:
         raise ValueError("max_bytes must not be negative.")
+
+    if deadline is not None:
+        remaining = deadline - monotonic()
+
+        if remaining <= 0:
+            raise SourceRetrievalError(
+                "HTTP source retrieval exceeded its time limit."
+            )
+    else:
+        remaining = None
 
     parsed = urlparse(url)
 
@@ -1412,6 +1513,8 @@ def request_validated_http_hop(
 
     backend = ValidatedAddressSyncBackend(
         validated_addresses=destination.addresses,
+        deadline=deadline,
+        monotonic=monotonic,
     )
 
     connection = connection_factory(
@@ -1431,10 +1534,21 @@ def request_validated_http_hop(
     if port != default_port:
         authority = f"{authority}:{port}"
 
+    request_extensions = {}
+
+    if remaining is not None:
+        request_extensions["timeout"] = {
+            "connect": remaining,
+            "read": remaining,
+            "write": remaining,
+            "pool": remaining,
+        }
+
     request = httpcore.Request(
         method="GET",
         url=url,
         headers=[(b"Host", authority.encode("ascii"))],
+        extensions=request_extensions,
     )
 
     response = None
@@ -1457,6 +1571,11 @@ def request_validated_http_hop(
         total_bytes = 0
 
         for chunk in response.iter_stream():
+            if deadline is not None and monotonic() >= deadline:
+                raise SourceRetrievalError(
+                    "HTTP source retrieval exceeded its time limit."
+                )
+
             total_bytes += len(chunk)
 
             if total_bytes > max_bytes:
@@ -1496,12 +1615,19 @@ def _fetch_with_validated_destinations_and_final_url(
     requester,
     max_redirects: int = 5,
     resolver=None,
+    deadline: float | None = None,
+    monotonic=time.monotonic,
 ):
     """Follow validated redirects and retain the final requested URL."""
     current_url = url
     redirects_followed = 0
 
     while True:
+        if deadline is not None and monotonic() >= deadline:
+            raise SourceRetrievalError(
+                "HTTP source retrieval exceeded its time limit."
+            )
+
         destination = resolve_validated_http_destination(
             current_url,
             resolver=resolver,
@@ -1572,16 +1698,36 @@ def download_validated_http_source(
     requester=request_validated_http_hop,
     max_redirects: int = 5,
     resolver=None,
+    timeout: float = 30.0,
+    monotonic=time.monotonic,
 ) -> DownloadedSource:
     """Download a source through the validated HTTP retrieval path."""
+    if timeout <= 0:
+        raise ValueError("timeout must be positive.")
+
     if resolver is None:
         resolver = resolve_system_http_hostname
 
+    deadline = monotonic() + timeout
+
+    if requester is request_validated_http_hop:
+        def bounded_requester(current_url, destination):
+            return requester(
+                current_url,
+                destination,
+                deadline=deadline,
+                monotonic=monotonic,
+            )
+    else:
+        bounded_requester = requester
+
     response, final_url = _fetch_with_validated_destinations_and_final_url(
         url,
-        requester=requester,
+        requester=bounded_requester,
         max_redirects=max_redirects,
         resolver=resolver,
+        deadline=deadline,
+        monotonic=monotonic,
     )
 
     if not 200 <= response.status_code < 300:
