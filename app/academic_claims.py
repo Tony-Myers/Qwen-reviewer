@@ -1473,6 +1473,17 @@ def request_validated_http_hop(
             content_type=content_type,
             content=content,
         )
+    except (
+        httpcore.ConnectionNotAvailable,
+        httpcore.ProxyError,
+        httpcore.NetworkError,
+        httpcore.TimeoutException,
+        httpcore.ProtocolError,
+        httpcore.UnsupportedProtocol,
+    ) as exc:
+        raise SourceRetrievalError(
+            "HTTP source retrieval failed during transport."
+        ) from exc
     finally:
         if response is not None:
             response.close()

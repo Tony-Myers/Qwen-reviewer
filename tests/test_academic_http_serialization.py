@@ -255,3 +255,154 @@ assert b"Host: journal.example\r\n" not in second_request
 print("PASS: redirect first hop uses original HTTP authority")
 print("PASS: redirect second hop recomputes destination HTTP authority")
 print("PASS: each redirect hop retains its independently validated TCP IP")
+
+
+print("\n[5] expected HTTP transport failures become retrieval failures")
+
+
+class FailingHopConnection:
+    failure_type = None
+
+    def __init__(self, origin, network_backend, http1, http2):
+        pass
+
+    def handle_request(self, request):
+        raise self.failure_type("synthetic HTTP transport failure")
+
+    def close(self):
+        pass
+
+
+transport_failures = [
+    httpcore.ConnectionNotAvailable,
+    httpcore.ProxyError,
+    httpcore.ConnectError,
+    httpcore.ConnectTimeout,
+    httpcore.ReadError,
+    httpcore.ReadTimeout,
+    httpcore.WriteError,
+    httpcore.WriteTimeout,
+    httpcore.PoolTimeout,
+    httpcore.LocalProtocolError,
+    httpcore.RemoteProtocolError,
+    httpcore.UnsupportedProtocol,
+]
+
+transport_destination = academic_claims.ValidatedHTTPDestination(
+    hostname="journal.example",
+    addresses=["8.8.8.8"],
+)
+
+for failure_type in transport_failures:
+    FailingHopConnection.failure_type = failure_type
+
+    try:
+        academic_claims.request_validated_http_hop(
+            "https://journal.example/article.pdf",
+            destination=transport_destination,
+            connection_factory=FailingHopConnection,
+        )
+    except academic_claims.SourceRetrievalError:
+        pass
+    except failure_type as exc:
+        raise AssertionError(
+            f"{failure_type.__name__} escaped the HTTP retrieval boundary"
+        ) from exc
+    else:
+        raise AssertionError(
+            f"{failure_type.__name__} should become SourceRetrievalError"
+        )
+
+print("PASS: expected httpcore transport/protocol failures become SourceRetrievalError")
+
+
+print("\n[6] programming failures remain visible")
+
+
+class BuggyHopConnection:
+    def __init__(self, origin, network_backend, http1, http2):
+        pass
+
+    def handle_request(self, request):
+        raise TypeError("synthetic programming error")
+
+    def close(self):
+        pass
+
+
+try:
+    academic_claims.request_validated_http_hop(
+        "https://journal.example/article.pdf",
+        destination=transport_destination,
+        connection_factory=BuggyHopConnection,
+    )
+except TypeError:
+    pass
+except academic_claims.SourceRetrievalError as exc:
+    raise AssertionError(
+        "Programming error was incorrectly converted to SourceRetrievalError"
+    ) from exc
+else:
+    raise AssertionError("Programming error should escape unchanged")
+
+print("PASS: unrelated programming errors are not hidden")
+
+
+print("\n[7] transport failure reaches retrieval layer as not_retrieved")
+
+
+class IntegrationFailingConnection:
+    def __init__(self, origin, network_backend, http1, http2):
+        pass
+
+    def handle_request(self, request):
+        raise httpcore.ConnectError("synthetic connection failure")
+
+    def close(self):
+        pass
+
+
+def integration_requester(url, destination):
+    return academic_claims.request_validated_http_hop(
+        url,
+        destination=destination,
+        connection_factory=IntegrationFailingConnection,
+    )
+
+
+def integration_downloader(url):
+    return academic_claims.download_validated_http_source(
+        url,
+        requester=integration_requester,
+        resolver=lambda hostname: ["8.8.8.8"],
+    )
+
+
+integration_location = academic_claims.SourceLocation(
+    status="location_found",
+    doi="10.1234/transport-failure",
+    source="openalex",
+    landing_page_url=None,
+    pdf_url="https://journal.example/article.pdf",
+    is_oa=True,
+    reasons=["Synthetic transport-failure source."],
+)
+
+integration_result = academic_claims.retrieve_pdf_source_from_location(
+    integration_location,
+    downloader=integration_downloader,
+)
+
+assert integration_result.status == "not_retrieved"
+assert integration_result.doi == "10.1234/transport-failure"
+assert integration_result.source == "openalex"
+assert integration_result.text is None
+assert integration_result.locator is None
+assert any(
+    "download failed" in reason.lower()
+    for reason in integration_result.reasons
+)
+
+print("PASS: real httpcore transport failure becomes not_retrieved")
+print("PASS: failed transport retains bibliographic provenance")
+print("PASS: failed transport does not invent source text or locator")
