@@ -806,7 +806,8 @@ async def academic_verify_reference(request: dict):
         )
 
     try:
-        result = verify_academic_reference(
+        result = await asyncio.to_thread(
+            verify_academic_reference,
             title=title,
             author=author,
             year=year,
