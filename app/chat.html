@@ -87,7 +87,13 @@
   .progress-area { padding: 16px 24px; flex-shrink: 0; display: none; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
   .progress-area.visible { display: block; }
   .progress-bar-track { width: 100%; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-bottom: 10px; }
-  .progress-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; width: 0%; }
+  .progress-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; width: 0; }
+  .progress-bar-fill.indeterminate { width: 30%; animation: review-progress-indeterminate 1.4s ease-in-out infinite; }
+  .progress-bar-fill.completed { width: 100%; animation: none; }
+  @keyframes review-progress-indeterminate {
+    0% { transform: translateX(-110%); }
+    100% { transform: translateX(345%); }
+  }
   .progress-log { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 0.75rem; color: var(--text-muted); max-height: 100px; overflow-y: auto; line-height: 1.6; }
   .report-area { flex: 1; overflow-y: auto; padding: 24px; }
   .report-content { max-width: 780px; margin: 0 auto; line-height: 1.65; font-size: 0.9rem; }
@@ -512,9 +518,12 @@ function pickFile(f) {
 // --- Review ---
 let activeReviewJobId = null;
 
-function setReviewRunning(running) {
+function setReviewRunning(running, completed = false) {
   const btn = document.getElementById('reviewBtn');
   const cancelBtn = document.getElementById('cancelReviewBtn');
+  const progressBar = document.getElementById('progressBar');
+  progressBar.classList.toggle('indeterminate', running);
+  progressBar.classList.toggle('completed', completed);
   if (running) {
     btn.disabled = true;
     cancelBtn.style.display = '';
@@ -578,7 +587,6 @@ async function startReview() {
   const btn = document.getElementById('reviewBtn');
   btn.disabled = true;
   const pa = document.getElementById('progressArea'); pa.classList.add('visible');
-  const pb = document.getElementById('progressBar'); pb.style.width = '0%';
   const pl = document.getElementById('progressLog'); pl.innerHTML = '';
   const ra = document.getElementById('reportArea'); ra.innerHTML = '';
 
@@ -601,19 +609,15 @@ async function startReview() {
     setReviewRunning(true);
 
     const es = new EventSource(BASE + '/api/review/status/' + job_id);
-    let steps = 0;
     es.onmessage = ev => {
       const d = JSON.parse(ev.data);
       if (d.type === 'progress') {
-        steps++;
-        pb.style.width = Math.min(steps * 8, 95) + '%';
         appendReviewProgress(d.message);
       }
       if (d.type === 'complete') {
         es.close();
-        pb.style.width = '100%';
         activeReviewJobId = null;
-        setReviewRunning(false);
+        setReviewRunning(false, true);
         showReport(d.report, d.has_appendix, job_id);
       }
       if (d.type === 'cancelled') {
