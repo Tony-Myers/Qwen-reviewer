@@ -354,6 +354,37 @@ async function restartWithSelectedModel() {
   }
 }
 
+function invalidateCompletedReviewAfterRestart() {
+  if (!currentJobId) return;
+
+  currentJobId = null;
+
+  const askBtn = document.getElementById('askBtn');
+  const askInput = document.getElementById('askInput');
+  const askMode = document.getElementById('askMode');
+  const askHelp = document.getElementById('askHelp');
+
+  if (askBtn) askBtn.disabled = true;
+  if (askInput) askInput.disabled = true;
+  if (askMode) askMode.disabled = true;
+  if (askHelp) {
+    askHelp.textContent =
+      'Review questions are unavailable after a model restart. The completed review remains available locally.';
+  }
+
+  const ra = document.getElementById('reportArea');
+  const appendixCached = !!(ra && ra._rawAppendix);
+  if (!appendixCached) {
+    const appendixToggle = document.getElementById('appendixToggle');
+    const appendixDownload = document.getElementById('appendixDownload');
+    if (appendixToggle) {
+      appendixToggle.disabled = true;
+      appendixToggle.textContent = 'Evidence appendix unavailable after restart';
+    }
+    if (appendixDownload) appendixDownload.disabled = true;
+  }
+}
+
 async function waitForRestart(expectedModel) {
   const deadline = Date.now() + 2700000;
   let reached = false;
@@ -372,6 +403,7 @@ async function waitForRestart(expectedModel) {
   refreshReviewButton();
   if (reached) {
     clearChat();
+    invalidateCompletedReviewAfterRestart();
     setRestartNote('Ready');
     setTimeout(() => setRestartNote(''), 2500);
     loadModelChoices();
@@ -623,7 +655,7 @@ function showReport(md, hasAppendix, jobId) {
     + '<button class="btn-secondary" onclick="copyReport()">Copy review</button>';
   if (hasAppendix) {
     html += '<button class="btn-secondary" id="appendixToggle" onclick="fetchAndToggleAppendix()">Show evidence appendix</button>'
-      + '<button class="btn-secondary" onclick="dlAppendix()">Download appendix .md</button>';
+      + '<button class="btn-secondary" id="appendixDownload" onclick="dlAppendix()">Download appendix .md</button>';
   }
   html += '</div>';
   html += '<div id="appendixSection" style="display:none; margin-top: 16px;"></div>';
