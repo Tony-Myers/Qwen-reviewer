@@ -1607,6 +1607,223 @@ check(
     "substituted identity never reaches semantic assessment",
 )
 
+
+print("\n[25] discovery must preserve authorised bibliographic identity")
+
+discovery_identity_retrieval_calls = []
+
+
+def mismatched_identity_discoverer(doi):
+    return academic_claims.SourceLocation(
+        status="location_found",
+        doi="10.1234/paper-b",
+        source="openalex",
+        landing_page_url="https://example.org/paper-b",
+        pdf_url="https://example.org/paper-b.pdf",
+        is_oa=True,
+        reasons=["Synthetic mismatched discovery identity."],
+    )
+
+
+def discovery_identity_retriever(location):
+    discovery_identity_retrieval_calls.append(location)
+    return academic_claims.RetrievedSource(
+        status="retrieved",
+        doi=location.doi,
+        source=location.source,
+        text="Paper B substantive text.",
+        locator=location.pdf_url,
+        reasons=["Synthetic retrieval that must not occur."],
+    )
+
+
+mismatched_discovery_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=mismatched_identity_discoverer,
+    source_retriever=discovery_identity_retriever,
+)
+
+mismatched_discovery_claim = mismatched_discovery_result.source_claims[0]
+
+check(
+    discovery_identity_retrieval_calls == [],
+    "discovery DOI mismatch never reaches substantive retrieval",
+)
+
+check(
+    mismatched_discovery_claim.source_discovery.status != "attempted"
+    or mismatched_discovery_claim.source_discovery.location is None
+    or mismatched_discovery_claim.source_discovery.location.status
+    != "location_found",
+    "discovery DOI mismatch is not accepted as a usable location",
+)
+
+check(
+    mismatched_discovery_claim.source_discovery.status == "identity_mismatch",
+    "discovery DOI mismatch is reported explicitly",
+)
+
+check(
+    mismatched_discovery_claim.source_discovery.location is None,
+    "discovery DOI mismatch exposes no source location",
+)
+
+check(
+    any(
+        "identity" in reason.lower()
+        and "match" in reason.lower()
+        for reason in mismatched_discovery_claim.source_discovery.reasons
+    ),
+    "discovery DOI mismatch retains an explicit reason",
+)
+
+check(
+    mismatched_discovery_claim.to_dict()["source_discovery"]["status"]
+    == "identity_mismatch",
+    "discovery DOI mismatch status survives serialisation",
+)
+
+check(
+    mismatched_discovery_claim.source_retrieval is None,
+    "discovery DOI mismatch produces no retrieved source",
+)
+
+check(
+    mismatched_discovery_claim.claim_location is None,
+    "discovery DOI mismatch never reaches claim location",
+)
+
+check(
+    mismatched_discovery_claim.claim_assessment is None,
+    "discovery DOI mismatch never reaches semantic assessment",
+)
+
+
+missing_identity_retrieval_calls = []
+
+
+def missing_identity_discoverer(doi):
+    return academic_claims.SourceLocation(
+        status="location_found",
+        doi=None,
+        source="openalex",
+        landing_page_url="https://example.org/unidentified",
+        pdf_url="https://example.org/unidentified.pdf",
+        is_oa=True,
+        reasons=["Synthetic discovery result without DOI identity."],
+    )
+
+
+def missing_identity_retriever(location):
+    missing_identity_retrieval_calls.append(location)
+    return academic_claims.RetrievedSource(
+        status="retrieved",
+        doi=location.doi,
+        source=location.source,
+        text="Unidentified substantive text.",
+        locator=location.pdf_url,
+        reasons=["Synthetic retrieval that must not occur."],
+    )
+
+
+missing_identity_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=missing_identity_discoverer,
+    source_retriever=missing_identity_retriever,
+)
+
+missing_identity_claim = missing_identity_result.source_claims[0]
+
+check(
+    missing_identity_retrieval_calls == [],
+    "discovery without DOI identity never reaches substantive retrieval",
+)
+
+check(
+    missing_identity_claim.source_discovery.status == "identity_mismatch",
+    "discovery without DOI identity is reported explicitly",
+)
+
+check(
+    missing_identity_claim.source_discovery.location is None,
+    "discovery without DOI identity exposes no source location",
+)
+
+check(
+    missing_identity_claim.to_dict()["source_discovery"]["status"]
+    == "identity_mismatch",
+    "missing discovery identity status survives serialisation",
+)
+
+check(
+    missing_identity_claim.source_retrieval is None,
+    "discovery without DOI identity produces no retrieved source",
+)
+
+check(
+    missing_identity_claim.claim_location is None,
+    "discovery without DOI identity never reaches claim location",
+)
+
+check(
+    missing_identity_claim.claim_assessment is None,
+    "discovery without DOI identity never reaches semantic assessment",
+)
+
+
+equivalent_identity_retrieval_calls = []
+
+
+def equivalent_identity_discoverer(doi):
+    return academic_claims.SourceLocation(
+        status="location_found",
+        doi="HTTPS://DOI.ORG/10.1234/COHERENT",
+        source="openalex",
+        landing_page_url="https://example.org/coherent-normalised",
+        pdf_url="https://example.org/coherent-normalised.pdf",
+        is_oa=True,
+        reasons=["Synthetic equivalent DOI representation."],
+    )
+
+
+def equivalent_identity_retriever(location):
+    equivalent_identity_retrieval_calls.append(location)
+    return academic_claims.RetrievedSource(
+        status="retrieved",
+        doi="10.1234/coherent",
+        source=location.source,
+        text="Synthetic coherent scholarly source text.",
+        locator=location.pdf_url,
+        reasons=["Synthetic coherent retrieval."],
+    )
+
+
+equivalent_identity_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=equivalent_identity_discoverer,
+    source_retriever=equivalent_identity_retriever,
+)
+
+check(
+    len(equivalent_identity_retrieval_calls) == 1,
+    "equivalent normalised discovery DOI remains retrieval-eligible",
+)
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)

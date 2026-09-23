@@ -4663,3 +4663,82 @@ assert retained_page_result.evidence[0].source == "openalex"
 print("PASS: retained PDF pages are preferred for claim location")
 print("PASS: physical page provenance reaches claim-support preparation")
 print("PASS: claim location requires no second PDF download or parse")
+
+
+print()
+print("[80] OpenAlex discovery preserves requested DOI identity")
+
+
+def fake_openalex_missing_identity(doi):
+    return {
+        "doi": None,
+        "best_oa_location": {
+            "landing_page_url": "https://example.org/unidentified",
+            "pdf_url": "https://example.org/unidentified.pdf",
+            "is_oa": True,
+        },
+    }
+
+
+missing_identity_source = academic_claims.discover_openalex_source(
+    "10.1234/paper-a",
+    work_getter=fake_openalex_missing_identity,
+)
+
+assert missing_identity_source.status != "location_found"
+assert missing_identity_source.doi is None
+assert missing_identity_source.landing_page_url is None
+assert missing_identity_source.pdf_url is None
+
+print("PASS: OpenAlex work without DOI is not accepted as requested identity")
+print("PASS: missing returned DOI does not inherit requested DOI")
+print("PASS: unidentified work exposes no retrievable source location")
+
+
+def fake_openalex_mismatched_identity(doi):
+    return {
+        "doi": "https://doi.org/10.1234/paper-b",
+        "best_oa_location": {
+            "landing_page_url": "https://example.org/paper-b",
+            "pdf_url": "https://example.org/paper-b.pdf",
+            "is_oa": True,
+        },
+    }
+
+
+mismatched_identity_source = academic_claims.discover_openalex_source(
+    "10.1234/paper-a",
+    work_getter=fake_openalex_mismatched_identity,
+)
+
+assert mismatched_identity_source.status != "location_found"
+assert mismatched_identity_source.doi == "10.1234/paper-b"
+assert mismatched_identity_source.landing_page_url is None
+assert mismatched_identity_source.pdf_url is None
+
+print("PASS: OpenAlex work with different DOI is not accepted for requested DOI")
+print("PASS: mismatched returned DOI remains auditable")
+print("PASS: mismatched work exposes no retrievable source location")
+
+
+def fake_openalex_equivalent_identity(doi):
+    return {
+        "doi": "HTTPS://DOI.ORG/10.1234/PAPER-A",
+        "best_oa_location": {
+            "landing_page_url": "https://example.org/paper-a",
+            "pdf_url": "https://example.org/paper-a.pdf",
+            "is_oa": True,
+        },
+    }
+
+
+equivalent_identity_source = academic_claims.discover_openalex_source(
+    "doi:10.1234/paper-a",
+    work_getter=fake_openalex_equivalent_identity,
+)
+
+assert equivalent_identity_source.status == "location_found"
+assert equivalent_identity_source.doi == "10.1234/paper-a"
+assert equivalent_identity_source.pdf_url == "https://example.org/paper-a.pdf"
+
+print("PASS: equivalent normalised DOI remains accepted")

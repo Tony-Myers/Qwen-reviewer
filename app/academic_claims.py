@@ -901,6 +901,36 @@ def discover_openalex_source(doi: str, work_getter) -> SourceLocation:
             reasons=["OpenAlex returned no work for the supplied DOI."],
         )
 
+    requested_doi = _normalise_doi(doi)
+    returned_doi = _normalise_doi(item.get("doi"))
+
+    if returned_doi is None:
+        return SourceLocation(
+            status="location_not_found",
+            doi=None,
+            source="openalex",
+            landing_page_url=None,
+            pdf_url=None,
+            is_oa=None,
+            reasons=[
+                "OpenAlex returned a work without a DOI identity."
+            ],
+        )
+
+    if returned_doi != requested_doi:
+        return SourceLocation(
+            status="location_not_found",
+            doi=returned_doi,
+            source="openalex",
+            landing_page_url=None,
+            pdf_url=None,
+            is_oa=None,
+            reasons=[
+                "OpenAlex returned a work whose DOI did not match "
+                "the requested DOI."
+            ],
+        )
+
     location = item.get("best_oa_location") or {}
 
     landing_page_url = location.get("landing_page_url")
@@ -921,7 +951,7 @@ def discover_openalex_source(doi: str, work_getter) -> SourceLocation:
 
     return SourceLocation(
         status=status,
-        doi=_normalise_doi(item.get("doi") or doi),
+        doi=returned_doi,
         source="openalex",
         landing_page_url=landing_page_url,
         pdf_url=pdf_url,

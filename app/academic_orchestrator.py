@@ -25,6 +25,26 @@ import academic_technical
 from academic_tools import AcademicReferenceResult, verify_academic_reference
 
 
+def _normalise_retrieval_doi(doi: str | None) -> str | None:
+    """Normalise a DOI for retrieval-identity continuity checks."""
+    if doi is None:
+        return None
+
+    cleaned = doi.strip()
+    for prefix in (
+        "https://doi.org/",
+        "http://doi.org/",
+        "https://dx.doi.org/",
+        "http://dx.doi.org/",
+        "doi:",
+    ):
+        if cleaned.lower().startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+            break
+
+    return cleaned.lower() or None
+
+
 @dataclass
 class RetrievalIdentity:
     """Bibliographic identity permitted to cross into source retrieval."""
@@ -355,13 +375,38 @@ def run_academic_first_stage(
                     reasons=["Source discovery service was unavailable."],
                 )
             else:
-                source_discovery = SourceDiscoveryResult(
-                    status="attempted",
-                    location=location,
-                    reasons=[
-                        "Eligible retrieval identity was sent to source discovery."
-                    ],
+                authorised_doi = _normalise_retrieval_doi(
+                    retrieval_identity.doi
                 )
+                discovered_doi = _normalise_retrieval_doi(
+                    location.doi if location is not None else None
+                )
+
+                if (
+                    location is not None
+                    and location.status == "location_found"
+                    and (
+                        discovered_doi is None
+                        or discovered_doi != authorised_doi
+                    )
+                ):
+                    source_discovery = SourceDiscoveryResult(
+                        status="identity_mismatch",
+                        location=None,
+                        reasons=[
+                            "Discovered source identity did not match the "
+                            "retrieval-eligible DOI."
+                        ],
+                    )
+                else:
+                    source_discovery = SourceDiscoveryResult(
+                        status="attempted",
+                        location=location,
+                        reasons=[
+                            "Eligible retrieval identity was sent to "
+                            "source discovery."
+                        ],
+                    )
         elif retrieval_identity.status != "eligible":
             source_discovery = SourceDiscoveryResult(
                 status="not_attempted",
