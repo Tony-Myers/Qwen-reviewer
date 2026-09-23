@@ -737,7 +737,24 @@ def extract_pdf_pages(
         pages = []
 
         for page_number, page in enumerate(reader.pages, start=1):
-            page_text = page.extract_text()
+            try:
+                page_text = page.extract_text()
+            except NotImplementedError as exc:
+                message = str(exc)
+
+                if not (
+                    message.startswith("Unsupported filter ")
+                    or (
+                        message.startswith("/Crypt filter ")
+                        and message.endswith(" not supported yet")
+                    )
+                ):
+                    raise
+
+                raise SourceRetrievalError(
+                    "PDF page text extraction failed."
+                ) from exc
+
             text = page_text.strip() if isinstance(page_text, str) else ""
             pages.append(
                 ExtractedPage(
