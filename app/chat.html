@@ -175,6 +175,7 @@
       </div>
       <div>
         <button class="btn" id="reviewBtn" onclick="startReview()" disabled>Start review</button>
+        <button class="btn-secondary" id="cancelReviewBtn" onclick="cancelReview()" style="display:none">Cancel review</button>
         <label class="reasoning-choice" for="reasoningMode" title="Thinking mode lets the model reason before writing. Slower. Untested against instruct mode -- alternate them and compare.">
           Reasoning:
           <select id="reasoningMode">
@@ -263,7 +264,7 @@ function refreshReviewButton(forceDisabled) {
   const blocked = forceDisabled === undefined
     ? (isRestarting || isGenerating)
     : forceDisabled;
-  btn.disabled = !!blocked || !selectedFile || modelChoicePending;
+  btn.disabled = !!blocked || !!activeReviewJobId || !selectedFile || modelChoicePending;
   btn.title = modelChoicePending
     ? 'Press Restart first: the selected model is not the one that is loaded'
     : '';
@@ -477,8 +478,63 @@ function pickFile(f) {
 }
 
 // --- Review ---
+let activeReviewJobId = null;
+
+function setReviewRunning(running) {
+  const btn = document.getElementById('reviewBtn');
+  const cancelBtn = document.getElementById('cancelReviewBtn');
+  if (running) {
+    btn.disabled = true;
+    cancelBtn.style.display = '';
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'Cancel review';
+  } else {
+    activeReviewJobId = null;
+    cancelBtn.style.display = 'none';
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'Cancel review';
+    refreshReviewButton();
+  }
+}
+
+function appendReviewProgress(message) {
+  const pl = document.getElementById('progressLog');
+  const line = document.createElement('div');
+  line.textContent = message;
+  pl.appendChild(line);
+  pl.scrollTop = pl.scrollHeight;
+}
+
+async function cancelReview() {
+  if (!activeReviewJobId) return;
+  const jobId = activeReviewJobId;
+  const cancelBtn = document.getElementById('cancelReviewBtn');
+  cancelBtn.disabled = true;
+  cancelBtn.textContent = 'Cancelling…';
+
+  try {
+    const r = await fetch(
+      BASE + '/api/review/' + encodeURIComponent(jobId) + '/cancel',
+      { method: 'POST' }
+    );
+    if (!r.ok) {
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = 'Cancel review';
+      appendReviewProgress(
+        'Cancellation request failed (' + r.status + '); review is still running.'
+      );
+    }
+  } catch (e) {
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'Cancel review';
+    appendReviewProgress(
+      'Cancellation request failed (' + e.message + '); review is still running.'
+    );
+  }
+}
+
 async function startReview() {
-  if (!selectedFile) return;
+  if (!selectedFile || activeReviewJobId) return;
   if (modelChoicePending) {
     const opt = document.getElementById('modelSelect').selectedOptions[0];
     setRestartNote('Press Restart to load '
@@ -486,7 +542,9 @@ async function startReview() {
       + ' before starting a review', true);
     return;
   }
-  const btn = document.getElementById('reviewBtn'); btn.disabled = true;
+
+  const btn = document.getElementById('reviewBtn');
+  btn.disabled = true;
   const pa = document.getElementById('progressArea'); pa.classList.add('visible');
   const pb = document.getElementById('progressBar'); pb.style.width = '0%';
   const pl = document.getElementById('progressLog'); pl.innerHTML = '';
@@ -497,20 +555,59 @@ async function startReview() {
   // review only. The chosen mode is recorded in the report header.
   fd.append('thinking', document.getElementById('reasoningMode').value);
   fd.append('vision', document.getElementById('visionMode').value);
+
   try {
     const r = await fetch(BASE + '/api/review', { method: 'POST', body: fd });
-    if (!r.ok) { showErr('Upload failed: ' + r.status); btn.disabled = false; return; }
+    if (!r.ok) {
+      showErr('Upload failed: ' + r.status);
+      setReviewRunning(false);
+      return;
+    }
+
     const { job_id } = await r.json();
+    activeReviewJobId = job_id;
+    setReviewRunning(true);
+
     const es = new EventSource(BASE + '/api/review/status/' + job_id);
     let steps = 0;
     es.onmessage = ev => {
       const d = JSON.parse(ev.data);
-      if (d.type === 'progress') { steps++; pb.style.width = Math.min(steps * 8, 95) + '%'; const l = document.createElement('div'); l.textContent = d.message; pl.appendChild(l); pl.scrollTop = pl.scrollHeight; }
-      if (d.type === 'complete') { es.close(); pb.style.width = '100%'; showReport(d.report, d.has_appendix, job_id); btn.disabled = false; }
-      if (d.type === 'error') { es.close(); showErr(d.message); btn.disabled = false; }
+      if (d.type === 'progress') {
+        steps++;
+        pb.style.width = Math.min(steps * 8, 95) + '%';
+        appendReviewProgress(d.message);
+      }
+      if (d.type === 'complete') {
+        es.close();
+        pb.style.width = '100%';
+        activeReviewJobId = null;
+        setReviewRunning(false);
+        showReport(d.report, d.has_appendix, job_id);
+      }
+      if (d.type === 'cancelled') {
+        es.close();
+        activeReviewJobId = null;
+        setReviewRunning(false);
+        appendReviewProgress(d.message || 'Review cancelled.');
+      }
+      if (d.type === 'error') {
+        es.close();
+        activeReviewJobId = null;
+        setReviewRunning(false);
+        showErr(d.message);
+      }
     };
-    es.onerror = () => { es.close(); showErr('Lost connection to server.'); btn.disabled = false; };
-  } catch (e) { showErr('Request failed: ' + e.message); btn.disabled = false; }
+    es.onerror = () => {
+      es.close();
+      activeReviewJobId = null;
+      setReviewRunning(false);
+      showErr('Lost connection to server.');
+    };
+  } catch (e) {
+    activeReviewJobId = null;
+    setReviewRunning(false);
+    showErr('Request failed: ' + e.message);
+  }
 }
 
 let currentJobId = null;
