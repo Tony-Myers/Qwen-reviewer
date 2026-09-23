@@ -1478,6 +1478,135 @@ check(
 )
 
 
+print("\n[15b] corroborated different paper cannot replace verified identity")
+
+verified_a = ReferenceCandidate(
+    title="Treatment efficacy: a randomized trial",
+    authors=["A. Author"],
+    year=2025,
+    venue="Trial Journal",
+    doi="10.1234/trial",
+    work_type="journal-article",
+)
+
+related_b_crossref = ReferenceCandidate(
+    title="Treatment efficacy: a systematic review",
+    authors=["B. Author"],
+    year=2025,
+    venue="Review Journal",
+    doi="10.1234/review",
+    work_type="journal-article",
+)
+
+related_b_openalex = ReferenceCandidate(
+    title="Treatment efficacy: a systematic review",
+    authors=["B. Author"],
+    year=2025,
+    venue="Review Journal",
+    doi="10.1234/review",
+    work_type="journal-article",
+    source="openalex",
+)
+
+related_b_corroboration = CorroborationResult(
+    status="corroborated",
+    crossref=related_b_crossref,
+    openalex=related_b_openalex,
+    same_doi=True,
+    title_similarity=1.0,
+    author_agreement=True,
+    venue_similarity=1.0,
+    year_difference=0,
+    reasons=["Synthetic related-paper corroboration."],
+)
+
+substitution_reference = AcademicReferenceResult(
+    crossref_verification=VerificationResult(
+        status="verified",
+        candidate=verified_a,
+        reasons=["Synthetic verified paper A."],
+    ),
+    doi_corroboration=None,
+    related_corroboration=related_b_corroboration,
+    identity_conflict=False,
+    reasons=[
+        "Synthetic verified A with independently corroborated related B."
+    ],
+)
+
+substitution_identity = academic_orchestrator.resolve_retrieval_identity(
+    substitution_reference
+)
+
+check(
+    substitution_identity.status == "not_eligible",
+    "corroborated paper B cannot replace verified paper A",
+)
+
+check(
+    substitution_identity.doi is None,
+    "different corroborated DOI is not exposed for retrieval",
+)
+
+
+substitution_discovery_calls = []
+
+
+def substitution_reference_verifier(**kwargs):
+    if kwargs["title"] == "Second Work":
+        return substitution_reference
+    return fake_reference_verifier(**kwargs)
+
+
+def substitution_source_discoverer(doi):
+    substitution_discovery_calls.append(doi)
+    raise AssertionError(
+        "Corroborated different paper must not reach source discovery."
+    )
+
+
+substitution_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=substitution_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=substitution_source_discoverer,
+)
+
+substitution_source_claim = substitution_result.source_claims[0]
+
+check(
+    substitution_discovery_calls == [],
+    "different corroborated paper never reaches source discovery",
+)
+
+check(
+    substitution_source_claim.retrieval_identity.status == "not_eligible",
+    "substituted identity remains ineligible through orchestration",
+)
+
+check(
+    substitution_source_claim.source_discovery.status == "not_attempted",
+    "source discovery remains unattempted for substituted identity",
+)
+
+check(
+    substitution_source_claim.source_retrieval is None,
+    "substituted identity never reaches source retrieval",
+)
+
+check(
+    substitution_source_claim.claim_location is None,
+    "substituted identity never reaches claim location",
+)
+
+check(
+    substitution_source_claim.claim_assessment is None,
+    "substituted identity never reaches semantic assessment",
+)
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)

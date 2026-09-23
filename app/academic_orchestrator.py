@@ -56,6 +56,13 @@ def resolve_retrieval_identity(
         )
 
     if verification.crossref_verification.status == "verified":
+        verified_candidate = verification.crossref_verification.candidate
+        verified_doi = (
+            verified_candidate.doi.strip().lower()
+            if verified_candidate is not None and verified_candidate.doi
+            else None
+        )
+
         for corroboration in (
             verification.doi_corroboration,
             verification.related_corroboration,
@@ -70,10 +77,14 @@ def resolve_retrieval_identity(
                 crossref_doi = corroboration.crossref.doi.strip().lower()
                 openalex_doi = corroboration.openalex.doi.strip().lower()
 
-                if crossref_doi and crossref_doi == openalex_doi:
+                if (
+                    verified_doi
+                    and crossref_doi == verified_doi
+                    and openalex_doi == verified_doi
+                ):
                     return RetrievalIdentity(
                         status="eligible",
-                        doi=crossref_doi,
+                        doi=verified_doi,
                         reasons=[
                             "Verified bibliographic metadata and "
                             "cross-database DOI corroboration establish "
