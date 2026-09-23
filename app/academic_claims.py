@@ -1524,7 +1524,7 @@ def request_validated_http_hop(
         http2=False,
     )
 
-    host = parsed.hostname or ""
+    host = destination.hostname
 
     if ":" in host:
         host = f"[{host}]"
@@ -1544,9 +1544,29 @@ def request_validated_http_hop(
             "pool": remaining,
         }
 
+    # httpcore requires the request URL origin to match the connection
+    # origin exactly.  Validation canonicalises equivalent DNS forms such
+    # as a trailing root dot, so use that same canonical hostname for the
+    # transport request while retaining the original URL outside this hop
+    # for source provenance and redirect resolution.
+    transport_hostname = destination.hostname
+
+    if ":" in transport_hostname:
+        transport_hostname = f"[{transport_hostname}]"
+
+    transport_netloc = transport_hostname
+
+    if port != default_port:
+        transport_netloc = f"{transport_netloc}:{port}"
+
+    transport_url = parsed._replace(
+        scheme=scheme,
+        netloc=transport_netloc,
+    ).geturl()
+
     request = httpcore.Request(
         method="GET",
-        url=url,
+        url=transport_url,
         headers=[(b"Host", authority.encode("ascii"))],
         extensions=request_extensions,
     )

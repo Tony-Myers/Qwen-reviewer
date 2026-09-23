@@ -218,3 +218,118 @@ print("PASS: original hostname remains the HTTP Host authority")
 print("PASS: real HTTP response supplies a valid PDF")
 print("PASS: real PdfReader extracts substantive text")
 print("PASS: retrieval preserves one-based physical page provenance")
+
+
+print("\n[2] server production path retrieves trailing-dot hostname PDF")
+
+trailing_dns_calls = []
+trailing_tcp_destinations = []
+trailing_request_writes = []
+
+
+def trailing_getaddrinfo(host, port, *args, **kwargs):
+    trailing_dns_calls.append((host, port))
+
+    assert host == "journal.example"
+
+    return [
+        (
+            socket.AF_INET,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            ("8.8.8.8", port),
+        ),
+    ]
+
+
+def trailing_connect_tcp(
+    self,
+    host,
+    port,
+    timeout=None,
+    local_address=None,
+    socket_options=None,
+):
+    trailing_tcp_destinations.append((host, port))
+
+    response = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Content-Type: application/pdf\r\n"
+        + f"Content-Length: {len(pdf_bytes)}\r\n".encode("ascii")
+        + b"\r\n"
+        + pdf_bytes
+    )
+
+    return PDFStream(response, trailing_request_writes)
+
+
+trailing_location = academic_claims.SourceLocation(
+    status="location_found",
+    doi="10.1234/trailing-dot-production-retrieval",
+    source="openalex",
+    landing_page_url=None,
+    pdf_url="https://journal.example./article.pdf",
+    is_oa=True,
+    reasons=["Synthetic trailing-dot source location."],
+)
+
+try:
+    socket.getaddrinfo = trailing_getaddrinfo
+    httpcore.SyncBackend.connect_tcp = trailing_connect_tcp
+
+    trailing_retrieved = server.retrieve_academic_source(
+        trailing_location
+    )
+finally:
+    socket.getaddrinfo = original_getaddrinfo
+    httpcore.SyncBackend.connect_tcp = original_connect_tcp
+
+
+assert trailing_dns_calls == [
+    ("journal.example", 0),
+]
+
+assert trailing_tcp_destinations == [
+    ("8.8.8.8", 443),
+]
+
+trailing_request_bytes = b"".join(trailing_request_writes)
+
+assert b"GET /article.pdf HTTP/1.1\r\n" in trailing_request_bytes
+assert trailing_request_bytes.count(
+    b"Host: journal.example\r\n"
+) == 1
+assert b"Host: journal.example.\r\n" not in trailing_request_bytes
+
+assert trailing_retrieved.status == "retrieved"
+assert (
+    trailing_retrieved.doi
+    == "10.1234/trailing-dot-production-retrieval"
+)
+assert trailing_retrieved.source == "openalex"
+assert (
+    trailing_retrieved.locator
+    == "https://journal.example./article.pdf"
+)
+
+assert trailing_retrieved.text == (
+    "Synthetic scholarly introduction.\n\n"
+    "Results show mean jump height increased by 2.4 cm."
+)
+
+assert len(trailing_retrieved.pages) == 2
+assert trailing_retrieved.pages[0].page_number == 1
+assert trailing_retrieved.pages[0].text == (
+    "Synthetic scholarly introduction."
+)
+assert trailing_retrieved.pages[1].page_number == 2
+assert "2.4 cm" in trailing_retrieved.pages[1].text
+
+print("PASS: server production entry point accepts trailing-dot source URL")
+print("PASS: DNS receives canonical hostname")
+print("PASS: TCP remains pinned to validated numeric address")
+print("PASS: HTTP Host uses canonical hostname")
+print("PASS: original trailing-dot URL remains retrieval provenance")
+print("PASS: real PdfReader extracts substantive text")
+print("PASS: one-based physical page provenance survives retrieval")
