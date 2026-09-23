@@ -601,7 +601,7 @@ async function startReview() {
       es.close();
       activeReviewJobId = null;
       setReviewRunning(false);
-      showErr('Lost connection to server.');
+      showErr('Connection to the server was lost. This review cannot be resumed. When the server is available, start the review again.');
     };
   } catch (e) {
     activeReviewJobId = null;
