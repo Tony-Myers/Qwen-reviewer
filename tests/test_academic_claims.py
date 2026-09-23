@@ -4742,3 +4742,160 @@ assert equivalent_identity_source.doi == "10.1234/paper-a"
 assert equivalent_identity_source.pdf_url == "https://example.org/paper-a.pdf"
 
 print("PASS: equivalent normalised DOI remains accepted")
+
+
+print()
+print("[81] downloaded PDF identity cannot contradict authorised DOI")
+
+from pypdf import PdfWriter
+
+
+identity_pdf_buffer = academic_claims.BytesIO()
+identity_writer = PdfWriter()
+identity_writer.add_blank_page(width=612, height=792)
+identity_writer.add_metadata({
+    "/Title": "Paper B: A different study",
+    "/Subject": "doi:10.1234/paper-b",
+    "/Keywords": "DOI 10.1234/paper-b",
+})
+identity_writer.write(identity_pdf_buffer)
+identity_pdf_bytes = identity_pdf_buffer.getvalue()
+
+
+class ConflictingIdentityPage:
+    def extract_text(self):
+        return (
+            "Paper B: A different study.\n"
+            "DOI: 10.1234/paper-b\n"
+            "Treatment improved recovery in the study."
+        )
+
+
+class ConflictingIdentityReader:
+    def __init__(self, stream):
+        # Parse the real generated PDF so this fixture remains genuine PDF input.
+        real_reader = academic_claims.PdfReader(stream)
+        assert real_reader.metadata["/Subject"] == "doi:10.1234/paper-b"
+        self.metadata = real_reader.metadata
+        self.pages = [ConflictingIdentityPage()]
+
+
+conflicting_identity_location = academic_claims.SourceLocation(
+    status="location_found",
+    doi="10.1234/paper-a",
+    source="openalex",
+    landing_page_url=None,
+    pdf_url="https://repository.example/paper-a.pdf",
+    is_oa=True,
+    reasons=["Synthetic authorised location for paper A."],
+)
+
+
+def conflicting_identity_downloader(url):
+    assert url == "https://repository.example/paper-a.pdf"
+    return academic_claims.DownloadedSource(
+        status="downloaded",
+        requested_url=url,
+        final_url="https://repository.example/paper-b.pdf",
+        content_type="application/pdf",
+        content=identity_pdf_bytes,
+        reasons=["Synthetic redirect to conflicting document."],
+    )
+
+
+conflicting_identity_result = (
+    academic_claims.retrieve_pdf_source_from_location(
+        conflicting_identity_location,
+        downloader=conflicting_identity_downloader,
+        reader_factory=ConflictingIdentityReader,
+    )
+)
+
+assert conflicting_identity_result.status == "not_retrieved", (
+    "Downloaded PDF explicitly identifies itself as paper B but was "
+    "accepted as authorised paper A."
+)
+assert conflicting_identity_result.text is None
+assert conflicting_identity_result.pages is None
+assert any(
+    "identity" in reason.lower()
+    or "doi" in reason.lower()
+    for reason in conflicting_identity_result.reasons
+)
+
+print("PASS: explicit downloaded-document DOI conflict fails closed")
+print("PASS: conflicting document text is not admitted as authorised evidence")
+
+
+print()
+print("[82] downloaded PDF identity check avoids DOI false positives")
+
+
+class MatchingIdentityPage:
+    def extract_text(self):
+        return (
+            "Paper A: The authorised study.\n"
+            "DOI: 10.1234/paper-a\n"
+            "Treatment improved recovery in the study."
+        )
+
+
+class MatchingIdentityReader:
+    def __init__(self, stream):
+        # Reuse the genuine PDF fixture while presenting matching
+        # document-level metadata for the authorised paper.
+        real_reader = academic_claims.PdfReader(stream)
+        self.metadata = dict(real_reader.metadata)
+        self.metadata["/Subject"] = "doi:10.1234/paper-a"
+        self.metadata["/Keywords"] = "DOI 10.1234/paper-a"
+        self.pages = [MatchingIdentityPage()]
+
+
+matching_identity_result = (
+    academic_claims.retrieve_pdf_source_from_location(
+        conflicting_identity_location,
+        downloader=conflicting_identity_downloader,
+        reader_factory=MatchingIdentityReader,
+    )
+)
+
+assert matching_identity_result.status == "retrieved"
+assert matching_identity_result.doi == "10.1234/paper-a"
+assert "Paper A" in matching_identity_result.text
+
+print("PASS: matching document-level DOI remains retrievable")
+
+
+class CitedDifferentDoiPage:
+    def extract_text(self):
+        return (
+            "Paper A: The authorised study.\n"
+            "DOI: 10.1234/paper-a\n"
+            "Treatment improved recovery in the study.\n\n"
+            "References\n"
+            "Related work. DOI: 10.1234/paper-b."
+        )
+
+
+class CitedDifferentDoiReader:
+    def __init__(self, stream):
+        real_reader = academic_claims.PdfReader(stream)
+        self.metadata = dict(real_reader.metadata)
+        self.metadata["/Subject"] = "doi:10.1234/paper-a"
+        self.metadata["/Keywords"] = "DOI 10.1234/paper-a"
+        self.pages = [CitedDifferentDoiPage()]
+
+
+cited_different_doi_result = (
+    academic_claims.retrieve_pdf_source_from_location(
+        conflicting_identity_location,
+        downloader=conflicting_identity_downloader,
+        reader_factory=CitedDifferentDoiReader,
+    )
+)
+
+assert cited_different_doi_result.status == "retrieved"
+assert cited_different_doi_result.doi == "10.1234/paper-a"
+assert "10.1234/paper-b" in cited_different_doi_result.text
+
+print("PASS: DOI cited in document text is not mistaken for document identity")

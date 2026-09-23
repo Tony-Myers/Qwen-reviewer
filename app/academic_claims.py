@@ -730,10 +730,47 @@ def prepare_claim_support(
 def extract_pdf_pages(
     content: bytes,
     reader_factory=PdfReader,
+    expected_doi: str | None = None,
 ) -> list[ExtractedPage]:
     """Extract text while preserving one-based physical PDF page identity."""
     try:
         reader = reader_factory(BytesIO(content))
+
+        if expected_doi is not None:
+            metadata = getattr(reader, "metadata", None)
+            metadata_values = []
+
+            if metadata is not None:
+                for key in ("/Subject", "/Keywords"):
+                    try:
+                        value = metadata.get(key)
+                    except (AttributeError, TypeError):
+                        value = None
+
+                    if isinstance(value, str):
+                        metadata_values.append(value)
+
+            metadata_dois = set()
+            for value in metadata_values:
+                for match in re.findall(
+                    r"(?i)\b(?:doi\s*[:=]?\s*|https?://(?:dx\.)?doi\.org/)"
+                    r"(10\.\d{4,9}/[-._;()/:A-Z0-9]+)",
+                    value,
+                ):
+                    normalised = _normalise_doi(match.rstrip(".,;"))
+                    if normalised:
+                        metadata_dois.add(normalised)
+
+            authorised_doi = _normalise_doi(expected_doi)
+            if (
+                metadata_dois
+                and authorised_doi is not None
+                and authorised_doi not in metadata_dois
+            ):
+                raise SourceRetrievalError(
+                    "Downloaded PDF identity conflicts with the authorised DOI."
+                )
+
         pages = []
 
         for page_number, page in enumerate(reader.pages, start=1):
@@ -1004,15 +1041,22 @@ def retrieve_pdf_source_from_location(
         pages = extract_pdf_pages(
             downloaded.content,
             reader_factory=reader_factory,
+            expected_doi=location.doi,
         )
-    except SourceRetrievalError:
+    except SourceRetrievalError as exc:
+        reason = (
+            "Downloaded PDF identity conflicts with the authorised DOI."
+            if str(exc)
+            == "Downloaded PDF identity conflicts with the authorised DOI."
+            else "Source text extraction failed."
+        )
         return RetrievedSource(
             status="not_retrieved",
             doi=_normalise_doi(location.doi),
             source=location.source,
             text=None,
             locator=None,
-            reasons=["Source text extraction failed."],
+            reasons=[reason],
         )
 
     text = "\n\n".join(
