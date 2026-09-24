@@ -123,6 +123,8 @@ ALIASES: Dict[str, str] = {
     r"\beffective sample size\b|\bess\b": "ess n_eff autocorrelation",
     r"\bpsrf\b": "r-hat potential scale reduction",
     r"\bcredible interval\b": "posterior interval",
+    r"\beti\b": "equal-tailed interval",
+    r"\b(hdi|hpdi)\b": "highest-density interval",
     r"\bpareto\s*k\b": "pareto k diagnostic",
     r"\bdivergent transitions?\b": "hmc divergences",
 }

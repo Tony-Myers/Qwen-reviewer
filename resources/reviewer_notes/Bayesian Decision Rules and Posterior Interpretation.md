@@ -18,13 +18,39 @@ This guide helps reviewers evaluate Bayesian decision rules and interpretation o
 
 #### Common reviewer questions
 
-##### Does a 95% credible interval excluding zero mean statistical significance?
+##### What does it mean if a 95% credible interval excludes zero?
 
-A 95% credible interval excluding zero indicates that zero lies outside the reported posterior interval.
+A 95% credible interval excluding zero indicates that zero lies outside the reported posterior interval. It does **not** by itself give the posterior probability that the parameter is exactly zero, nor should interval exclusion be mechanically translated into a probability that the effect is positive or negative.
 
-Authors may describe this as evidence that the parameter is likely to have a particular sign, but treating it automatically as "statistically significant" imports a frequentist-style threshold into Bayesian inference.
+For a parameter with a continuous posterior distribution, the posterior probability of any exact point, including exactly zero, is ordinarily zero whether or not that point lies inside the credible interval. A non-zero posterior probability for an exact point null requires a model that assigns discrete probability mass to that point, or an explicit comparison between models or hypotheses that includes the point null.
+
+If the scientific question concerns the direction of an effect, the relevant posterior probability should be calculated directly, for example **P(effect > 0 | data)** or **P(effect < 0 | data)**. The relationship between such directional probabilities and a 95% credible interval depends on how the interval is constructed and on the posterior distribution.
+
+Authors may describe exclusion of zero as evidence about the likely direction of an effect, but treating it automatically as "statistically significant" imports a frequentist-style threshold into Bayesian inference.
 
 Bayesian analyses can usually report the evidence more directly.
+
+##### Are all 95% credible intervals the same?
+
+No. A 95% credible interval describes an interval containing 95% of the posterior probability, but different rules can be used to construct that interval.
+
+An **equal-tailed interval (ETI)** leaves equal posterior probability in each tail. For a 95% ETI, 2.5% of the posterior probability lies below the lower bound and 2.5% lies above the upper bound.
+
+A **highest-density interval (HDI or HPDI)** contains 95% of the posterior probability while favouring values with higher posterior density. It need not leave equal probability in each tail. HDIs are sometimes described as shortest credible intervals under conditions where the highest-density set forms a single interval, but "shortest interval" should not be treated as a universally interchangeable definition of highest density.
+
+ETIs and HDIs can be identical or very similar for some symmetric, unimodal posterior distributions, but symmetry and unimodality alone should not be used as a general guarantee of identical endpoints. They can differ appreciably for skewed or irregular distributions. Neither construction is automatically more precise, more credible, or generally preferable merely because its interval is narrower. Reviewers should therefore identify which interval has been reported and interpret it according to its construction rather than assuming that a "95% credible interval" is a **central 95% interval**.
+
+For multimodal or otherwise irregular posterior distributions, a highest-density **region** can be disconnected and may not be well represented by a single contiguous interval. Reviewers should consider the posterior distribution itself where a single interval could obscure important features.
+
+When the scientific question concerns the probability that an effect is positive, negative, or exceeds a meaningful threshold, that posterior probability should generally be calculated directly rather than inferred from the endpoints of a credible interval.
+
+Reviewers should be cautious of several common overstatements:
+
+- an HDI should not be defined universally as simply the shortest credible interval;
+- symmetry and unimodality alone should not be treated as a general guarantee that ETI and HDI endpoints are identical;
+- an HDI should not be assumed to be narrower than an ETI merely because the posterior is skewed;
+- a narrower HDI is not automatically more precise, more credible or preferable;
+- an ETI should not be described as analogous to a frequentist confidence interval merely because both may use quantile-based endpoints.
 
 ##### What should be reported instead of only whether the interval crosses zero?
 
