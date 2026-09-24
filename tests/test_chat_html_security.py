@@ -72,6 +72,48 @@ check(
     f"{hostile!r} must render as text such as {escaped!r}",
 )
 
+# Academic Chat also renders reviewer-note metadata into innerHTML.
+# Protect the same boundary here: note titles and headings are local metadata,
+# but they must still be treated as untrusted display text.
+guidance_match = re.search(
+    r"function\s+renderAcademicLocalGuidance\s*\(\s*localGuidance\s*\)"
+    r"\s*\{(?P<body>.*?)\n\}",
+    source,
+    flags=re.DOTALL,
+)
+
+check(
+    "Academic Chat local-guidance renderer is present",
+    guidance_match is not None,
+)
+
+guidance_body = guidance_match.group("body") if guidance_match else ""
+
+check(
+    "Academic Chat escapes reviewer-note titles before HTML rendering",
+    "esc(note)" in guidance_body,
+    guidance_body.strip(),
+)
+
+check(
+    "Academic Chat escapes reviewer-note headings before HTML rendering",
+    "esc(heading)" in guidance_body,
+    guidance_body.strip(),
+)
+
+check(
+    "Academic Chat does not render local-guidance retrieval scores",
+    "passage.score" not in guidance_body,
+    guidance_body.strip(),
+)
+
+check(
+    "Academic Chat labels local guidance as retrieval rather than verification",
+    "were retrieved" in guidance_body
+    and "not external source verification" in guidance_body,
+    guidance_body.strip(),
+)
+
 if fails:
     print(f"\nFAILED: {len(fails)} check(s)")
     raise SystemExit(1)

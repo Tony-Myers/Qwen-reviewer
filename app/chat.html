@@ -964,12 +964,45 @@ function academicVerificationSummary(data) {
     : 'No claim-level verification was available for this answer.';
 }
 
+function renderAcademicLocalGuidance(localGuidance) {
+  const passages = Array.isArray(localGuidance?.passages)
+    ? localGuidance.passages
+    : [];
+
+  if (!passages.length) return '';
+
+  let h = '<h4>Local methodological guidance</h4>';
+  h += '<div class="academic-audit-card">';
+  h += '<div class="academic-reference-meta">' +
+    'Relevant sections were retrieved from the local reviewer-note collection ' +
+    'to inform answer generation. Retrieval does not mean that every section ' +
+    'was used, and local guidance is not external source verification.' +
+    '</div>';
+
+  for (const passage of passages) {
+    const note = passage?.note || 'Reviewer note';
+    const heading = passage?.heading || '';
+
+    h += '<div style="margin-top:8px;">';
+    h += '<strong>' + esc(note) + '</strong>';
+    if (heading) {
+      h += '<div class="academic-reference-meta">' + esc(heading) + '</div>';
+    }
+    h += '</div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
 function renderAcademicAudit(data) {
   const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
   const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
   const release = data.release || null;
 
   let h = '';
+
+  h += renderAcademicLocalGuidance(data.local_guidance);
 
   if (release) {
     h += '<div class="academic-audit-card">';
@@ -1002,6 +1035,9 @@ function renderAcademicEvidence(data) {
   const references = Array.isArray(data.references) ? data.references : [];
   const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
   const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
+  const localGuidancePassages = Array.isArray(data.local_guidance?.passages)
+    ? data.local_guidance.passages
+    : [];
 
   let h = '';
 
@@ -1020,7 +1056,12 @@ function renderAcademicEvidence(data) {
     h += '</section>';
   }
 
-  if (sourceClaims.length || technicalClaims.length || data.release) {
+  if (
+    localGuidancePassages.length ||
+    sourceClaims.length ||
+    technicalClaims.length ||
+    data.release
+  ) {
     h += '<section class="academic-verification-summary">';
     h += '<div><strong>Evidence status:</strong> ' +
       esc(academicVerificationSummary(data)) + '</div>';
