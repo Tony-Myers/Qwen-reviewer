@@ -63,18 +63,13 @@ Its reliability should be assessed using the **Pareto *k*** diagnostic.
 
 ### What is Pareto *k*?
 
-The **Pareto *k*** diagnostic evaluates whether PSIS provides a reliable approximation.
+The **Pareto *k*** diagnostic evaluates the reliability of the importance-sampling approximation used by PSIS-LOO. Larger values indicate that the approximation is becoming less reliable and that particular observations may have a strong influence on the leave-one-out estimate.
 
-Typical interpretation:
+Current versions of the `loo` package use a **sample-size-dependent diagnostic threshold** for Pareto *k*, rather than treating the older fixed 0.5 and 0.7 cut-offs as universal decision rules. Reviewers should therefore use the diagnostic thresholds and recommendations reported by the current software rather than mechanically applying older fixed categories.
 
-- **k < 0.5** → approximation usually reliable
-- **0.5 ≤ k < 0.7** → usually acceptable but inspect carefully
-- **0.7 ≤ k < 1.0** → approximation may be unreliable
-- **k ≥ 1.0** → PSIS is generally unreliable; exact LOO or model revision should be considered
+Values approaching or exceeding **0.7** warrant particular attention, and **k ≥ 1** indicates serious problems with the importance-sampling approximation. When problematic observations are present, reviewers should expect authors to report and investigate them and, where appropriate, consider methods recommended by the current `loo` guidance, such as moment matching, exact leave-one-out refitting for problematic observations, or model revision.
 
-Reviewers should expect authors to discuss observations with high Pareto *k* values.
-
-The current `loo` package uses a **sample-size-dependent diagnostic threshold** for Pareto *k*. In practice, values approaching or exceeding **0.7** deserve careful attention, while k \ge 1 indicates that the PSIS approximation is generally unreliable. Reviewers should follow the current `loo` guidance rather than relying on the older fixed 0.5/0.7 thresholds.  
+Older literature commonly described fixed categories such as *k* < 0.5, 0.5–0.7, 0.7–1.0 and ≥1.0. These can be useful for understanding older reports, but they should **not** be presented as the current universal `loo` diagnostic thresholds.
 
 ---
 

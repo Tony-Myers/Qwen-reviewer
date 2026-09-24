@@ -110,9 +110,13 @@ Where several tests are reported, the threshold and the treatment of multiplicit
 
 The same question arises in Bayesian work without the error-rate meaning; see the note on Bayesian decision rules.
 
-##### Why are confidence intervals important?
+##### What does a 95% confidence interval mean, and how should it be interpreted?
 
-Confidence intervals show the range of effect sizes that remain reasonably compatible with the observed data under the statistical model.
+A 95% confidence interval gets its 95% interpretation from the **long-run coverage of the interval-generating procedure**: under repeated sampling and the assumptions of the procedure, 95% of intervals constructed in this way would contain the true parameter.
+
+This does **not** mean that there is a 95% probability that the fixed parameter lies within the particular interval observed. That interpretation treats a frequentist confidence interval as though it were a Bayesian credible interval.
+
+For the observed data, the interval can instead be interpreted as showing a range of parameter values reasonably compatible with the data and statistical model. The estimate and the width of the interval should therefore be considered when judging the magnitude of an effect and the uncertainty remaining around it.
 
 Reviewers should examine whether the interval includes:
 
@@ -121,7 +125,9 @@ Reviewers should examine whether the interval includes:
 - trivial effects;
 - the null value.
 
-Wide confidence intervals usually indicate considerable uncertainty, even when *p* > 0.05. 
+Wide confidence intervals usually indicate considerable uncertainty, even when *p* > 0.05.
+
+The choice of 95% is **conventional rather than uniquely correct**, much like the conventional use of *p* < 0.05. Other confidence levels, such as 90% or 99%, can be used depending on the purpose and consequences of the analysis. Increasing the confidence level produces a wider interval, all else being equal. The confidence level should therefore be stated and interpreted as a choice rather than as a natural boundary between convincing and unconvincing evidence.
 
 ##### What role does statistical power play?
 
