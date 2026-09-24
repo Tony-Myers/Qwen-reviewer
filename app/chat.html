@@ -213,7 +213,7 @@
   <div id="academic-input-area">
     <textarea id="academicInput" rows="1"
       placeholder="Ask an academic or methodological question..."></textarea>
-    <button class="btn" id="academicSendBtn" disabled>Ask</button>
+    <button class="btn" id="academicSendBtn" onclick="sendAcademicMessage()">Ask</button>
   </div>
 </div>
 
@@ -537,6 +537,102 @@ function clearChat() {
   chatHistory = [];
   updateTurnCount();
   document.getElementById('chat-container').innerHTML = '<div class="empty-state" id="emptyState"><h2>Ready to chat</h2><p>Type a message below to start.</p></div>';
+}
+
+// --- Academic Chat ---
+const academicInput = document.getElementById('academicInput');
+const academicSendBtn = document.getElementById('academicSendBtn');
+let academicGenerating = false;
+
+academicInput.addEventListener('input', () => {
+  academicInput.style.height = 'auto';
+  academicInput.style.height = Math.min(academicInput.scrollHeight, 160) + 'px';
+});
+
+academicInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendAcademicMessage();
+  }
+});
+
+function setAcademicRunning(running) {
+  academicGenerating = running;
+  academicInput.disabled = running;
+  academicSendBtn.disabled = running;
+  academicSendBtn.textContent = running ? 'Checking...' : 'Ask';
+}
+
+function renderAcademicRelease(release) {
+  if (!release || typeof release !== 'object') return '';
+
+  const status = release.status || 'unknown';
+  const safe = release.safe_to_present === true;
+  const reasons = Array.isArray(release.reasons) ? release.reasons : [];
+
+  let h = '<div style="margin-top:12px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface-alt);">';
+  h += '<strong>Release check:</strong> ' + esc(status);
+  h += safe
+    ? ' &middot; no deterministic technical conflict identified'
+    : ' &middot; requires caution';
+  if (reasons.length) {
+    h += '<ul style="margin:6px 0 0 20px;">';
+    for (const reason of reasons) h += '<li>' + esc(String(reason)) + '</li>';
+    h += '</ul>';
+  }
+  h += '</div>';
+  return h;
+}
+
+async function sendAcademicMessage() {
+  const question = academicInput.value.trim();
+  if (!question || academicGenerating) return;
+
+  setAcademicRunning(true);
+
+  document.getElementById('academicEmptyState').style.display = 'none';
+  const result = document.getElementById('academicResult');
+  const answer = document.getElementById('academicAnswer');
+  const evidence = document.getElementById('academicEvidence');
+
+  result.style.display = 'block';
+  answer.innerHTML =
+    '<div class="typing-indicator"><span></span><span></span><span></span></div>' +
+    '<div style="margin-top:8px; color:var(--text-muted); font-size:.8rem;">' +
+    'Generating locally and checking proposed academic claims...' +
+    '</div>';
+  evidence.style.display = 'none';
+
+  try {
+    const r = await fetch(BASE + '/api/chat/academic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question })
+    });
+
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok) {
+      const detail = data.detail ? ' ' + data.detail : '';
+      throw new Error((data.error || ('Server error ' + r.status)) + detail);
+    }
+
+    answer.innerHTML =
+      '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
+      renderAcademicRelease(data.release);
+
+    // Detailed reference, retrieval and claim evidence is deliberately
+    // rendered in the next frontend increment.
+    evidence.style.display = 'none';
+  } catch (e) {
+    answer.innerHTML =
+      '<div style="color:var(--error);"><strong>Academic Chat error:</strong> ' +
+      esc(e.message || String(e)) + '</div>';
+    evidence.style.display = 'none';
+  } finally {
+    setAcademicRunning(false);
+    academicInput.focus();
+  }
 }
 
 // --- File upload ---
