@@ -114,8 +114,117 @@
   .academic-intro strong { color: var(--text); }
   .academic-result { display: none; margin-top: 20px; }
   .academic-answer { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; line-height: 1.6; font-size: 0.9rem; box-shadow: var(--shadow); }
-  .academic-evidence { margin-top: 16px; }
-  .academic-evidence h3 { font-family: Georgia, 'Times New Roman', serif; font-size: 1rem; margin-bottom: 8px; }
+  .academic-evidence { margin-top: 18px; }
+  .academic-evidence h3 { font-family: Georgia, 'Times New Roman', serif; font-size: 1rem; margin-bottom: 10px; }
+
+  .academic-reference-section {
+    margin-top: 18px;
+  }
+  .academic-reference {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    line-height: 1.5;
+    font-size: 0.86rem;
+  }
+  .academic-reference:last-of-type {
+    border-bottom: none;
+  }
+  .academic-reference-meta {
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: 0.79rem;
+  }
+  .academic-reference-link {
+    margin-top: 3px;
+    font-size: 0.79rem;
+  }
+  .academic-reference-link a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .academic-reference-link a:hover {
+    text-decoration: underline;
+  }
+  .academic-reference-status {
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+  }
+  .academic-related-record {
+    margin-top: 7px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    line-height: 1.45;
+  }
+  .academic-status-good {
+    color: var(--accent);
+  }
+  .academic-reference-note {
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.45;
+  }
+
+  .academic-verification-summary {
+    margin-top: 20px;
+    padding: 11px 13px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-alt);
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+  .academic-verification-details {
+    margin-top: 7px;
+  }
+  .academic-verification-details > summary,
+  .academic-source-evidence > summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .academic-audit-content {
+    margin-top: 12px;
+  }
+  .academic-audit-content h4 {
+    margin: 15px 0 7px;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 0.92rem;
+  }
+  .academic-audit-card {
+    padding: 10px 12px;
+    margin: 8px 0;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    font-size: 0.79rem;
+    line-height: 1.5;
+  }
+  .academic-audit-grid {
+    margin-top: 7px;
+    color: var(--text-muted);
+  }
+  .academic-audit-reasons {
+    margin: 6px 0 0 18px;
+  }
+  .academic-source-evidence {
+    margin-top: 8px;
+  }
+  .academic-evidence-passage {
+    padding: 8px 10px;
+    margin: 6px 0;
+    background: var(--surface-alt);
+    border-radius: 6px;
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+  .academic-evidence-locator {
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
   #academic-input-area { padding: 14px 24px; border-top: 1px solid var(--border); background: var(--surface); display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; }
   #academicInput { flex: 1; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.9rem; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); resize: none; outline: none; min-height: 42px; max-height: 160px; line-height: 1.45; }
   #academicInput:focus { border-color: var(--accent); }
@@ -203,7 +312,6 @@
       <div class="academic-result" id="academicResult">
         <div class="academic-answer" id="academicAnswer"></div>
         <div class="academic-evidence" id="academicEvidence">
-          <h3>Evidence checks</h3>
           <div id="academicEvidenceContent"></div>
         </div>
       </div>
@@ -564,26 +672,10 @@ function setAcademicRunning(running) {
 }
 
 function renderAcademicRelease(release) {
-  if (!release || typeof release !== 'object') return '';
-
-  const status = release.status || 'unknown';
-  const safe = release.safe_to_present === true;
-  const reasons = Array.isArray(release.reasons) ? release.reasons : [];
-
-  let h = '<div style="margin-top:12px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface-alt);">';
-  h += '<strong>Release check:</strong> ' + esc(status);
-  h += safe
-    ? ' &middot; no deterministic technical conflict identified'
-    : ' &middot; requires caution';
-  if (reasons.length) {
-    h += '<ul style="margin:6px 0 0 20px;">';
-    for (const reason of reasons) h += '<li>' + esc(String(reason)) + '</li>';
-    h += '</ul>';
-  }
-  h += '</div>';
-  return h;
+  // Release state remains available in the detailed audit trail rather than
+  // competing visually with the substantive answer.
+  return '';
 }
-
 
 function academicStatusLabel(status) {
   const labels = {
@@ -603,48 +695,114 @@ function academicStatusLabel(status) {
     claim_contradicted: 'Claim contradicted',
     technically_verified: 'Technically verified',
     technical_conflict: 'Technical conflict',
-    not_verified: 'Not technically verified'
+    not_verified: 'Not verified'
   };
   return labels[status] || String(status || 'unknown').replace(/_/g, ' ');
 }
 
 function academicReasons(reasons) {
   if (!Array.isArray(reasons) || !reasons.length) return '';
-  let h = '<ul style="margin:6px 0 0 20px;">';
+  let h = '<ul class="academic-audit-reasons">';
   for (const reason of reasons) h += '<li>' + esc(String(reason)) + '</li>';
   return h + '</ul>';
+}
+
+function academicReferenceCandidate(reference) {
+  const verification = reference?.verification || {};
+  const crossref = verification.crossref_verification || {};
+
+  // A strict verification may have an accepted candidate; otherwise retain
+  // the best related Crossref result as an explicitly non-verified candidate.
+  return crossref.candidate || crossref.related_candidate || null;
+}
+
+function academicReferenceDoi(reference) {
+  const proposed = reference?.proposed_reference || {};
+  const candidate = academicReferenceCandidate(reference);
+  return proposed.doi || candidate?.doi || '';
 }
 
 function renderAcademicReference(reference, index) {
   const proposed = reference?.proposed_reference || {};
   const verification = reference?.verification || {};
   const crossref = verification.crossref_verification || {};
-  const candidate = crossref.candidate || null;
+  const accepted = crossref.candidate || null;
+  const related = crossref.related_candidate || null;
 
-  const title = proposed.title || candidate?.title || 'Untitled reference';
-  const author = proposed.author ||
-    (Array.isArray(candidate?.authors) ? candidate.authors.join(', ') : '');
-  const year = proposed.year || candidate?.year || '';
-  const doi = proposed.doi || candidate?.doi || '';
+  // The proposed reference is one bibliographic object. A related search
+  // result is another. Never combine fields from the two unless verification
+  // has explicitly accepted the candidate.
+  const primary = accepted || proposed;
 
-  let h = '<div style="padding:10px 12px; margin:8px 0; border:1px solid var(--border); border-radius:8px; background:var(--surface);">';
-  h += '<strong>Reference ' + (index + 1) + ':</strong> ' + esc(title);
-  if (author || year) {
-    h += '<div style="margin-top:3px; font-size:.82rem; color:var(--text-muted);">' +
-      esc([author, year].filter(Boolean).join(' · ')) + '</div>';
+  const title = primary.title || 'Untitled reference';
+  const author = accepted
+    ? (Array.isArray(accepted.authors) ? accepted.authors.join(', ') : '')
+    : (proposed.author || '');
+  const year = primary.year || '';
+  const venue = primary.venue || '';
+  const doi = accepted?.doi || proposed.doi || '';
+
+  let h = '<div class="academic-reference">';
+  h += '<div><strong>' + (index + 1) + '. ' + esc(title) + '</strong></div>';
+
+  const details = [];
+  if (author) details.push(author);
+  if (year) details.push(String(year));
+  if (venue) details.push(venue);
+
+  if (details.length) {
+    h += '<div class="academic-reference-meta">' +
+      esc(details.join(' · ')) + '</div>';
   }
+
   if (doi) {
-    h += '<div style="margin-top:3px; font-size:.78rem;"><code>' + esc(doi) + '</code></div>';
+    const doiUrl = 'https://doi.org/' + encodeURIComponent(doi);
+    h += '<div class="academic-reference-link">' +
+      '<a href="' + doiUrl + '" target="_blank" rel="noopener noreferrer">' +
+      'doi:' + esc(doi) + '</a></div>';
   }
 
-  h += '<div style="margin-top:7px;"><strong>Bibliographic check:</strong> ' +
-    esc(academicStatusLabel(crossref.status)) + '</div>';
-
-  if (verification.identity_conflict) {
-    h += '<div style="margin-top:5px; color:var(--error);"><strong>Identity conflict detected.</strong></div>';
+  if (crossref.status === 'verified' && accepted) {
+    h += '<div class="academic-reference-status academic-status-good">' +
+      'Bibliographic identity verified</div>';
+  } else {
+    h += '<div class="academic-reference-status">' +
+      'Bibliographic identity not independently established</div>';
   }
 
-  h += academicReasons(verification.reasons);
+  // Keep an unverified related result visibly separate from the proposed
+  // citation. It may help the user investigate the reference, but it is not
+  // silently promoted into the citation itself.
+  if (!accepted && related) {
+    const relatedAuthors = Array.isArray(related.authors)
+      ? related.authors.join(', ')
+      : '';
+
+    const relatedDetails = [];
+    if (relatedAuthors) relatedDetails.push(relatedAuthors);
+    if (related.year) relatedDetails.push(String(related.year));
+    if (related.venue) relatedDetails.push(related.venue);
+
+    h += '<div class="academic-related-record">';
+    h += '<div><strong>Related Crossref record:</strong> ' +
+      esc(related.title || 'Untitled record') + '</div>';
+
+    if (relatedDetails.length) {
+      h += '<div class="academic-reference-meta">' +
+        esc(relatedDetails.join(' · ')) + '</div>';
+    }
+
+    if (related.doi) {
+      const relatedUrl = 'https://doi.org/' + encodeURIComponent(related.doi);
+      h += '<div class="academic-reference-link">' +
+        '<a href="' + relatedUrl +
+        '" target="_blank" rel="noopener noreferrer">' +
+        'doi:' + esc(related.doi) + '</a></div>';
+    }
+
+    h += '</div>';
+  }
+
   h += '</div>';
   return h;
 }
@@ -658,35 +816,36 @@ function renderAcademicSourceClaim(item, index) {
   const located = item?.claim_location || null;
   const assessment = item?.claim_assessment || null;
 
-  let h = '<div style="padding:12px 14px; margin:10px 0; border:1px solid var(--border); border-radius:8px; background:var(--surface);">';
-  h += '<div><strong>Claim ' + (index + 1) + ':</strong> ' + esc(claim || '(empty claim)') + '</div>';
+  let h = '<div class="academic-audit-card">';
+  h += '<div><strong>Claim ' + (index + 1) + ':</strong> ' +
+    esc(claim || '(empty claim)') + '</div>';
 
-  h += '<div style="margin-top:8px; font-size:.82rem; line-height:1.55;">';
-  h += '<div><strong>Retrieval identity:</strong> ' + esc(academicStatusLabel(retrieval.status));
+  h += '<div class="academic-audit-grid">';
+  h += '<div><strong>Retrieval identity:</strong> ' +
+    esc(academicStatusLabel(retrieval.status));
   if (retrieval.doi) h += ' · <code>' + esc(retrieval.doi) + '</code>';
   h += '</div>';
 
-  h += '<div><strong>Source discovery:</strong> ' + esc(academicStatusLabel(discovery.status));
+  h += '<div><strong>Source discovery:</strong> ' +
+    esc(academicStatusLabel(discovery.status));
   if (location?.status) h += ' · ' + esc(academicStatusLabel(location.status));
   h += '</div>';
 
-  if (source) {
-    h += '<div><strong>Source retrieval:</strong> ' + esc(academicStatusLabel(source.status)) + '</div>';
-  } else {
-    h += '<div><strong>Source retrieval:</strong> not reached</div>';
-  }
+  h += '<div><strong>Source retrieval:</strong> ' +
+    (source ? esc(academicStatusLabel(source.status)) : 'not reached') +
+    '</div>';
 
-  if (located) {
-    h += '<div><strong>Relevant evidence:</strong> ' + esc(academicStatusLabel(located.claim_status || located.status)) + '</div>';
-  } else {
-    h += '<div><strong>Relevant evidence:</strong> not located</div>';
-  }
+  h += '<div><strong>Relevant evidence:</strong> ' +
+    (located
+      ? esc(academicStatusLabel(located.claim_status || located.status))
+      : 'not located') +
+    '</div>';
 
-  if (assessment) {
-    h += '<div><strong>Claim assessment:</strong> ' + esc(academicStatusLabel(assessment.status)) + '</div>';
-  } else {
-    h += '<div><strong>Claim assessment:</strong> not performed</div>';
-  }
+  h += '<div><strong>Claim assessment:</strong> ' +
+    (assessment
+      ? esc(academicStatusLabel(assessment.status))
+      : 'not performed') +
+    '</div>';
   h += '</div>';
 
   if (assessment) h += academicReasons(assessment.reasons);
@@ -696,19 +855,25 @@ function renderAcademicSourceClaim(item, index) {
 
   const evidence = assessment?.evidence || located?.evidence || [];
   if (Array.isArray(evidence) && evidence.length) {
-    h += '<details style="margin-top:9px;"><summary style="cursor:pointer; color:var(--accent);">Show source evidence (' +
-      evidence.length + ')</summary>';
-    h += '<div style="margin-top:8px;">';
+    h += '<details class="academic-source-evidence">';
+    h += '<summary>Show located source evidence (' + evidence.length + ')</summary>';
+
     for (const ev of evidence) {
-      h += '<div style="padding:8px 10px; margin:6px 0; background:var(--surface-alt); border-radius:6px; font-size:.8rem; line-height:1.5;">';
+      h += '<div class="academic-evidence-passage">';
       const where = [];
       if (ev.page_number != null) where.push('page ' + ev.page_number);
       if (ev.source) where.push(ev.source);
-      if (where.length) h += '<div style="color:var(--text-muted); margin-bottom:4px;">' + esc(where.join(' · ')) + '</div>';
+
+      if (where.length) {
+        h += '<div class="academic-evidence-locator">' +
+          esc(where.join(' · ')) + '</div>';
+      }
+
       h += esc(ev.text || '');
       h += '</div>';
     }
-    h += '</div></details>';
+
+    h += '</details>';
   }
 
   h += '</div>';
@@ -719,19 +884,117 @@ function renderAcademicTechnicalClaim(item, index) {
   const claim = item?.claim || {};
   const verification = item?.verification || {};
 
-  let h = '<div style="padding:10px 12px; margin:8px 0; border:1px solid var(--border); border-radius:8px; background:var(--surface);">';
-  h += '<strong>Technical claim ' + (index + 1) + ':</strong> ' + esc(claim.statement || '(empty claim)');
+  let h = '<div class="academic-audit-card">';
+  h += '<div><strong>Technical claim ' + (index + 1) + ':</strong> ' +
+    esc(claim.statement || '(empty claim)') + '</div>';
+
   if (claim.concept) {
-    h += '<div style="margin-top:3px; font-size:.78rem; color:var(--text-muted);">' + esc(claim.concept) + '</div>';
+    h += '<div class="academic-reference-meta">' +
+      esc(claim.concept) + '</div>';
   }
-  h += '<div style="margin-top:7px;"><strong>Technical check:</strong> ' +
+
+  h += '<div class="academic-audit-grid">';
+  h += '<div><strong>Technical check:</strong> ' +
     esc(academicStatusLabel(verification.status)) + '</div>';
+
   if (verification.canonical_claim) {
-    h += '<div style="margin-top:4px; font-size:.8rem;"><strong>Canonical form:</strong> <code>' +
+    h += '<div><strong>Canonical form:</strong> <code>' +
       esc(verification.canonical_claim) + '</code></div>';
   }
+
+  h += '</div>';
   h += academicReasons(verification.reasons);
   h += '</div>';
+  return h;
+}
+
+function academicVerificationSummary(data) {
+  const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
+  const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
+
+  let supported = 0;
+  let partial = 0;
+  let unsupported = 0;
+  let contradicted = 0;
+  let unassessed = 0;
+
+  for (const item of sourceClaims) {
+    const status = item?.claim_assessment?.status;
+    if (status === 'claim_supported') supported++;
+    else if (status === 'claim_partially_supported') partial++;
+    else if (status === 'claim_not_supported') unsupported++;
+    else if (status === 'claim_contradicted') contradicted++;
+    else unassessed++;
+  }
+
+  let technicalVerified = 0;
+  let technicalConflict = 0;
+  let technicalUnverified = 0;
+
+  for (const item of technicalClaims) {
+    const status = item?.verification?.status;
+    if (status === 'technically_verified') technicalVerified++;
+    else if (status === 'technical_conflict') technicalConflict++;
+    else technicalUnverified++;
+  }
+
+  const parts = [];
+
+  if (sourceClaims.length) {
+    if (supported) parts.push(supported + ' source claim' +
+      (supported === 1 ? '' : 's') + ' supported');
+    if (partial) parts.push(partial + ' partially supported');
+    if (unsupported) parts.push(unsupported + ' not supported');
+    if (contradicted) parts.push(contradicted + ' contradicted');
+    if (unassessed) parts.push(unassessed + ' not independently assessed');
+  }
+
+  if (technicalClaims.length) {
+    if (technicalVerified) parts.push(technicalVerified + ' technical claim' +
+      (technicalVerified === 1 ? '' : 's') + ' verified');
+    if (technicalConflict) parts.push(technicalConflict + ' technical conflict' +
+      (technicalConflict === 1 ? '' : 's'));
+    if (technicalUnverified) parts.push(technicalUnverified +
+      ' technical claim' + (technicalUnverified === 1 ? '' : 's') +
+      ' outside current deterministic checks');
+  }
+
+  return parts.length
+    ? parts.join(' · ')
+    : 'No claim-level verification was available for this answer.';
+}
+
+function renderAcademicAudit(data) {
+  const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
+  const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
+  const release = data.release || null;
+
+  let h = '';
+
+  if (release) {
+    h += '<div class="academic-audit-card">';
+    h += '<div><strong>Release assessment:</strong> ' +
+      esc(academicStatusLabel(release.status)) + '</div>';
+    h += '<div class="academic-reference-meta">safe_to_present: ' +
+      esc(String(release.safe_to_present === true)) + '</div>';
+    h += academicReasons(release.reasons);
+    h += '</div>';
+  }
+
+  if (sourceClaims.length) {
+    h += '<h4>Source-backed claims</h4>';
+    for (let i = 0; i < sourceClaims.length; i++) {
+      h += renderAcademicSourceClaim(sourceClaims[i], i);
+    }
+  }
+
+  if (technicalClaims.length) {
+    h += '<h4>Technical claims</h4>';
+    for (let i = 0; i < technicalClaims.length; i++) {
+      h += renderAcademicTechnicalClaim(technicalClaims[i], i);
+    }
+  }
+
   return h;
 }
 
@@ -743,28 +1006,31 @@ function renderAcademicEvidence(data) {
   let h = '';
 
   if (references.length) {
-    h += '<h3 style="margin-top:14px;">References</h3>';
+    h += '<section class="academic-reference-section">';
+    h += '<h3>References</h3>';
+
     for (let i = 0; i < references.length; i++) {
       h += renderAcademicReference(references[i], i);
     }
+
+    h += '<div class="academic-reference-note">' +
+      'Reference matching establishes bibliographic identity only. ' +
+      'It does not by itself establish that a source supports a claim.' +
+      '</div>';
+    h += '</section>';
   }
 
-  if (sourceClaims.length) {
-    h += '<h3 style="margin-top:18px;">Source-backed claims</h3>';
-    for (let i = 0; i < sourceClaims.length; i++) {
-      h += renderAcademicSourceClaim(sourceClaims[i], i);
-    }
-  }
+  if (sourceClaims.length || technicalClaims.length || data.release) {
+    h += '<section class="academic-verification-summary">';
+    h += '<div><strong>Evidence status:</strong> ' +
+      esc(academicVerificationSummary(data)) + '</div>';
 
-  if (technicalClaims.length) {
-    h += '<h3 style="margin-top:18px;">Technical claims</h3>';
-    for (let i = 0; i < technicalClaims.length; i++) {
-      h += renderAcademicTechnicalClaim(technicalClaims[i], i);
-    }
-  }
-
-  if (!h) {
-    h = '<div style="color:var(--text-muted); font-size:.82rem;">No structured evidence checks were returned for this answer.</div>';
+    h += '<details class="academic-verification-details">';
+    h += '<summary>Show verification details</summary>';
+    h += '<div class="academic-audit-content">' +
+      renderAcademicAudit(data) + '</div>';
+    h += '</details>';
+    h += '</section>';
   }
 
   return h;
