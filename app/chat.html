@@ -584,6 +584,192 @@ function renderAcademicRelease(release) {
   return h;
 }
 
+
+function academicStatusLabel(status) {
+  const labels = {
+    verified: 'Verified bibliographic identity',
+    corroborated: 'Corroborated',
+    eligible: 'Eligible for source retrieval',
+    not_eligible: 'Not eligible for source retrieval',
+    attempted: 'Source discovery attempted',
+    not_attempted: 'Source discovery not attempted',
+    location_found: 'Source located',
+    location_not_found: 'Source not located',
+    retrieved: 'Source retrieved',
+    not_retrieved: 'Source not retrieved',
+    claim_supported: 'Claim supported',
+    claim_partially_supported: 'Claim partially supported',
+    claim_not_supported: 'Claim not supported',
+    claim_contradicted: 'Claim contradicted',
+    technically_verified: 'Technically verified',
+    technical_conflict: 'Technical conflict',
+    not_verified: 'Not technically verified'
+  };
+  return labels[status] || String(status || 'unknown').replace(/_/g, ' ');
+}
+
+function academicReasons(reasons) {
+  if (!Array.isArray(reasons) || !reasons.length) return '';
+  let h = '<ul style="margin:6px 0 0 20px;">';
+  for (const reason of reasons) h += '<li>' + esc(String(reason)) + '</li>';
+  return h + '</ul>';
+}
+
+function renderAcademicReference(reference, index) {
+  const proposed = reference?.proposed_reference || {};
+  const verification = reference?.verification || {};
+  const crossref = verification.crossref_verification || {};
+  const candidate = crossref.candidate || null;
+
+  const title = proposed.title || candidate?.title || 'Untitled reference';
+  const author = proposed.author ||
+    (Array.isArray(candidate?.authors) ? candidate.authors.join(', ') : '');
+  const year = proposed.year || candidate?.year || '';
+  const doi = proposed.doi || candidate?.doi || '';
+
+  let h = '<div style="padding:10px 12px; margin:8px 0; border:1px solid var(--border); border-radius:8px; background:var(--surface);">';
+  h += '<strong>Reference ' + (index + 1) + ':</strong> ' + esc(title);
+  if (author || year) {
+    h += '<div style="margin-top:3px; font-size:.82rem; color:var(--text-muted);">' +
+      esc([author, year].filter(Boolean).join(' · ')) + '</div>';
+  }
+  if (doi) {
+    h += '<div style="margin-top:3px; font-size:.78rem;"><code>' + esc(doi) + '</code></div>';
+  }
+
+  h += '<div style="margin-top:7px;"><strong>Bibliographic check:</strong> ' +
+    esc(academicStatusLabel(crossref.status)) + '</div>';
+
+  if (verification.identity_conflict) {
+    h += '<div style="margin-top:5px; color:var(--error);"><strong>Identity conflict detected.</strong></div>';
+  }
+
+  h += academicReasons(verification.reasons);
+  h += '</div>';
+  return h;
+}
+
+function renderAcademicSourceClaim(item, index) {
+  const claim = item?.claim?.claim || '';
+  const retrieval = item?.retrieval_identity || {};
+  const discovery = item?.source_discovery || {};
+  const location = discovery.location || null;
+  const source = item?.source_retrieval || null;
+  const located = item?.claim_location || null;
+  const assessment = item?.claim_assessment || null;
+
+  let h = '<div style="padding:12px 14px; margin:10px 0; border:1px solid var(--border); border-radius:8px; background:var(--surface);">';
+  h += '<div><strong>Claim ' + (index + 1) + ':</strong> ' + esc(claim || '(empty claim)') + '</div>';
+
+  h += '<div style="margin-top:8px; font-size:.82rem; line-height:1.55;">';
+  h += '<div><strong>Retrieval identity:</strong> ' + esc(academicStatusLabel(retrieval.status));
+  if (retrieval.doi) h += ' · <code>' + esc(retrieval.doi) + '</code>';
+  h += '</div>';
+
+  h += '<div><strong>Source discovery:</strong> ' + esc(academicStatusLabel(discovery.status));
+  if (location?.status) h += ' · ' + esc(academicStatusLabel(location.status));
+  h += '</div>';
+
+  if (source) {
+    h += '<div><strong>Source retrieval:</strong> ' + esc(academicStatusLabel(source.status)) + '</div>';
+  } else {
+    h += '<div><strong>Source retrieval:</strong> not reached</div>';
+  }
+
+  if (located) {
+    h += '<div><strong>Relevant evidence:</strong> ' + esc(academicStatusLabel(located.claim_status || located.status)) + '</div>';
+  } else {
+    h += '<div><strong>Relevant evidence:</strong> not located</div>';
+  }
+
+  if (assessment) {
+    h += '<div><strong>Claim assessment:</strong> ' + esc(academicStatusLabel(assessment.status)) + '</div>';
+  } else {
+    h += '<div><strong>Claim assessment:</strong> not performed</div>';
+  }
+  h += '</div>';
+
+  if (assessment) h += academicReasons(assessment.reasons);
+  else if (located) h += academicReasons(located.reasons);
+  else if (source) h += academicReasons(source.reasons);
+  else h += academicReasons(discovery.reasons);
+
+  const evidence = assessment?.evidence || located?.evidence || [];
+  if (Array.isArray(evidence) && evidence.length) {
+    h += '<details style="margin-top:9px;"><summary style="cursor:pointer; color:var(--accent);">Show source evidence (' +
+      evidence.length + ')</summary>';
+    h += '<div style="margin-top:8px;">';
+    for (const ev of evidence) {
+      h += '<div style="padding:8px 10px; margin:6px 0; background:var(--surface-alt); border-radius:6px; font-size:.8rem; line-height:1.5;">';
+      const where = [];
+      if (ev.page_number != null) where.push('page ' + ev.page_number);
+      if (ev.source) where.push(ev.source);
+      if (where.length) h += '<div style="color:var(--text-muted); margin-bottom:4px;">' + esc(where.join(' · ')) + '</div>';
+      h += esc(ev.text || '');
+      h += '</div>';
+    }
+    h += '</div></details>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderAcademicTechnicalClaim(item, index) {
+  const claim = item?.claim || {};
+  const verification = item?.verification || {};
+
+  let h = '<div style="padding:10px 12px; margin:8px 0; border:1px solid var(--border); border-radius:8px; background:var(--surface);">';
+  h += '<strong>Technical claim ' + (index + 1) + ':</strong> ' + esc(claim.statement || '(empty claim)');
+  if (claim.concept) {
+    h += '<div style="margin-top:3px; font-size:.78rem; color:var(--text-muted);">' + esc(claim.concept) + '</div>';
+  }
+  h += '<div style="margin-top:7px;"><strong>Technical check:</strong> ' +
+    esc(academicStatusLabel(verification.status)) + '</div>';
+  if (verification.canonical_claim) {
+    h += '<div style="margin-top:4px; font-size:.8rem;"><strong>Canonical form:</strong> <code>' +
+      esc(verification.canonical_claim) + '</code></div>';
+  }
+  h += academicReasons(verification.reasons);
+  h += '</div>';
+  return h;
+}
+
+function renderAcademicEvidence(data) {
+  const references = Array.isArray(data.references) ? data.references : [];
+  const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
+  const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
+
+  let h = '';
+
+  if (references.length) {
+    h += '<h3 style="margin-top:14px;">References</h3>';
+    for (let i = 0; i < references.length; i++) {
+      h += renderAcademicReference(references[i], i);
+    }
+  }
+
+  if (sourceClaims.length) {
+    h += '<h3 style="margin-top:18px;">Source-backed claims</h3>';
+    for (let i = 0; i < sourceClaims.length; i++) {
+      h += renderAcademicSourceClaim(sourceClaims[i], i);
+    }
+  }
+
+  if (technicalClaims.length) {
+    h += '<h3 style="margin-top:18px;">Technical claims</h3>';
+    for (let i = 0; i < technicalClaims.length; i++) {
+      h += renderAcademicTechnicalClaim(technicalClaims[i], i);
+    }
+  }
+
+  if (!h) {
+    h = '<div style="color:var(--text-muted); font-size:.82rem;">No structured evidence checks were returned for this answer.</div>';
+  }
+
+  return h;
+}
+
 async function sendAcademicMessage() {
   const question = academicInput.value.trim();
   if (!question || academicGenerating) return;
@@ -621,9 +807,9 @@ async function sendAcademicMessage() {
       '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
       renderAcademicRelease(data.release);
 
-    // Detailed reference, retrieval and claim evidence is deliberately
-    // rendered in the next frontend increment.
-    evidence.style.display = 'none';
+    document.getElementById('academicEvidenceContent').innerHTML =
+      renderAcademicEvidence(data);
+    evidence.style.display = 'block';
   } catch (e) {
     answer.innerHTML =
       '<div style="color:var(--error);"><strong>Academic Chat error:</strong> ' +
