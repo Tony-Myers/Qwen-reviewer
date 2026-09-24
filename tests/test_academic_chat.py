@@ -314,6 +314,67 @@ check("generated structure is parsed",
       and local_draft.technical_claims[0].type == "formula")
 
 
+print("\n[8b] optional local methodological context reaches the local model")
+
+context_calls = []
+
+
+def context_generate(model, tokenizer, prompt=None, **kwargs):
+    context_calls.append(prompt)
+    return json.dumps(VALID)
+
+
+try:
+    ac.llm_backend.generate = context_generate
+    ac.llm_backend.make_sampler = fake_sampler
+    ac.llm_backend.thinking = fake_thinking
+
+    contextual_draft = ac.generate_academic_draft(
+        "fake-model",
+        "fake-tokenizer",
+        "How should this methodological concept be interpreted?",
+        methodological_context=(
+            "A curated local note says that interpretation depends on "
+            "the statistical model and its assumptions."
+        ),
+    )
+
+finally:
+    ac.llm_backend.generate = original_generate
+    ac.llm_backend.make_sampler = original_make_sampler
+    ac.llm_backend.thinking = original_thinking
+
+
+check("contextual local backend called exactly once",
+      len(context_calls) == 1,
+      context_calls)
+
+if context_calls:
+    contextual_prompt = context_calls[0]
+    contextual_user = contextual_prompt[1].get("content", "")
+
+    check("local methodological context reaches model",
+          "A curated local note says" in contextual_user,
+          contextual_user)
+
+    check("original question remains present",
+          "How should this methodological concept be interpreted?"
+          in contextual_user,
+          contextual_user)
+
+    check("context is labelled as local methodological guidance",
+          "LOCAL METHODOLOGICAL GUIDANCE:" in contextual_user,
+          contextual_user)
+
+    check("context is distinguished from external verification",
+          "not external source verification" in contextual_user,
+          contextual_user)
+
+check("contextual output still obeys structured contract",
+      contextual_draft.references[0].author == "White"
+      and contextual_draft.technical_claims[0].type == "formula")
+
+
 print("\n[9] malformed local-model output fails conservatively")
 
 

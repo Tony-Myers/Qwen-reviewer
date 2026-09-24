@@ -552,6 +552,7 @@ def generate_academic_draft(
     tokenizer: Any,
     question: str,
     *,
+    methodological_context: str | None = None,
     max_tokens: int = 2400,
 ) -> AcademicDraft:
     """
@@ -569,6 +570,21 @@ def generate_academic_draft(
             "Academic Chat question must be non-empty text."
         )
 
+    user_content = question.strip()
+
+    if methodological_context is not None and methodological_context.strip():
+        user_content = (
+            "Local methodological guidance follows. It is curated local "
+            "context, not external source verification. Use it when relevant "
+            "to improve the methodological accuracy and nuance of the answer. "
+            "Do not treat it as evidence that any proposed bibliographic "
+            "reference supports a claim.\n\n"
+            "LOCAL METHODOLOGICAL GUIDANCE:\n"
+            f"{methodological_context.strip()}\n\n"
+            "USER QUESTION:\n"
+            f"{question.strip()}"
+        )
+
     messages = [
         {
             "role": "system",
@@ -576,7 +592,7 @@ def generate_academic_draft(
         },
         {
             "role": "user",
-            "content": question.strip(),
+            "content": user_content,
         },
     ]
 

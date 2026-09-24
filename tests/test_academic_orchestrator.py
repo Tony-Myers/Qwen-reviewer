@@ -9,6 +9,7 @@ import academic_chat
 import academic_claims
 import academic_orchestrator
 import academic_technical
+import reviewer_notes
 from academic_tools import (
     AcademicReferenceResult,
     CorroborationResult,
@@ -18,6 +19,11 @@ from academic_tools import (
 
 
 fails = []
+
+
+def empty_methodological_retriever(question):
+    """Keep existing orchestration tests independent of reviewer-note content."""
+    return academic_orchestrator.LocalGuidanceResult(passages=[])
 
 
 def check(condition, message):
@@ -121,6 +127,7 @@ result = academic_orchestrator.run_academic_first_stage(
     draft_generator=fake_draft_generator,
     reference_verifier=fake_reference_verifier,
     technical_verifier=fake_technical_verifier,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 
@@ -351,6 +358,7 @@ conflict_result = academic_orchestrator.run_academic_first_stage(
     draft_generator=fake_draft_generator,
     reference_verifier=fake_reference_verifier,
     technical_verifier=conflicting_technical_verifier,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -756,6 +764,7 @@ eligible_result = academic_orchestrator.run_academic_first_stage(
     draft_generator=fake_draft_generator,
     reference_verifier=eligible_reference_verifier,
     technical_verifier=fake_technical_verifier,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 eligible_source_claim = eligible_result.source_claims[0]
@@ -814,6 +823,7 @@ ineligible_discovery_result = academic_orchestrator.run_academic_first_stage(
     reference_verifier=fake_reference_verifier,
     technical_verifier=fake_technical_verifier,
     source_discoverer=fake_source_discoverer,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -874,6 +884,7 @@ eligible_discovery_result = academic_orchestrator.run_academic_first_stage(
     reference_verifier=eligible_reference_verifier,
     technical_verifier=fake_technical_verifier,
     source_discoverer=fake_eligible_source_discoverer,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -954,6 +965,7 @@ try:
         reference_verifier=eligible_reference_verifier,
         technical_verifier=fake_technical_verifier,
         source_discoverer=unavailable_source_discoverer,
+        methodological_retriever=empty_methodological_retriever,
     )
 except RuntimeError:
     unavailable_discovery_result = None
@@ -1033,6 +1045,7 @@ retrieval_result = academic_orchestrator.run_academic_first_stage(
     technical_verifier=fake_technical_verifier,
     source_discoverer=fake_eligible_source_discoverer,
     source_retriever=fake_source_retriever,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -1093,6 +1106,7 @@ ineligible_retrieval_result = academic_orchestrator.run_academic_first_stage(
     technical_verifier=fake_technical_verifier,
     source_discoverer=fake_eligible_source_discoverer,
     source_retriever=retrieval_must_not_run,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -1115,6 +1129,7 @@ unavailable_retrieval_result = academic_orchestrator.run_academic_first_stage(
     technical_verifier=fake_technical_verifier,
     source_discoverer=unavailable_source_discoverer,
     source_retriever=retrieval_must_not_run,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -1148,6 +1163,7 @@ no_location_retrieval_result = academic_orchestrator.run_academic_first_stage(
     technical_verifier=fake_technical_verifier,
     source_discoverer=no_location_source_discoverer,
     source_retriever=retrieval_must_not_run,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -1191,6 +1207,7 @@ failed_retrieval_result = academic_orchestrator.run_academic_first_stage(
     technical_verifier=fake_technical_verifier,
     source_discoverer=fake_eligible_source_discoverer,
     source_retriever=fake_failed_source_retriever,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -1265,6 +1282,7 @@ located_result = academic_orchestrator.run_academic_first_stage(
     source_discoverer=fake_eligible_source_discoverer,
     source_retriever=fake_source_retriever,
     claim_locator=fake_claim_locator,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -1314,6 +1332,7 @@ failed_location_result = academic_orchestrator.run_academic_first_stage(
     source_discoverer=fake_eligible_source_discoverer,
     source_retriever=fake_failed_source_retriever,
     claim_locator=claim_locator_must_not_run,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -1357,6 +1376,7 @@ assessed_result = academic_orchestrator.run_academic_first_stage(
     source_retriever=fake_source_retriever,
     claim_locator=fake_claim_locator,
     claim_assessor=fake_claim_assessor,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -1419,6 +1439,7 @@ unlocated_result = academic_orchestrator.run_academic_first_stage(
     source_retriever=fake_failed_source_retriever,
     claim_locator=claim_locator_must_not_run,
     claim_assessor=claim_assessor_must_not_run,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -1459,6 +1480,7 @@ not_located_result = academic_orchestrator.run_academic_first_stage(
     source_retriever=fake_source_retriever,
     claim_locator=fake_not_located_claim_locator,
     claim_assessor=claim_assessor_must_not_run,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
@@ -1573,6 +1595,7 @@ substitution_result = academic_orchestrator.run_academic_first_stage(
     reference_verifier=substitution_reference_verifier,
     technical_verifier=fake_technical_verifier,
     source_discoverer=substitution_source_discoverer,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 substitution_source_claim = substitution_result.source_claims[0]
@@ -1646,6 +1669,7 @@ mismatched_discovery_result = academic_orchestrator.run_academic_first_stage(
     technical_verifier=fake_technical_verifier,
     source_discoverer=mismatched_identity_discoverer,
     source_retriever=discovery_identity_retriever,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 mismatched_discovery_claim = mismatched_discovery_result.source_claims[0]
@@ -1740,6 +1764,7 @@ missing_identity_result = academic_orchestrator.run_academic_first_stage(
     technical_verifier=fake_technical_verifier,
     source_discoverer=missing_identity_discoverer,
     source_retriever=missing_identity_retriever,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 missing_identity_claim = missing_identity_result.source_claims[0]
@@ -1817,12 +1842,166 @@ equivalent_identity_result = academic_orchestrator.run_academic_first_stage(
     technical_verifier=fake_technical_verifier,
     source_discoverer=equivalent_identity_discoverer,
     source_retriever=equivalent_identity_retriever,
+    methodological_retriever=empty_methodological_retriever,
 )
 
 check(
     len(equivalent_identity_retrieval_calls) == 1,
     "equivalent normalised discovery DOI remains retrieval-eligible",
 )
+
+
+print("\n[methodological context] local guidance reaches generation only")
+
+METHOD_NOTE = (
+    "LOCAL-METHOD-NOTE-91C2: interpretation depends on the statistical "
+    "model and its assumptions."
+)
+
+methodological_retrieval_calls = []
+context_draft_calls = []
+context_reference_calls = []
+context_technical_calls = []
+
+
+def synthetic_methodological_retriever(supplied_question):
+    methodological_retrieval_calls.append(supplied_question)
+    return academic_orchestrator.LocalGuidanceResult(
+        passages=[
+            reviewer_notes.Passage(
+                note="Synthetic Method Note",
+                heading="Interpretation",
+                text=METHOD_NOTE,
+                score=1.0,
+            )
+        ]
+    )
+
+
+def context_draft_generator(
+    model,
+    tokenizer,
+    supplied_question,
+    *,
+    methodological_context=None,
+):
+    context_draft_calls.append(
+        {
+            "question": supplied_question,
+            "methodological_context": methodological_context,
+        }
+    )
+    return academic_chat.AcademicDraft(
+        answer_draft="A context-informed provisional answer.",
+        references=[
+            academic_chat.AcademicReference(
+                title="Context Test Work",
+                author="A. Researcher",
+                year=2020,
+                venue="Example Journal",
+                doi=None,
+            )
+        ],
+        source_claims=[],
+        technical_claims=[
+            academic_chat.TechnicalClaim(
+                type="interpretation",
+                concept="context test",
+                statement="A structured methodological proposition.",
+                parameterisation=None,
+            )
+        ],
+    )
+
+
+def context_reference_verifier(**kwargs):
+    context_reference_calls.append(dict(kwargs))
+    return fake_reference_verifier(**kwargs)
+
+
+def context_technical_verifier(claim):
+    context_technical_calls.append(claim)
+    return fake_technical_verifier(claim)
+
+
+context_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=context_draft_generator,
+    reference_verifier=context_reference_verifier,
+    technical_verifier=context_technical_verifier,
+    methodological_retriever=synthetic_methodological_retriever,
+)
+
+check(
+    methodological_retrieval_calls == [question],
+    "methodological retriever receives the complete question locally",
+)
+
+check(
+    len(context_draft_calls) == 1
+    and METHOD_NOTE in context_draft_calls[0]["methodological_context"],
+    "retrieved methodological context reaches local draft generation",
+)
+
+check(
+    context_draft_calls[0]["question"] == question,
+    "original question remains separate from methodological context",
+)
+
+check(
+    METHOD_NOTE not in repr(context_reference_calls),
+    "methodological context never reaches bibliographic verification",
+)
+
+check(
+    METHOD_NOTE not in repr(
+        [claim.to_dict() for claim in context_technical_calls]
+    ),
+    "methodological context never reaches deterministic technical verification",
+)
+
+check(
+    context_result.answer_draft == "A context-informed provisional answer.",
+    "context-informed draft continues through normal orchestration",
+)
+
+
+check(
+    len(context_result.local_guidance.passages) == 1,
+    "local methodological guidance remains attached to orchestration result",
+)
+
+check(
+    context_result.local_guidance.passages[0].note
+    == "Synthetic Method Note",
+    "local guidance retains reviewer-note provenance",
+)
+
+context_serialised = context_result.to_dict()
+
+check(
+    context_serialised["local_guidance"]["source"] == "reviewer_notes",
+    "local guidance serialises as a distinct reviewer-notes source",
+)
+
+check(
+    context_serialised["local_guidance"]["passages"][0]["heading"]
+    == "Interpretation",
+    "local guidance heading survives serialisation",
+)
+
+check(
+    context_serialised["local_guidance"]["passages"][0]["score"] == 1.0,
+    "local guidance retrieval score survives serialisation",
+)
+
+check(
+    METHOD_NOTE not in repr(context_serialised["local_guidance"]),
+    "full local guidance passage text is not exposed by serialisation",
+)
+
 
 if fails:
     print(f"\n{len(fails)} test(s) failed.")

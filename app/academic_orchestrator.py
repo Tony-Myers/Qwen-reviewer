@@ -17,12 +17,62 @@ claims and performs no external network access.
 """
 
 from dataclasses import dataclass
+import threading
 from typing import Any, Callable
 
 import academic_chat
 import academic_claims
 import academic_technical
+import reviewer_notes
 from academic_tools import AcademicReferenceResult, verify_academic_reference
+
+
+_methodological_notes_index = None
+_methodological_notes_index_lock = threading.Lock()
+
+
+@dataclass
+class LocalGuidanceResult:
+    """Curated local methodological guidance supplied to draft generation."""
+
+    passages: list[reviewer_notes.Passage]
+
+    @property
+    def prompt_text(self) -> str:
+        return "\n\n".join(
+            f"{passage.note} - {passage.heading}\n{passage.text}"
+            for passage in self.passages
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": "reviewer_notes",
+            "passages": [
+                {
+                    "note": passage.note,
+                    "heading": passage.heading,
+                    "score": passage.score,
+                }
+                for passage in self.passages
+            ],
+        }
+
+
+def retrieve_methodological_context(
+    question: str,
+    k: int = 3,
+) -> LocalGuidanceResult:
+    """Retrieve curated local methodological guidance for Academic Chat."""
+    global _methodological_notes_index
+
+    with _methodological_notes_index_lock:
+        if _methodological_notes_index is None:
+            _methodological_notes_index = reviewer_notes.NotesIndex()
+        index = _methodological_notes_index
+
+    return LocalGuidanceResult(
+        passages=index.search(question, k=k)
+    )
 
 
 def _normalise_retrieval_doi(doi: str | None) -> str | None:
@@ -260,6 +310,7 @@ def assess_academic_release(
 @dataclass
 class AcademicFirstStageResult:
     answer_draft: str
+    local_guidance: LocalGuidanceResult
     references: list[VerifiedReferenceProposal]
     source_claims: list[SourceClaimResult]
     technical_claims: list[TechnicalClaimResult]
@@ -268,6 +319,7 @@ class AcademicFirstStageResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "answer_draft": self.answer_draft,
+            "local_guidance": self.local_guidance.to_dict(),
             "references": [
                 reference.to_dict()
                 for reference in self.references
@@ -308,6 +360,9 @@ def run_academic_first_stage(
         [str, list[academic_claims.ClaimEvidence]],
         academic_claims.ClaimAssessmentResult,
     ] | None = None,
+    methodological_retriever: Callable[
+        [str], LocalGuidanceResult
+    ] | None = None,
 ) -> AcademicFirstStageResult:
     """
     Generate a local academic draft, verify its proposed references and
@@ -329,11 +384,24 @@ def run_academic_first_stage(
     if technical_verifier is None:
         technical_verifier = academic_technical.verify_technical_claim
 
-    draft = draft_generator(
-        model,
-        tokenizer,
-        question,
-    )
+    if methodological_retriever is None:
+        methodological_retriever = retrieve_methodological_context
+
+    local_guidance = methodological_retriever(question)
+
+    if local_guidance.passages:
+        draft = draft_generator(
+            model,
+            tokenizer,
+            question,
+            methodological_context=local_guidance.prompt_text,
+        )
+    else:
+        draft = draft_generator(
+            model,
+            tokenizer,
+            question,
+        )
 
     verified_references = []
 
@@ -490,6 +558,7 @@ def run_academic_first_stage(
 
     return AcademicFirstStageResult(
         answer_draft=draft.answer_draft,
+        local_guidance=local_guidance,
         references=verified_references,
         source_claims=source_claims,
         technical_claims=technical_claims,
