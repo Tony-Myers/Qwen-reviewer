@@ -365,12 +365,17 @@ def assess_academic_release(
 
 @dataclass
 class AcademicFirstStageResult:
-    answer_draft: str
+    draft: academic_chat.AcademicDraft
     local_guidance: LocalGuidanceResult
     references: list[VerifiedReferenceProposal]
     source_claims: list[SourceClaimResult]
     technical_claims: list[TechnicalClaimResult]
     release: AcademicReleaseAssessment
+
+    @property
+    def answer_draft(self) -> str:
+        """Preserve the existing answer access without duplicating draft state."""
+        return self.draft.answer_draft
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -599,7 +604,7 @@ def assess_academic_draft(
     )
 
     return AcademicFirstStageResult(
-        answer_draft=draft.answer_draft,
+        draft=draft,
         local_guidance=local_guidance,
         references=verified_references,
         source_claims=source_claims,

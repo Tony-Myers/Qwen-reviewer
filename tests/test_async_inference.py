@@ -244,6 +244,9 @@ original_ensure_model = server.ensure_model
 original_orchestrator = server.academic_orchestrator.run_academic_first_stage
 original_model = server.model
 original_tokenizer = server.tokenizer
+original_reconciliation_orchestrator = (
+    server.academic_reconciliation_orchestrator.run_academic_reconciliation
+)
 
 academic_entered = threading.Event()
 release_academic = threading.Event()
@@ -253,22 +256,31 @@ def fake_ensure_model():
     return None
 
 
-def blocking_orchestrator(*args, **kwargs):
+def blocking_reconciliation_orchestrator(*args, **kwargs):
     academic_entered.set()
     if not release_academic.wait(timeout=2.0):
         raise RuntimeError(
             "test timed out waiting to release Academic Chat orchestration"
         )
-    return type(
-        "SyntheticAcademicResult",
+
+    final = type(
+        "SyntheticAcademicFinalResult",
         (),
         {"to_dict": lambda self: {"answer": "synthetic academic result"}},
+    )()
+
+    return type(
+        "SyntheticAcademicReconciliationResult",
+        (),
+        {"final": final},
     )()
 
 
 async def exercise_academic_first_stage():
     server.ensure_model = fake_ensure_model
-    server.academic_orchestrator.run_academic_first_stage = blocking_orchestrator
+    server.academic_reconciliation_orchestrator.run_academic_reconciliation = (
+        blocking_reconciliation_orchestrator
+    )
     server.model = object()
     server.tokenizer = object()
 
@@ -310,7 +322,9 @@ async def exercise_academic_first_stage():
         release_academic.set()
         releaser.join(timeout=1.0)
         server.ensure_model = original_ensure_model
-        server.academic_orchestrator.run_academic_first_stage = original_orchestrator
+        server.academic_reconciliation_orchestrator.run_academic_reconciliation = (
+            original_reconciliation_orchestrator
+        )
         server.model = original_model
         server.tokenizer = original_tokenizer
 

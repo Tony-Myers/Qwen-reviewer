@@ -49,6 +49,8 @@ import academic_chat  # noqa: E402
 import academic_claims  # noqa: E402
 import academic_claim_assessor  # noqa: E402
 import academic_orchestrator  # noqa: E402
+import academic_reconciliation  # noqa: E402
+import academic_reconciliation_orchestrator  # noqa: E402
 from academic_tools import (  # noqa: E402
     get_openalex_work_by_doi,
     verify_academic_reference,
@@ -644,11 +646,13 @@ def assess_academic_methodology(*, prompt, schema):
 
 # ---------------------------------------------------------------------------
 # POST /api/chat/academic
-# First-stage Academic Chat orchestration.
+# Academic Chat generation, checking, and bounded reconciliation.
 #
-# The complete question is passed only to the local model. External
+# The complete question is used only by the local first stage. External
 # bibliographic/discovery services receive only bibliographic metadata or
 # identifiers, while source retrieval receives only a discovered source URL.
+# If checking blocks release and bounded corrections exist, one local revision
+# is permitted and the revised AcademicDraft is independently reassessed.
 # Bibliographic verification or source retrieval does not establish claim support.
 # ---------------------------------------------------------------------------
 @app.post("/api/chat/academic")
@@ -674,17 +678,45 @@ async def academic_chat_first_stage(request: dict):
 
     await asyncio.to_thread(ensure_model)
 
-    try:
-        result = await asyncio.to_thread(
-            academic_orchestrator.run_academic_first_stage,
-            model,
-            tokenizer,
-            question,
+    def first_stage_runner(
+        local_model,
+        local_tokenizer,
+        local_question,
+    ):
+        return academic_orchestrator.run_academic_first_stage(
+            local_model,
+            local_tokenizer,
+            local_question,
             source_discoverer=discover_academic_source,
             source_retriever=retrieve_academic_source,
             claim_locator=academic_claims.prepare_claim_support,
             claim_assessor=assess_academic_claim,
             methodological_assessor=assess_academic_methodology,
+        )
+
+    def draft_assessor(draft, *, local_guidance):
+        return academic_orchestrator.assess_academic_draft(
+            draft,
+            local_guidance=local_guidance,
+            source_discoverer=discover_academic_source,
+            source_retriever=retrieve_academic_source,
+            claim_locator=academic_claims.prepare_claim_support,
+            claim_assessor=assess_academic_claim,
+            methodological_assessor=assess_academic_methodology,
+        )
+
+    try:
+        result = await asyncio.to_thread(
+            academic_reconciliation_orchestrator.run_academic_reconciliation,
+            model,
+            tokenizer,
+            question,
+            first_stage_runner=first_stage_runner,
+            correction_extractor=(
+                academic_reconciliation.extract_academic_corrections
+            ),
+            revision_generator=academic_reconciliation.revise_academic_draft,
+            draft_assessor=draft_assessor,
         )
     except academic_chat.AcademicDraftError as exc:
         return JSONResponse(
@@ -711,7 +743,7 @@ async def academic_chat_first_stage(request: dict):
             status_code=502,
         )
 
-    return result.to_dict()
+    return result.final.to_dict()
 
 
 # ---------------------------------------------------------------------------

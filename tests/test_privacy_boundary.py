@@ -50,7 +50,7 @@ print("\n[enforced Academic Chat boundary]")
 
 check(
     "server documents that the complete question is local-only",
-    "The complete question is passed only to the local model." in SERVER,
+    "The complete question is used only by the local first stage." in SERVER,
 )
 
 check(

@@ -48,7 +48,7 @@ class FakeResult:
 
 
 original_ensure_model = server.ensure_model
-original_orchestrator = server.academic_orchestrator.run_academic_first_stage
+original_orchestrator = server.academic_reconciliation_orchestrator.run_academic_reconciliation
 
 ensure_calls = []
 orchestrator_calls = []
@@ -65,30 +65,32 @@ def fake_orchestrator(
     tokenizer,
     question,
     *,
-    source_discoverer=None,
-    source_retriever=None,
-    claim_locator=None,
-    claim_assessor=None,
-    methodological_assessor=None,
+    first_stage_runner=None,
+    correction_extractor=None,
+    revision_generator=None,
+    draft_assessor=None,
 ):
     orchestrator_calls.append(
         {
             "model": model,
             "tokenizer": tokenizer,
             "question": question,
-            "source_discoverer": source_discoverer,
-            "source_retriever": source_retriever,
-            "claim_locator": claim_locator,
-            "claim_assessor": claim_assessor,
-            "methodological_assessor": methodological_assessor,
+            "first_stage_runner": first_stage_runner,
+            "correction_extractor": correction_extractor,
+            "revision_generator": revision_generator,
+            "draft_assessor": draft_assessor,
         }
     )
-    return FakeResult()
+
+    class FakeLifecycleResult:
+        final = FakeResult()
+
+    return FakeLifecycleResult()
 
 
 try:
     server.ensure_model = fake_ensure_model
-    server.academic_orchestrator.run_academic_first_stage = fake_orchestrator
+    server.academic_reconciliation_orchestrator.run_academic_reconciliation = fake_orchestrator
 
     print("\n[1] valid request uses combined orchestrator")
 
@@ -125,30 +127,25 @@ try:
     )
 
     check(
-        callable(orchestrator_calls[0]["source_discoverer"]),
-        "production endpoint supplies a source discoverer",
+        callable(orchestrator_calls[0]["first_stage_runner"]),
+        "production endpoint supplies the first-stage runner",
     )
 
     check(
-        callable(orchestrator_calls[0]["source_retriever"]),
-        "production endpoint supplies a substantive source retriever",
+        orchestrator_calls[0]["correction_extractor"]
+        is server.academic_reconciliation.extract_academic_corrections,
+        "production endpoint supplies bounded correction extraction",
     )
 
     check(
-        orchestrator_calls[0]["claim_locator"]
-        is academic_claims.prepare_claim_support,
-        "production endpoint supplies the local claim locator",
+        orchestrator_calls[0]["revision_generator"]
+        is server.academic_reconciliation.revise_academic_draft,
+        "production endpoint supplies bounded local revision",
     )
 
     check(
-        callable(orchestrator_calls[0]["claim_assessor"]),
-        "production endpoint supplies a local semantic claim assessor",
-    )
-
-    check(
-        orchestrator_calls[0]["methodological_assessor"]
-        is server.assess_academic_methodology,
-        "production endpoint supplies the local methodological assessor",
+        callable(orchestrator_calls[0]["draft_assessor"]),
+        "production endpoint supplies fresh revised-draft assessment",
     )
 
     check(
@@ -171,6 +168,180 @@ try:
         response["answer_draft"] == "Synthetic provisional answer.",
         "blocked draft remains available through endpoint for auditability",
     )
+
+
+    print("\n[1b] endpoint lifecycle closures preserve production checking")
+
+    original_first_stage = server.academic_orchestrator.run_academic_first_stage
+    original_assess_draft = server.academic_orchestrator.assess_academic_draft
+
+    first_stage_calls = []
+    reassessment_calls = []
+
+    first_stage_sentinel = object()
+    reassessment_sentinel = object()
+    revised_draft_sentinel = object()
+    guidance_sentinel = object()
+
+    def capture_first_stage(
+        model,
+        tokenizer,
+        question,
+        **kwargs,
+    ):
+        first_stage_calls.append(
+            {
+                "model": model,
+                "tokenizer": tokenizer,
+                "question": question,
+                "kwargs": kwargs,
+            }
+        )
+        return first_stage_sentinel
+
+    def capture_reassessment(
+        draft,
+        *,
+        local_guidance,
+        **kwargs,
+    ):
+        reassessment_calls.append(
+            {
+                "draft": draft,
+                "local_guidance": local_guidance,
+                "kwargs": kwargs,
+            }
+        )
+        return reassessment_sentinel
+
+    try:
+        server.academic_orchestrator.run_academic_first_stage = (
+            capture_first_stage
+        )
+        server.academic_orchestrator.assess_academic_draft = (
+            capture_reassessment
+        )
+
+        supplied_first_stage = orchestrator_calls[0]["first_stage_runner"]
+        supplied_reassessment = orchestrator_calls[0]["draft_assessor"]
+
+        first_stage_value = supplied_first_stage(
+            "MODEL-2",
+            "TOKENIZER-2",
+            "CONFIDENTIAL QUESTION",
+        )
+
+        reassessment_value = supplied_reassessment(
+            revised_draft_sentinel,
+            local_guidance=guidance_sentinel,
+        )
+
+        check(
+            first_stage_value is first_stage_sentinel,
+            "first-stage closure delegates to ordinary production orchestration",
+        )
+
+        check(
+            first_stage_calls
+            and first_stage_calls[0]["question"]
+            == "CONFIDENTIAL QUESTION",
+            "complete question enters only the first-stage closure",
+        )
+
+        first_kwargs = first_stage_calls[0]["kwargs"]
+
+        check(
+            first_kwargs["source_discoverer"]
+            is server.discover_academic_source,
+            "first stage receives production source discovery",
+        )
+
+        check(
+            first_kwargs["source_retriever"]
+            is server.retrieve_academic_source,
+            "first stage receives production substantive retrieval",
+        )
+
+        check(
+            first_kwargs["claim_locator"]
+            is academic_claims.prepare_claim_support,
+            "first stage receives production claim location",
+        )
+
+        check(
+            first_kwargs["claim_assessor"]
+            is server.assess_academic_claim,
+            "first stage receives production semantic assessment",
+        )
+
+        check(
+            first_kwargs["methodological_assessor"]
+            is server.assess_academic_methodology,
+            "first stage receives production methodological assessment",
+        )
+
+        check(
+            reassessment_value is reassessment_sentinel,
+            "reassessment closure delegates to ordinary draft assessment",
+        )
+
+        check(
+            reassessment_calls
+            and reassessment_calls[0]["draft"]
+            is revised_draft_sentinel,
+            "reassessment receives only the revised AcademicDraft",
+        )
+
+        check(
+            reassessment_calls[0]["local_guidance"]
+            is guidance_sentinel,
+            "reassessment receives retained local guidance",
+        )
+
+        reassess_kwargs = reassessment_calls[0]["kwargs"]
+
+        check(
+            reassess_kwargs["source_discoverer"]
+            is server.discover_academic_source,
+            "reassessment repeats production source discovery",
+        )
+
+        check(
+            reassess_kwargs["source_retriever"]
+            is server.retrieve_academic_source,
+            "reassessment repeats production substantive retrieval",
+        )
+
+        check(
+            reassess_kwargs["claim_locator"]
+            is academic_claims.prepare_claim_support,
+            "reassessment repeats production claim location",
+        )
+
+        check(
+            reassess_kwargs["claim_assessor"]
+            is server.assess_academic_claim,
+            "reassessment repeats production semantic assessment",
+        )
+
+        check(
+            reassess_kwargs["methodological_assessor"]
+            is server.assess_academic_methodology,
+            "reassessment repeats production methodological assessment",
+        )
+
+        check(
+            "question" not in reassess_kwargs,
+            "original question is absent from revised-draft reassessment",
+        )
+
+    finally:
+        server.academic_orchestrator.run_academic_first_stage = (
+            original_first_stage
+        )
+        server.academic_orchestrator.assess_academic_draft = (
+            original_assess_draft
+        )
 
 
     print("\n[2] unexpected fields are rejected before model use")
@@ -240,7 +411,7 @@ try:
     def malformed_orchestrator(model, tokenizer, question, **kwargs):
         raise academic_chat.AcademicDraftError("synthetic malformed output")
 
-    server.academic_orchestrator.run_academic_first_stage = malformed_orchestrator
+    server.academic_reconciliation_orchestrator.run_academic_reconciliation = malformed_orchestrator
 
     response = asyncio.run(
         server.academic_chat_first_stage({"question": "Test"})
@@ -264,7 +435,7 @@ try:
     def backend_failure(model, tokenizer, question, **kwargs):
         raise llm_backend.BackendError("synthetic backend failure")
 
-    server.academic_orchestrator.run_academic_first_stage = backend_failure
+    server.academic_reconciliation_orchestrator.run_academic_reconciliation = backend_failure
 
     response = asyncio.run(
         server.academic_chat_first_stage({"question": "Test"})
@@ -288,7 +459,7 @@ try:
     def reference_failure(model, tokenizer, question, **kwargs):
         raise RuntimeError("synthetic Crossref/OpenAlex failure")
 
-    server.academic_orchestrator.run_academic_first_stage = reference_failure
+    server.academic_reconciliation_orchestrator.run_academic_reconciliation = reference_failure
 
     response = asyncio.run(
         server.academic_chat_first_stage({"question": "Test"})
@@ -506,7 +677,7 @@ try:
 
 finally:
     server.ensure_model = original_ensure_model
-    server.academic_orchestrator.run_academic_first_stage = original_orchestrator
+    server.academic_reconciliation_orchestrator.run_academic_reconciliation = original_orchestrator
 
 
 if fails:

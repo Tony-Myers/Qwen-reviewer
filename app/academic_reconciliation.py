@@ -76,6 +76,14 @@ class AcademicCorrectionSet:
     methodological: list[MethodologicalCorrection]
     source: list[SourceCorrection]
 
+    def is_empty(self) -> bool:
+        """Return whether independent checking established no corrections."""
+        return not (
+            self.technical
+            or self.methodological
+            or self.source
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "technical": [

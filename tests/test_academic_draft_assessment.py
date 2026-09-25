@@ -81,6 +81,61 @@ if hasattr(academic_orchestrator, "assess_academic_draft"):
     )
 
 
+print("\n[original AcademicDraft retention]")
+
+retained_draft = academic_chat.AcademicDraft(
+    answer_draft="Retained original answer.",
+    references=[],
+    source_claims=[],
+    technical_claims=[],
+)
+
+retained_guidance = academic_orchestrator.LocalGuidanceResult(
+    passages=[]
+)
+
+retained_result = academic_orchestrator.assess_academic_draft(
+    retained_draft,
+    local_guidance=retained_guidance,
+)
+
+check(
+    retained_result.draft is retained_draft,
+    "assessment retains exact original AcademicDraft object",
+)
+
+check(
+    retained_result.answer_draft == retained_draft.answer_draft,
+    "answer_draft remains available through compatibility property",
+)
+
+retained_payload = retained_result.to_dict()
+
+check(
+    "draft" not in retained_payload,
+    "internal AcademicDraft is not added to serialized API payload",
+)
+
+check(
+    retained_payload["answer_draft"] == retained_draft.answer_draft,
+    "serialized answer_draft remains unchanged",
+)
+
+expected_payload_keys = {
+    "answer_draft",
+    "local_guidance",
+    "references",
+    "source_claims",
+    "technical_claims",
+    "release",
+}
+
+check(
+    set(retained_payload) == expected_payload_keys,
+    "first-stage serialized API shape remains unchanged",
+)
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
