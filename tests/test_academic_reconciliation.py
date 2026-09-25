@@ -1,4 +1,5 @@
 from pathlib import Path
+import inspect
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
@@ -324,8 +325,169 @@ check(
 )
 
 
+print("\n[bounded academic revision prompt]")
+
+original_draft = academic_chat.AcademicDraft(
+    answer_draft=(
+        "Most of this answer is correct and should remain unchanged. "
+        "For a skewed posterior, the HDI is necessarily narrower than the ETI."
+    ),
+    references=[
+        academic_chat.AcademicReference(
+            title="Synthetic Bayesian Reference",
+            author="Example Author",
+            year=2024,
+            venue="Example Journal",
+            doi="10.0000/example",
+        )
+    ],
+    source_claims=[
+        academic_chat.SourceClaim(
+            claim="The study reported a large effect.",
+            reference_index=0,
+        )
+    ],
+    technical_claims=[
+        methodological_claim,
+        technical_claim,
+    ],
+)
+
+revision_corrections = academic_reconciliation.AcademicCorrectionSet(
+    technical=[
+        academic_reconciliation.TechnicalCorrection(
+            claim=technical_claim,
+            canonical_claim="RE = 1 / (1 + lambda/M)",
+        )
+    ],
+    methodological=[
+        academic_reconciliation.MethodologicalCorrection(
+            claim=methodological_claim,
+            passages=[passage],
+        )
+    ],
+    source=[
+        academic_reconciliation.SourceCorrection(
+            claim=source_claim.claim,
+            evidence=[evidence],
+        )
+    ],
+)
+
+build_revision_prompt = getattr(
+    academic_reconciliation,
+    "build_academic_revision_prompt",
+    None,
+)
+
+check(
+    callable(build_revision_prompt),
+    "bounded academic revision prompt builder exists",
+)
+
+if callable(build_revision_prompt):
+    signature = inspect.signature(build_revision_prompt)
+
+    check(
+        list(signature.parameters) == [
+            "original_draft",
+            "corrections",
+        ],
+        "revision prompt accepts only the draft and bounded corrections",
+    )
+    check(
+        "question" not in signature.parameters,
+        "original user question cannot enter through the revision prompt API",
+    )
+
+    check(
+        academic_chat.ACADEMIC_DRAFT_RESPONSE_FORMAT["json_schema"]["name"]
+        == "academic_draft",
+        "revision can reuse the existing AcademicDraft response contract",
+    )
+
+    revision_prompt = build_revision_prompt(
+        original_draft,
+        revision_corrections,
+    )
+
+    check(
+        original_draft.answer_draft in revision_prompt,
+        "revision prompt contains the original answer draft",
+    )
+    check(
+        "Synthetic Bayesian Reference" in revision_prompt,
+        "revision prompt contains original structured references",
+    )
+    check(
+        "The study reported a large effect." in revision_prompt,
+        "revision prompt contains original structured source claims",
+    )
+    check(
+        methodological_claim.statement in revision_prompt
+        and technical_claim.statement in revision_prompt,
+        "revision prompt contains original structured technical claims",
+    )
+
+    check(
+        "RE = 1 / (1 + lambda/M)" in revision_prompt,
+        "revision prompt contains canonical deterministic correction",
+    )
+    check(
+        passage.text in revision_prompt,
+        "revision prompt contains methodological correction guidance",
+    )
+    check(
+        evidence.text in revision_prompt,
+        "revision prompt contains source contradiction evidence",
+    )
+
+    check(
+        "preserve" in revision_prompt.lower()
+        and "unaffected" in revision_prompt.lower(),
+        "revision prompt instructs preservation of unaffected material",
+    )
+    check(
+        "complete" in revision_prompt.lower()
+        and "academicdraft" in revision_prompt.lower().replace(" ", ""),
+        "revision prompt requires a complete AcademicDraft",
+    )
+    check(
+        "all supplied corrections" in revision_prompt.lower()
+        or "every supplied correction" in revision_prompt.lower(),
+        "revision prompt requires every supplied correction to be addressed",
+    )
+    check(
+        "do not decide whether" in revision_prompt.lower()
+        or "do not reassess" in revision_prompt.lower(),
+        "revision prompt forbids reassessing checker findings",
+    )
+    check(
+        "do not invent" in revision_prompt.lower(),
+        "revision prompt forbids invented evidence",
+    )
+
+    forbidden = [
+        "MODEL MUST NOT RECEIVE THIS TECHNICAL AUDIT REASON",
+        "MODEL MUST NOT RECEIVE THIS METHODOLOGY ASSESSOR REASON",
+        "MODEL MUST NOT RECEIVE THIS SOURCE ASSESSOR REASON",
+    ]
+
+    check(
+        not any(item in revision_prompt for item in forbidden),
+        "revision prompt contains no checker or assessor audit reasons",
+    )
+
+    check(
+        "safe_to_present" not in revision_prompt
+        and "blocked_methodological_conflict" not in revision_prompt
+        and "blocked_source_contradiction" not in revision_prompt,
+        "revision prompt contains no release or audit status",
+    )
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
 
-print("\nAll academic reconciliation boundary checks passed.")
+print("\nAll bounded academic revision prompt checks passed.")

@@ -9,6 +9,7 @@ of verification/support as a correction requirement.
 """
 
 from dataclasses import dataclass
+import json
 from typing import Any
 
 import academic_chat
@@ -153,3 +154,53 @@ def extract_academic_corrections(
         methodological=methodological,
         source=source,
     )
+
+
+def build_academic_revision_prompt(
+    original_draft: academic_chat.AcademicDraft,
+    corrections: AcademicCorrectionSet,
+) -> str:
+    """Build the bounded prompt for revising one checked AcademicDraft.
+
+    The revision model receives the structured draft and only the correction
+    material extracted from independently established blockers. It does not
+    receive the original user question, release state, or checker audit
+    reasons.
+    """
+    draft_json = json.dumps(
+        original_draft.to_dict(),
+        ensure_ascii=False,
+        indent=2,
+    )
+    corrections_json = json.dumps(
+        corrections.to_dict(),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+    return f"""Revise the AcademicDraft below using the supplied corrections.
+
+The supplied corrections have already been established by independent checking.
+Do not decide whether they are correct and do not reassess the checker findings.
+Address every supplied correction.
+
+Preserve unaffected content, qualifications, references, source claims, and
+technical claims where they remain appropriate. Change or remove structured
+items when necessary so that the revised answer_draft, references,
+source_claims, and technical_claims remain internally consistent with one
+another.
+
+Use only the original AcademicDraft and the supplied correction material for
+this revision. Do not invent evidence, bibliographic details, verification
+results, or methodological guidance.
+
+Return a complete revised AcademicDraft, not a patch, commentary, explanation
+of changes, or verification decision. The revised draft will be independently
+checked again before it can be presented.
+
+ORIGINAL ACADEMICDRAFT:
+{draft_json}
+
+SUPPLIED CORRECTIONS:
+{corrections_json}
+"""
