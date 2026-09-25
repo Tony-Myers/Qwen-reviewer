@@ -4,8 +4,10 @@ Bounded correction extraction for Academic Chat reconciliation.
 This module converts independently established blocking findings into the
 minimum application-owned material needed for a later revision attempt.
 
-It does not generate revised text, reassess checker findings, or treat absence
-of verification/support as a correction requirement.
+It does not reassess checker findings or treat absence of
+verification/support as a correction requirement. Revision generation is
+bounded by the extracted correction material and returns the same AcademicDraft
+contract used by first-pass generation.
 """
 
 from dataclasses import dataclass
@@ -17,6 +19,7 @@ import academic_claims
 import academic_methodology
 import academic_orchestrator
 import academic_technical
+import llm_backend
 import reviewer_notes
 
 
@@ -204,3 +207,66 @@ ORIGINAL ACADEMICDRAFT:
 SUPPLIED CORRECTIONS:
 {corrections_json}
 """
+
+
+ACADEMIC_REVISION_SYSTEM_PROMPT = """\
+You are the bounded revision component of Academic Chat.
+
+Revise only from the original AcademicDraft and correction material supplied
+in the user message. The supplied corrections have already been established by
+independent checking; do not reassess whether they are correct.
+
+Return exactly one complete revised AcademicDraft JSON object and no
+explanatory text outside it. Do not add verification status, release status,
+checker commentary, or other fields outside the AcademicDraft contract.
+"""
+
+
+def revise_academic_draft(
+    model: Any,
+    tokenizer: Any,
+    original_draft: academic_chat.AcademicDraft,
+    corrections: AcademicCorrectionSet,
+    *,
+    max_tokens: int = 2400,
+) -> academic_chat.AcademicDraft:
+    """Generate one bounded revision as an ordinary AcademicDraft.
+
+    The original user question is deliberately absent from this interface.
+    The resulting draft has no inherited verification or release status and
+    must be independently assessed before presentation.
+    """
+    user_content = build_academic_revision_prompt(
+        original_draft,
+        corrections,
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": ACADEMIC_REVISION_SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": user_content,
+        },
+    ]
+
+    sampler = llm_backend.make_sampler(
+        temp=0.1,
+        top_p=0.8,
+        top_k=20,
+        response_format=academic_chat.ACADEMIC_DRAFT_RESPONSE_FORMAT,
+    )
+
+    with llm_backend.thinking(False):
+        raw = llm_backend.generate(
+            model,
+            tokenizer,
+            messages,
+            max_tokens=max_tokens,
+            sampler=sampler,
+            verbose=False,
+        )
+
+    return academic_chat.parse_academic_draft(raw)

@@ -1,5 +1,6 @@
 from pathlib import Path
 import inspect
+import json
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
@@ -486,8 +487,264 @@ if callable(build_revision_prompt):
     )
 
 
+print("\n[bounded academic revision generation]")
+
+revise_academic_draft = getattr(
+    academic_reconciliation,
+    "revise_academic_draft",
+    None,
+)
+
+check(
+    callable(revise_academic_draft),
+    "bounded academic revision generator exists",
+)
+
+if callable(revise_academic_draft):
+    revision_signature = inspect.signature(revise_academic_draft)
+
+    check(
+        list(revision_signature.parameters) == [
+            "model",
+            "tokenizer",
+            "original_draft",
+            "corrections",
+            "max_tokens",
+        ],
+        "revision generator exposes only bounded revision inputs",
+    )
+    check(
+        "question" not in revision_signature.parameters,
+        "original user question cannot enter revision generator API",
+    )
+
+    original_generate = academic_reconciliation.llm_backend.generate
+    original_make_sampler = academic_reconciliation.llm_backend.make_sampler
+    original_thinking = academic_reconciliation.llm_backend.thinking
+    original_prompt_builder = (
+        academic_reconciliation.build_academic_revision_prompt
+    )
+    original_parser = academic_chat.parse_academic_draft
+
+    revision_calls = []
+    sampler_calls = []
+    thinking_calls = []
+    prompt_builder_calls = []
+    parser_calls = []
+
+    class RevisionFakeThinking:
+        def __init__(self, enabled):
+            self.enabled = enabled
+
+        def __enter__(self):
+            thinking_calls.append(("enter", self.enabled))
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            thinking_calls.append(("exit", self.enabled))
+            return False
+
+    def revision_fake_thinking(enabled):
+        return RevisionFakeThinking(enabled)
+
+    def revision_fake_sampler(**kwargs):
+        sampler_calls.append(kwargs)
+        return {"revision_sampler": kwargs}
+
+    def revision_fake_prompt_builder(draft, supplied_corrections):
+        prompt_builder_calls.append((draft, supplied_corrections))
+        return "BOUNDED REVISION PROMPT SENTINEL"
+
+    revised_payload = {
+        "answer_draft": "Corrected academic answer.",
+        "references": [],
+        "source_claims": [],
+        "technical_claims": [],
+    }
+    revised_raw = json.dumps(revised_payload)
+
+    def revision_fake_generate(
+        model,
+        tokenizer,
+        prompt=None,
+        **kwargs,
+    ):
+        revision_calls.append(
+            {
+                "model": model,
+                "tokenizer": tokenizer,
+                "prompt": prompt,
+                "kwargs": kwargs,
+            }
+        )
+        return revised_raw
+
+    def revision_tracking_parser(raw):
+        parser_calls.append(raw)
+        return original_parser(raw)
+
+    try:
+        academic_reconciliation.llm_backend.generate = revision_fake_generate
+        academic_reconciliation.llm_backend.make_sampler = revision_fake_sampler
+        academic_reconciliation.llm_backend.thinking = revision_fake_thinking
+        academic_reconciliation.build_academic_revision_prompt = (
+            revision_fake_prompt_builder
+        )
+        academic_chat.parse_academic_draft = revision_tracking_parser
+
+        revised_draft = revise_academic_draft(
+            "fake-model",
+            "fake-tokenizer",
+            original_draft,
+            revision_corrections,
+            max_tokens=1700,
+        )
+
+    finally:
+        academic_reconciliation.llm_backend.generate = original_generate
+        academic_reconciliation.llm_backend.make_sampler = original_make_sampler
+        academic_reconciliation.llm_backend.thinking = original_thinking
+        academic_reconciliation.build_academic_revision_prompt = (
+            original_prompt_builder
+        )
+        academic_chat.parse_academic_draft = original_parser
+
+    check(
+        prompt_builder_calls == [
+            (original_draft, revision_corrections)
+        ],
+        "revision generator obtains content from bounded prompt builder",
+    )
+
+    check(
+        len(sampler_calls) == 1
+        and sampler_calls[0].get("temp") == 0.1
+        and sampler_calls[0].get("top_p") == 0.8
+        and sampler_calls[0].get("top_k") == 20,
+        "revision generator uses conservative sampler settings",
+    )
+
+    check(
+        len(sampler_calls) == 1
+        and sampler_calls[0].get("response_format")
+        is academic_chat.ACADEMIC_DRAFT_RESPONSE_FORMAT,
+        "revision generator reuses AcademicDraft response format",
+    )
+
+    check(
+        thinking_calls == [
+            ("enter", False),
+            ("exit", False),
+        ],
+        "revision generation disables model thinking",
+    )
+
+    check(
+        len(revision_calls) == 1,
+        "revision generator calls local backend exactly once",
+    )
+
+    if revision_calls:
+        sent = revision_calls[0]
+
+        check(
+            sent["model"] == "fake-model"
+            and sent["tokenizer"] == "fake-tokenizer",
+            "revision generator uses supplied local model handles",
+        )
+
+        revision_messages = sent["prompt"]
+
+        check(
+            isinstance(revision_messages, list)
+            and len(revision_messages) == 2
+            and revision_messages[0].get("role") == "system"
+            and revision_messages[1].get("role") == "user",
+            "revision generator sends system and user messages",
+        )
+
+        if (
+            isinstance(revision_messages, list)
+            and len(revision_messages) == 2
+        ):
+            check(
+                revision_messages[1].get("content")
+                == "BOUNDED REVISION PROMPT SENTINEL",
+                "only bounded revision prompt is sent as user content",
+            )
+
+        check(
+            sent["kwargs"].get("max_tokens") == 1700,
+            "revision generator honours max_tokens",
+        )
+        check(
+            sent["kwargs"].get("verbose") is False,
+            "revision generator keeps backend output quiet",
+        )
+
+    check(
+        parser_calls == [revised_raw],
+        "revision output is parsed by existing AcademicDraft parser",
+    )
+
+    check(
+        isinstance(revised_draft, academic_chat.AcademicDraft)
+        and revised_draft.answer_draft == "Corrected academic answer."
+        and revised_draft.references == []
+        and revised_draft.source_claims == []
+        and revised_draft.technical_claims == [],
+        "revision generator returns an ordinary AcademicDraft",
+    )
+
+
+print("\n[malformed bounded academic revision output]")
+
+if callable(revise_academic_draft):
+    original_generate = academic_reconciliation.llm_backend.generate
+    original_make_sampler = academic_reconciliation.llm_backend.make_sampler
+    original_thinking = academic_reconciliation.llm_backend.thinking
+
+    def malformed_revision_generate(*args, **kwargs):
+        return '{"answer_draft": "broken"'
+
+    try:
+        academic_reconciliation.llm_backend.generate = (
+            malformed_revision_generate
+        )
+        academic_reconciliation.llm_backend.make_sampler = (
+            lambda **kwargs: {"fake_sampler": kwargs}
+        )
+        academic_reconciliation.llm_backend.thinking = (
+            lambda enabled: RevisionFakeThinking(enabled)
+        )
+
+        try:
+            revise_academic_draft(
+                "fake-model",
+                "fake-tokenizer",
+                original_draft,
+                revision_corrections,
+            )
+        except academic_chat.AcademicDraftError as exc:
+            check(
+                "not valid JSON" in str(exc),
+                "malformed revision output fails through AcademicDraft parser",
+            )
+        else:
+            check(
+                False,
+                "malformed revision output fails through AcademicDraft parser",
+                "Expected AcademicDraftError.",
+            )
+
+    finally:
+        academic_reconciliation.llm_backend.generate = original_generate
+        academic_reconciliation.llm_backend.make_sampler = original_make_sampler
+        academic_reconciliation.llm_backend.thinking = original_thinking
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
 
-print("\nAll bounded academic revision prompt checks passed.")
+print("\nAll academic reconciliation checks passed.")
