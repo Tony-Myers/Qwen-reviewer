@@ -278,13 +278,15 @@ class AcademicReleaseAssessment:
 
 def assess_academic_release(
     technical_claims: list[TechnicalClaimResult],
+    source_claims: list[SourceClaimResult] | None = None,
 ) -> AcademicReleaseAssessment:
     """Assess whether a checked academic draft may be presented.
 
     A recognised deterministic technical conflict blocks release. A material
     conflict with retrieved methodological guidance also blocks release.
-    Absence of deterministic verification or established methodological
-    consistency does not by itself establish that the draft is incorrect.
+    Clear contrary evidence from an assessed source claim blocks release of
+    the unchanged draft. Absence of verification, support, or established
+    methodological consistency does not by itself establish a conflict.
     """
     technical_statuses = [
         claim.verification.status
@@ -294,6 +296,11 @@ def assess_academic_release(
         claim.methodological_consistency.status
         for claim in technical_claims
         if claim.methodological_consistency is not None
+    ]
+    source_statuses = [
+        claim.claim_assessment.status
+        for claim in (source_claims or [])
+        if claim.claim_assessment is not None
     ]
 
     if (
@@ -322,6 +329,16 @@ def assess_academic_release(
             ],
         )
 
+    if "claim_contradicted" in source_statuses:
+        return AcademicReleaseAssessment(
+            status="blocked_source_contradiction",
+            safe_to_present=False,
+            reasons=[
+                "At least one assessed source claim has clear contrary "
+                "evidence in the retrieved source."
+            ],
+        )
+
     if (
         academic_technical.TECHNICAL_STATUS_NOT_VERIFIED
         in technical_statuses
@@ -340,8 +357,8 @@ def assess_academic_release(
         status="release_allowed",
         safe_to_present=True,
         reasons=[
-            "No deterministic technical or methodological conflict "
-            "was identified."
+            "No deterministic technical, methodological, or assessed "
+            "source contradiction was identified."
         ],
     )
 
@@ -608,7 +625,10 @@ def run_academic_first_stage(
             )
         )
 
-    release = assess_academic_release(technical_claims)
+    release = assess_academic_release(
+        technical_claims,
+        source_claims,
+    )
 
     return AcademicFirstStageResult(
         answer_draft=draft.answer_draft,

@@ -1391,7 +1391,7 @@ claim_assessment_calls = []
 def fake_claim_assessor(claim, evidence):
     claim_assessment_calls.append((claim, evidence))
     return academic_claims.ClaimAssessmentResult(
-        status="supported",
+        status="claim_supported",
         claim=claim,
         evidence=evidence,
         reasons=["Synthetic semantic assessment."],
@@ -1430,7 +1430,8 @@ check(
 )
 
 check(
-    assessed_result.source_claims[0].claim_assessment.status == "supported",
+    assessed_result.source_claims[0].claim_assessment.status
+    == "claim_supported",
     "semantic assessment is retained separately from claim location",
 )
 
@@ -1443,13 +1444,71 @@ check(
 assessed_payload = assessed_result.to_dict()["source_claims"][0]
 
 check(
-    assessed_payload["claim_assessment"]["status"] == "supported",
+    assessed_payload["claim_assessment"]["status"]
+    == "claim_supported",
     "semantic assessment status serialises",
 )
 
 check(
     assessed_payload["claim_assessment"]["evidence"][0]["page_number"] == 7,
     "semantic assessment provenance serialises",
+)
+
+
+print("\n[24a] assessed source contradiction blocks unchanged draft")
+
+def contradictory_claim_assessor(claim, evidence):
+    return academic_claims.ClaimAssessmentResult(
+        status="claim_contradicted",
+        claim=claim,
+        evidence=evidence,
+        reasons=[
+            "Synthetic located evidence clearly contradicts the claim."
+        ],
+    )
+
+contradicted_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=eligible_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=fake_eligible_source_discoverer,
+    source_retriever=fake_source_retriever,
+    claim_locator=fake_claim_locator,
+    claim_assessor=contradictory_claim_assessor,
+    methodological_retriever=empty_methodological_retriever,
+)
+
+check(
+    contradicted_result.source_claims[0].claim_assessment.status
+    == "claim_contradicted",
+    "source contradiction survives the complete source-assessment chain",
+)
+
+check(
+    contradicted_result.release.status
+    == "blocked_source_contradiction",
+    "assessed source contradiction reaches the release gate",
+)
+
+check(
+    contradicted_result.release.safe_to_present is False,
+    "source-contradicted draft is not safe to present unchanged",
+)
+
+contradicted_payload = contradicted_result.to_dict()
+
+check(
+    contradicted_payload["release"]["status"]
+    == "blocked_source_contradiction",
+    "source-contradiction release status serialises",
+)
+
+check(
+    contradicted_payload["release"]["safe_to_present"] is False,
+    "source-contradiction presentation block serialises",
 )
 
 blocked_claim_assessment_calls = []

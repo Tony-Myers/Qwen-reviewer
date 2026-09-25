@@ -153,6 +153,85 @@ check(
 )
 
 
+
+
+def source_claim_result(assessment_status):
+    evidence = [
+        __import__("academic_claims").ClaimEvidence(
+            text="Synthetic located evidence.",
+            locator="https://example.invalid/article.pdf",
+            source="synthetic",
+            page_number=1,
+        )
+    ]
+
+    assessment = None
+    if assessment_status is not None:
+        assessment = __import__("academic_claims").ClaimAssessmentResult(
+            status=assessment_status,
+            claim="Synthetic source-backed claim.",
+            evidence=evidence,
+            reasons=["Synthetic source assessment."],
+        )
+
+    return type(
+        "SyntheticSourceClaimResult",
+        (),
+        {"claim_assessment": assessment},
+    )()
+
+
+print("\n[7] source contradiction blocks unchanged draft")
+
+release = academic_orchestrator.assess_academic_release(
+    [],
+    [source_claim_result("claim_contradicted")],
+)
+
+check(
+    release.status == "blocked_source_contradiction",
+    "source contradiction produces its own blocked release status",
+)
+check(
+    release.safe_to_present is False,
+    "source contradiction is not safe to present unchanged",
+)
+
+
+print("\n[8] source non-support does not become contradiction")
+
+for source_status in (
+    "claim_supported",
+    "claim_partially_supported",
+    "claim_not_supported",
+    None,
+):
+    release = academic_orchestrator.assess_academic_release(
+        [],
+        [source_claim_result(source_status)],
+    )
+    check(
+        release.safe_to_present is True,
+        f"{source_status!r} does not block release",
+    )
+
+
+print("\n[9] deterministic conflict retains precedence over source contradiction")
+
+release = academic_orchestrator.assess_academic_release(
+    [claim_result(academic_technical.TECHNICAL_STATUS_CONFLICT)],
+    [source_claim_result("claim_contradicted")],
+)
+
+check(
+    release.status == "blocked_technical_conflict",
+    "deterministic technical conflict retains release precedence",
+)
+check(
+    release.safe_to_present is False,
+    "combined technical and source conflicts remain blocked",
+)
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
