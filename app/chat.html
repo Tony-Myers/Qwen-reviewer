@@ -1110,9 +1110,18 @@ async function sendAcademicMessage() {
       throw new Error((data.error || ('Server error ' + r.status)) + detail);
     }
 
-    answer.innerHTML =
-      '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
-      renderAcademicRelease(data.release);
+    if (data.release?.safe_to_present === false) {
+      answer.innerHTML =
+        '<div style="color:var(--error);">' +
+        '<strong>Answer withheld after checking.</strong> ' +
+        'The generated draft contains a conflict identified during verification. ' +
+        'See the verification details below.' +
+        '</div>';
+    } else {
+      answer.innerHTML =
+        '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
+        renderAcademicRelease(data.release);
+    }
 
     document.getElementById('academicEvidenceContent').innerHTML =
       renderAcademicEvidence(data);
