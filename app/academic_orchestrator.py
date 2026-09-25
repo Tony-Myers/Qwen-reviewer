@@ -392,12 +392,10 @@ class AcademicFirstStageResult:
         }
 
 
-def run_academic_first_stage(
-    model: Any,
-    tokenizer: Any,
-    question: str,
+def assess_academic_draft(
+    draft: academic_chat.AcademicDraft,
     *,
-    draft_generator: Callable[..., academic_chat.AcademicDraft] | None = None,
+    local_guidance: LocalGuidanceResult,
     reference_verifier: Callable[..., AcademicReferenceResult] | None = None,
     technical_verifier: Callable[
         [academic_chat.TechnicalClaim],
@@ -416,49 +414,19 @@ def run_academic_first_stage(
         [str, list[academic_claims.ClaimEvidence]],
         academic_claims.ClaimAssessmentResult,
     ] | None = None,
-    methodological_retriever: Callable[
-        [str], LocalGuidanceResult
-    ] | None = None,
     methodological_assessor: Callable[..., Any] | None = None,
 ) -> AcademicFirstStageResult:
-    """
-    Generate a local academic draft, verify its proposed references and
-    deterministic technical claims, and resolve source-claim proposals to
-    their corresponding verified-reference proposals.
+    """Assess an already-generated AcademicDraft through the release pipeline.
 
-    The full question is passed only to the local draft generator. Reference
-    verification receives only the five bibliographic fields defined by the
-    AcademicReference contract. Source-claim resolution is local and does not
-    establish that a reference supports its associated claim. Technical
-    verification receives only each structured TechnicalClaim.
+    This stage receives neither the original question nor model/tokenizer
+    handles. It operates only on the structured draft, application-owned local
+    guidance, and the explicitly supplied verification components.
     """
-    if draft_generator is None:
-        draft_generator = academic_chat.generate_academic_draft
-
     if reference_verifier is None:
         reference_verifier = verify_academic_reference
 
     if technical_verifier is None:
         technical_verifier = academic_technical.verify_technical_claim
-
-    if methodological_retriever is None:
-        methodological_retriever = retrieve_methodological_context
-
-    local_guidance = methodological_retriever(question)
-
-    if local_guidance.passages:
-        draft = draft_generator(
-            model,
-            tokenizer,
-            question,
-            methodological_context=local_guidance.prompt_text,
-        )
-    else:
-        draft = draft_generator(
-            model,
-            tokenizer,
-            question,
-        )
 
     verified_references = []
 
@@ -637,4 +605,85 @@ def run_academic_first_stage(
         source_claims=source_claims,
         technical_claims=technical_claims,
         release=release,
+    )
+
+
+def run_academic_first_stage(
+    model: Any,
+    tokenizer: Any,
+    question: str,
+    *,
+    draft_generator: Callable[..., academic_chat.AcademicDraft] | None = None,
+    reference_verifier: Callable[..., AcademicReferenceResult] | None = None,
+    technical_verifier: Callable[
+        [academic_chat.TechnicalClaim],
+        academic_technical.TechnicalVerification,
+    ] | None = None,
+    source_discoverer: Callable[[str], Any] | None = None,
+    source_retriever: Callable[
+        [academic_claims.SourceLocation],
+        academic_claims.RetrievedSource,
+    ] | None = None,
+    claim_locator: Callable[
+        [academic_claims.RetrievedSource, str],
+        academic_claims.ClaimSupportResult,
+    ] | None = None,
+    claim_assessor: Callable[
+        [str, list[academic_claims.ClaimEvidence]],
+        academic_claims.ClaimAssessmentResult,
+    ] | None = None,
+    methodological_retriever: Callable[
+        [str], LocalGuidanceResult
+    ] | None = None,
+    methodological_assessor: Callable[..., Any] | None = None,
+) -> AcademicFirstStageResult:
+    """
+    Generate a local academic draft, verify its proposed references and
+    deterministic technical claims, and resolve source-claim proposals to
+    their corresponding verified-reference proposals.
+
+    The full question is passed only to the local draft generator. Reference
+    verification receives only the five bibliographic fields defined by the
+    AcademicReference contract. Source-claim resolution is local and does not
+    establish that a reference supports its associated claim. Technical
+    verification receives only each structured TechnicalClaim.
+    """
+    if draft_generator is None:
+        draft_generator = academic_chat.generate_academic_draft
+
+    if reference_verifier is None:
+        reference_verifier = verify_academic_reference
+
+    if technical_verifier is None:
+        technical_verifier = academic_technical.verify_technical_claim
+
+    if methodological_retriever is None:
+        methodological_retriever = retrieve_methodological_context
+
+    local_guidance = methodological_retriever(question)
+
+    if local_guidance.passages:
+        draft = draft_generator(
+            model,
+            tokenizer,
+            question,
+            methodological_context=local_guidance.prompt_text,
+        )
+    else:
+        draft = draft_generator(
+            model,
+            tokenizer,
+            question,
+        )
+
+    return assess_academic_draft(
+        draft,
+        local_guidance=local_guidance,
+        reference_verifier=reference_verifier,
+        technical_verifier=technical_verifier,
+        source_discoverer=source_discoverer,
+        source_retriever=source_retriever,
+        claim_locator=claim_locator,
+        claim_assessor=claim_assessor,
+        methodological_assessor=methodological_assessor,
     )
