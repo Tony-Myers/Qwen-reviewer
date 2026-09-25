@@ -142,6 +142,46 @@ for question in ["how sensitive are the results to the prior for heterogeneity",
     check(f"no meta section leads {question[:40]!r}",
           bool(hits) and not rn.is_meta(hits[0].note, hits[0].heading))
 
+print("section sibling expansion")
+# Long headed sections are split at CHUNK_CHARS and ranked as separate
+# passages. Once one chunk is retrieved for downstream methodological use,
+# recover the rest of that headed section so an arbitrary chunk boundary
+# cannot hide relevant guidance.
+eti_hdi = index.search(
+    "What is the difference between a 95% ETI and a 95% HDI?",
+    k=3,
+)
+eti_hdi_expanded = rn.expand_section_siblings(eti_hdi, index.passages)
+
+check("headed section expansion recovers the split ETI/HDI sibling",
+      len(eti_hdi_expanded) == len(eti_hdi) + 1)
+
+check("expanded ETI/HDI section contains the skewness warning",
+      any("should not be assumed to be narrower than an eti"
+          in p.text.lower()
+          for p in eti_hdi_expanded))
+
+target_heading = "Are all 95% credible intervals the same?"
+target_chunks = [
+    p for p in eti_hdi_expanded
+    if p.heading == target_heading
+]
+check("sibling chunks remain together in corpus order",
+      len(target_chunks) == 2
+      and target_chunks[0].text.startswith("##### Are all 95%")
+      and target_chunks[1].text.startswith("ct is positive"))
+
+# Headingless fixed-size chunks are not semantic Markdown sections. Expanding
+# one BARG fallback chunk must therefore not pull in the entire long note.
+barg = next(
+    p for p in index.passages
+    if p.note == "Key reporting points for the BARG" and not p.heading
+)
+barg_expanded = rn.expand_section_siblings([barg], index.passages)
+check("headingless fallback chunks are not expanded",
+      len(barg_expanded) == 1
+      and barg_expanded[0].text == barg.text)
+
 print("presentation")
 passages = index.search("what convergence diagnostics should be reported", k=2)
 rendered = rn.format_passages(passages)

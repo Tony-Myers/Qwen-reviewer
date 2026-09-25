@@ -69,6 +69,7 @@ def fake_orchestrator(
     source_retriever=None,
     claim_locator=None,
     claim_assessor=None,
+    methodological_assessor=None,
 ):
     orchestrator_calls.append(
         {
@@ -79,6 +80,7 @@ def fake_orchestrator(
             "source_retriever": source_retriever,
             "claim_locator": claim_locator,
             "claim_assessor": claim_assessor,
+            "methodological_assessor": methodological_assessor,
         }
     )
     return FakeResult()
@@ -141,6 +143,12 @@ try:
     check(
         callable(orchestrator_calls[0]["claim_assessor"]),
         "production endpoint supplies a local semantic claim assessor",
+    )
+
+    check(
+        orchestrator_calls[0]["methodological_assessor"]
+        is server.assess_academic_methodology,
+        "production endpoint supplies the local methodological assessor",
     )
 
     check(

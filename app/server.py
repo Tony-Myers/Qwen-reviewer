@@ -632,6 +632,16 @@ def assess_academic_claim(
     )
 
 
+def assess_academic_methodology(*, prompt, schema):
+    """Assess methodological consistency using the configured local model."""
+    return academic_claim_assessor.generate_claim_assessor_output(
+        model,
+        tokenizer,
+        prompt,
+        schema,
+    )
+
+
 # ---------------------------------------------------------------------------
 # POST /api/chat/academic
 # First-stage Academic Chat orchestration.
@@ -674,6 +684,7 @@ async def academic_chat_first_stage(request: dict):
             source_retriever=retrieve_academic_source,
             claim_locator=academic_claims.prepare_claim_support,
             claim_assessor=assess_academic_claim,
+            methodological_assessor=assess_academic_methodology,
         )
     except academic_chat.AcademicDraftError as exc:
         return JSONResponse(

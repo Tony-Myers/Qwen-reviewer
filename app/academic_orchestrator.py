@@ -22,6 +22,7 @@ from typing import Any, Callable
 
 import academic_chat
 import academic_claims
+import academic_methodology
 import academic_technical
 import reviewer_notes
 from academic_tools import AcademicReferenceResult, verify_academic_reference
@@ -70,9 +71,13 @@ def retrieve_methodological_context(
             _methodological_notes_index = reviewer_notes.NotesIndex()
         index = _methodological_notes_index
 
-    return LocalGuidanceResult(
-        passages=index.search(question, k=k)
+    anchors = index.search(question, k=k)
+    passages = reviewer_notes.expand_section_siblings(
+        anchors,
+        index.passages,
     )
+
+    return LocalGuidanceResult(passages=passages)
 
 
 def _normalise_retrieval_doi(doi: str | None) -> str | None:
@@ -241,11 +246,19 @@ class SourceClaimResult:
 class TechnicalClaimResult:
     claim: academic_chat.TechnicalClaim
     verification: academic_technical.TechnicalVerification
+    methodological_consistency: (
+        academic_methodology.MethodologicalConsistencyResult | None
+    ) = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "claim": self.claim.to_dict(),
             "verification": self.verification.to_dict(),
+            "methodological_consistency": (
+                self.methodological_consistency.to_dict()
+                if self.methodological_consistency is not None
+                else None
+            ),
         }
 
 
@@ -266,18 +279,27 @@ class AcademicReleaseAssessment:
 def assess_academic_release(
     technical_claims: list[TechnicalClaimResult],
 ) -> AcademicReleaseAssessment:
-    """Assess whether a technically checked draft may be presented.
+    """Assess whether a checked academic draft may be presented.
 
-    A recognised deterministic technical conflict blocks release.
-    Claims outside deterministic verifier coverage remain visible but do not
-    by themselves establish that the draft is incorrect.
+    A recognised deterministic technical conflict blocks release. A material
+    conflict with retrieved methodological guidance also blocks release.
+    Absence of deterministic verification or established methodological
+    consistency does not by itself establish that the draft is incorrect.
     """
-    statuses = [
+    technical_statuses = [
         claim.verification.status
         for claim in technical_claims
     ]
+    methodological_statuses = [
+        claim.methodological_consistency.status
+        for claim in technical_claims
+        if claim.methodological_consistency is not None
+    ]
 
-    if academic_technical.TECHNICAL_STATUS_CONFLICT in statuses:
+    if (
+        academic_technical.TECHNICAL_STATUS_CONFLICT
+        in technical_statuses
+    ):
         return AcademicReleaseAssessment(
             status="blocked_technical_conflict",
             safe_to_present=False,
@@ -287,7 +309,23 @@ def assess_academic_release(
             ],
         )
 
-    if academic_technical.TECHNICAL_STATUS_NOT_VERIFIED in statuses:
+    if (
+        academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
+        in methodological_statuses
+    ):
+        return AcademicReleaseAssessment(
+            status="blocked_methodological_conflict",
+            safe_to_present=False,
+            reasons=[
+                "At least one structured technical claim materially "
+                "conflicts with retrieved methodological guidance."
+            ],
+        )
+
+    if (
+        academic_technical.TECHNICAL_STATUS_NOT_VERIFIED
+        in technical_statuses
+    ):
         return AcademicReleaseAssessment(
             status="release_allowed_with_unverified_claims",
             safe_to_present=True,
@@ -302,7 +340,8 @@ def assess_academic_release(
         status="release_allowed",
         safe_to_present=True,
         reasons=[
-            "No deterministic technical conflict was identified."
+            "No deterministic technical or methodological conflict "
+            "was identified."
         ],
     )
 
@@ -363,6 +402,7 @@ def run_academic_first_stage(
     methodological_retriever: Callable[
         [str], LocalGuidanceResult
     ] | None = None,
+    methodological_assessor: Callable[..., Any] | None = None,
 ) -> AcademicFirstStageResult:
     """
     Generate a local academic draft, verify its proposed references and
@@ -546,11 +586,25 @@ def run_academic_first_stage(
 
     for claim in draft.technical_claims:
         verification = technical_verifier(claim)
+        methodological_consistency = None
+
+        if (
+            local_guidance.passages
+            and methodological_assessor is not None
+        ):
+            methodological_consistency = (
+                academic_methodology.assess_methodological_consistency(
+                    claim=claim,
+                    passages=local_guidance.passages,
+                    assessor=methodological_assessor,
+                )
+            )
 
         technical_claims.append(
             TechnicalClaimResult(
                 claim=claim,
                 verification=verification,
+                methodological_consistency=methodological_consistency,
             )
         )
 

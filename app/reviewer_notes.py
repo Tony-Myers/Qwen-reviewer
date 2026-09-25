@@ -290,6 +290,56 @@ class NotesIndex:
         return out
 
 
+def expand_section_siblings(
+    passages: List[Passage],
+    corpus: List[Passage],
+) -> List[Passage]:
+    """Recover sibling chunks for retrieved headed sections.
+
+    Long Markdown sections may be split into several passages at CHUNK_CHARS.
+    Retrieval ranks those chunks independently. For downstream methodological
+    use, recover the remaining chunks of any retrieved headed section so an
+    arbitrary chunk boundary does not hide relevant guidance.
+
+    Headingless passages are not expanded because they may be fixed-size
+    fallback chunks from an otherwise unstructured note rather than parts of
+    one semantic section.
+    """
+    if not passages:
+        return []
+
+    wanted = {
+        (p.note, p.heading)
+        for p in passages
+        if p.heading
+    }
+
+    siblings: Dict[Tuple[str, str], List[Passage]] = {}
+    for p in corpus:
+        key = (p.note, p.heading)
+        if p.heading and key in wanted:
+            siblings.setdefault(key, []).append(p)
+
+    out: List[Passage] = []
+    seen = set()
+
+    for anchor in passages:
+        key = (anchor.note, anchor.heading)
+        candidates = siblings.get(key, [anchor]) if anchor.heading else [anchor]
+
+        for p in candidates:
+            identity = (p.note, p.heading, p.text)
+            if identity in seen:
+                continue
+            seen.add(identity)
+
+            score = anchor.score if p.text == anchor.text else 0.0
+            out.append(Passage(p.note, p.heading, p.text, score))
+
+    return out
+
+
+
 # ---------------------------------------------------------------------------
 # Presentation
 # ---------------------------------------------------------------------------

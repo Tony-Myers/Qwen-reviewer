@@ -34,6 +34,38 @@ def check(condition, message):
         fails.append(message)
 
 
+print("\n[0] methodological retrieval recovers split headed sections")
+
+methodological_context = (
+    academic_orchestrator.retrieve_methodological_context(
+        "What is the difference between a 95% ETI and a 95% HDI?",
+        k=3,
+    )
+)
+
+check(
+    len(methodological_context.passages) == 4,
+    "top-three methodological anchors recover one split section sibling",
+)
+
+check(
+    any(
+        "should not be assumed to be narrower than an eti"
+        in passage.text.lower()
+        for passage in methodological_context.passages
+    ),
+    "methodological context includes guidance beyond the chunk boundary",
+)
+
+check(
+    sum(
+        passage.heading == "Are all 95% credible intervals the same?"
+        for passage in methodological_context.passages
+    ) == 2,
+    "both chunks of the retrieved ETI/HDI section remain attached",
+)
+
+
 SECRET = "CONFIDENTIAL-QUESTION-TEXT-7F3A"
 
 question = (
@@ -2002,6 +2034,301 @@ check(
     "full local guidance passage text is not exposed by serialisation",
 )
 
+
+
+print("\n[methodological consistency] guidance gates semantic assessment")
+
+methodological_assessment_calls = []
+
+
+def synthetic_methodological_assessor(*, prompt, schema):
+    methodological_assessment_calls.append(
+        {
+            "prompt": prompt,
+            "schema": schema,
+        }
+    )
+    return {
+        "status": "methodologically_consistent",
+        "reason": (
+            "The supplied guidance directly addresses the same "
+            "methodological proposition."
+        ),
+    }
+
+
+assessed_context_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=context_draft_generator,
+    reference_verifier=context_reference_verifier,
+    technical_verifier=context_technical_verifier,
+    methodological_retriever=synthetic_methodological_retriever,
+    methodological_assessor=synthetic_methodological_assessor,
+)
+
+check(
+    len(methodological_assessment_calls) == 1,
+    "retrieved guidance and a technical claim trigger one methodological assessment",
+)
+
+assessment_call = methodological_assessment_calls[0]
+
+check(
+    "A structured methodological proposition." in assessment_call["prompt"],
+    "methodological assessor receives the structured technical claim",
+)
+
+check(
+    METHOD_NOTE in assessment_call["prompt"],
+    "methodological assessor receives the retrieved local guidance",
+)
+
+check(
+    SECRET not in assessment_call["prompt"],
+    "original confidential question does not reach methodological assessment",
+)
+
+check(
+    "Context Test Work" not in assessment_call["prompt"],
+    "bibliographic proposal does not reach methodological assessment",
+)
+
+check(
+    "synthetic_test_verifier" not in assessment_call["prompt"],
+    "deterministic verifier result does not reach methodological assessment",
+)
+
+methodological_result = (
+    assessed_context_result.technical_claims[0].methodological_consistency
+)
+
+check(
+    methodological_result is not None
+    and methodological_result.status == "methodologically_consistent",
+    "methodological assessment remains attached to its technical claim",
+)
+
+assessed_payload = assessed_context_result.to_dict()
+
+check(
+    assessed_payload["technical_claims"][0]["methodological_consistency"][
+        "status"
+    ] == "methodologically_consistent",
+    "methodological consistency serialises separately from technical verification",
+)
+
+check(
+    assessed_payload["technical_claims"][0]["verification"]["status"]
+    == academic_technical.TECHNICAL_STATUS_VERIFIED,
+    "deterministic technical verification remains a distinct result",
+)
+
+check(
+    METHOD_NOTE not in repr(
+        assessed_payload["technical_claims"][0]["methodological_consistency"]
+    ),
+    "methodological consistency serialisation omits full guidance text",
+)
+
+
+print("\n[methodological consistency] no guidance means no assessment")
+
+no_guidance_assessment_calls = []
+
+
+def should_not_assess_methodology(*, prompt, schema):
+    no_guidance_assessment_calls.append(
+        {
+            "prompt": prompt,
+            "schema": schema,
+        }
+    )
+    raise AssertionError(
+        "Methodological assessor must not run without retrieved guidance."
+    )
+
+
+no_guidance_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=fake_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    methodological_retriever=empty_methodological_retriever,
+    methodological_assessor=should_not_assess_methodology,
+)
+
+check(
+    no_guidance_assessment_calls == [],
+    "absence of retrieved guidance prevents methodological assessment",
+)
+
+check(
+    no_guidance_result.technical_claims[0].methodological_consistency is None,
+    "unattempted methodological assessment remains explicit as None",
+)
+
+check(
+    no_guidance_result.to_dict()["technical_claims"][0][
+        "methodological_consistency"
+    ] is None,
+    "unattempted methodological assessment serialises explicitly as null",
+)
+
+
+print("\n[methodological release] conflict blocks presentation")
+
+
+def conflicting_methodological_assessor(*, prompt, schema):
+    return {
+        "status": "methodological_conflict",
+        "reason": (
+            "The structured claim materially contradicts the supplied "
+            "methodological guidance."
+        ),
+    }
+
+
+methodological_conflict_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=context_draft_generator,
+    reference_verifier=context_reference_verifier,
+    technical_verifier=context_technical_verifier,
+    methodological_retriever=synthetic_methodological_retriever,
+    methodological_assessor=conflicting_methodological_assessor,
+)
+
+check(
+    methodological_conflict_result.release.status
+    == "blocked_methodological_conflict",
+    "methodological conflict blocks release with its own status",
+)
+
+check(
+    methodological_conflict_result.release.safe_to_present is False,
+    "methodological conflict prevents normal presentation",
+)
+
+check(
+    methodological_conflict_result.answer_draft
+    == "A context-informed provisional answer.",
+    "methodologically blocked draft remains available for auditability",
+)
+
+
+print("\n[methodological release] not established does not block")
+
+
+def unestablished_methodological_assessor(*, prompt, schema):
+    return {
+        "status": "methodological_consistency_not_established",
+        "reason": (
+            "The supplied guidance does not establish the same "
+            "methodological proposition."
+        ),
+    }
+
+
+not_established_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=context_draft_generator,
+    reference_verifier=context_reference_verifier,
+    technical_verifier=context_technical_verifier,
+    methodological_retriever=synthetic_methodological_retriever,
+    methodological_assessor=unestablished_methodological_assessor,
+)
+
+check(
+    not_established_result.release.status == "release_allowed",
+    "methodological consistency not established does not itself block release",
+)
+
+check(
+    not_established_result.release.safe_to_present is True,
+    "absence of established methodological consistency is not treated as conflict",
+)
+
+
+print("\n[methodological release] consistency does not become verification")
+
+
+def unverified_context_technical_verifier(claim):
+    return academic_technical.TechnicalVerification(
+        status=academic_technical.TECHNICAL_STATUS_NOT_VERIFIED,
+        verifier=None,
+        canonical_claim=None,
+        reasons=["Synthetic claim is outside deterministic verifier coverage."],
+    )
+
+
+consistent_but_unverified_result = (
+    academic_orchestrator.run_academic_first_stage(
+        model,
+        tokenizer,
+        question,
+        draft_generator=context_draft_generator,
+        reference_verifier=context_reference_verifier,
+        technical_verifier=unverified_context_technical_verifier,
+        methodological_retriever=synthetic_methodological_retriever,
+        methodological_assessor=synthetic_methodological_assessor,
+    )
+)
+
+check(
+    consistent_but_unverified_result.release.status
+    == "release_allowed_with_unverified_claims",
+    "methodological consistency does not convert an unverified claim into verification",
+)
+
+check(
+    consistent_but_unverified_result.technical_claims[0].verification.status
+    == academic_technical.TECHNICAL_STATUS_NOT_VERIFIED,
+    "deterministic verification status remains unverified",
+)
+
+
+print("\n[methodological release] deterministic conflict has precedence")
+
+
+both_conflicts_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=context_draft_generator,
+    reference_verifier=context_reference_verifier,
+    technical_verifier=conflicting_technical_verifier,
+    methodological_retriever=synthetic_methodological_retriever,
+    methodological_assessor=conflicting_methodological_assessor,
+)
+
+check(
+    both_conflicts_result.technical_claims[0].verification.status
+    == academic_technical.TECHNICAL_STATUS_CONFLICT,
+    "simultaneous-conflict case retains deterministic technical conflict",
+)
+
+check(
+    both_conflicts_result.technical_claims[0].methodological_consistency.status
+    == "methodological_conflict",
+    "simultaneous-conflict case retains methodological conflict",
+)
+
+check(
+    both_conflicts_result.release.status == "blocked_technical_conflict",
+    "deterministic technical conflict has release precedence",
+)
+
+check(
+    both_conflicts_result.release.safe_to_present is False,
+    "simultaneous conflicts remain blocked",
+)
 
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
