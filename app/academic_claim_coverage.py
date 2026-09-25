@@ -32,6 +32,93 @@ class ClaimCoverageResult:
         }
 
 
+COVERAGE_STATUS_MISSING_FOUND = "missing_claims_found"
+COVERAGE_STATUS_NO_MISSING_PROPOSED = "no_missing_claims_proposed"
+COVERAGE_STATUS_UNAVAILABLE = "coverage_assessment_unavailable"
+COVERAGE_STATUS_NOT_ATTEMPTED = "coverage_not_attempted"
+
+
+@dataclass
+class ClaimCoverageAssessment:
+    """Application-owned state of one technical-claim coverage assessment."""
+
+    status: str
+    result: ClaimCoverageResult | None
+    reasons: list[str]
+
+    @classmethod
+    def from_result(
+        cls,
+        result: ClaimCoverageResult,
+    ) -> "ClaimCoverageAssessment":
+        """Represent a successfully established coverage proposal."""
+        if not isinstance(result, ClaimCoverageResult):
+            raise TypeError(
+                "Coverage assessment requires a ClaimCoverageResult."
+            )
+
+        status = (
+            COVERAGE_STATUS_MISSING_FOUND
+            if result.missing_claims
+            else COVERAGE_STATUS_NO_MISSING_PROPOSED
+        )
+
+        return cls(
+            status=status,
+            result=result,
+            reasons=[],
+        )
+
+    @classmethod
+    def not_attempted(
+        cls,
+        reason: str,
+    ) -> "ClaimCoverageAssessment":
+        """Represent coverage that was not attempted."""
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(
+                "Unattempted coverage requires a non-empty reason."
+            )
+
+        return cls(
+            status=COVERAGE_STATUS_NOT_ATTEMPTED,
+            result=None,
+            reasons=[reason.strip()],
+        )
+
+    @classmethod
+    def unavailable(
+        cls,
+        reason: str,
+    ) -> "ClaimCoverageAssessment":
+        """Represent coverage that could not be established."""
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(
+                "Unavailable coverage requires a non-empty reason."
+            )
+
+        return cls(
+            status=COVERAGE_STATUS_UNAVAILABLE,
+            result=None,
+            reasons=[reason.strip()],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise coverage state without claiming verified completeness."""
+        return {
+            "status": self.status,
+            "missing_claims": (
+                None
+                if self.result is None
+                else [
+                    claim.to_dict()
+                    for claim in self.result.missing_claims
+                ]
+            ),
+            "reasons": list(self.reasons),
+        }
+
+
 def claim_coverage_output_schema() -> dict[str, Any]:
     """Return the strict structured-output schema for coverage discovery."""
     return {

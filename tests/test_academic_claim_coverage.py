@@ -309,4 +309,115 @@ assert "direction" in normalized_representation
 
 print("PASS: prompt distinguishes topic overlap from proposition coverage")
 
+
+print("\n[10] coverage assessment distinguishes established outcomes")
+
+missing_assessment = coverage.ClaimCoverageAssessment.from_result(
+    coverage.ClaimCoverageResult(
+        missing_claims=[
+            academic_chat.TechnicalClaim(
+                type="methodological",
+                concept="missing proposition",
+                statement="A material proposition was omitted.",
+                parameterisation=None,
+            )
+        ]
+    )
+)
+
+assert missing_assessment.status == "missing_claims_found"
+assert missing_assessment.result is not None
+assert len(missing_assessment.result.missing_claims) == 1
+assert missing_assessment.reasons == []
+
+empty_assessment = coverage.ClaimCoverageAssessment.from_result(
+    coverage.ClaimCoverageResult(missing_claims=[])
+)
+
+assert empty_assessment.status == "no_missing_claims_proposed"
+assert empty_assessment.result is not None
+assert empty_assessment.result.missing_claims == []
+assert empty_assessment.reasons == []
+
+print("PASS: successful coverage distinguishes omissions from no omissions proposed")
+
+
+print("\n[11] unavailable coverage is distinct from an empty result")
+
+unavailable_assessment = coverage.ClaimCoverageAssessment.unavailable(
+    "Local coverage assessment could not be established."
+)
+
+assert unavailable_assessment.status == "coverage_assessment_unavailable"
+assert unavailable_assessment.result is None
+assert unavailable_assessment.reasons == [
+    "Local coverage assessment could not be established."
+]
+
+assert unavailable_assessment.status != empty_assessment.status
+assert unavailable_assessment.result != empty_assessment.result
+
+print("PASS: unavailable coverage cannot masquerade as zero omissions")
+
+
+print("\n[12] coverage assessment serialises without overstating completeness")
+
+missing_payload = missing_assessment.to_dict()
+empty_payload = empty_assessment.to_dict()
+unavailable_payload = unavailable_assessment.to_dict()
+
+assert missing_payload["status"] == "missing_claims_found"
+assert len(missing_payload["missing_claims"]) == 1
+assert missing_payload["reasons"] == []
+
+assert empty_payload == {
+    "status": "no_missing_claims_proposed",
+    "missing_claims": [],
+    "reasons": [],
+}
+
+assert unavailable_payload == {
+    "status": "coverage_assessment_unavailable",
+    "missing_claims": None,
+    "reasons": [
+        "Local coverage assessment could not be established."
+    ],
+}
+
+assert "complete" not in repr(empty_payload).lower()
+
+print("PASS: coverage serialisation reports proposal state, not verified completeness")
+
+
+
+print("\n[13] unattempted coverage is distinct from unavailable coverage")
+
+not_attempted_assessment = coverage.ClaimCoverageAssessment.not_attempted(
+    "No coverage assessor was supplied."
+)
+
+assert not_attempted_assessment.status == "coverage_not_attempted"
+assert not_attempted_assessment.result is None
+assert not_attempted_assessment.reasons == [
+    "No coverage assessor was supplied."
+]
+
+assert (
+    not_attempted_assessment.status
+    != unavailable_assessment.status
+)
+assert (
+    not_attempted_assessment.status
+    != empty_assessment.status
+)
+
+assert not_attempted_assessment.to_dict() == {
+    "status": "coverage_not_attempted",
+    "missing_claims": None,
+    "reasons": ["No coverage assessor was supplied."],
+}
+
+print("PASS: unattempted coverage remains distinct from failed assessment")
+
+
 print("\nAll academic claim-coverage contract checks passed.")

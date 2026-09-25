@@ -21,6 +21,7 @@ import threading
 from typing import Any, Callable
 
 import academic_chat
+import academic_claim_coverage
 import academic_claims
 import academic_methodology
 import academic_technical
@@ -367,6 +368,7 @@ def assess_academic_release(
 class AcademicFirstStageResult:
     draft: academic_chat.AcademicDraft
     local_guidance: LocalGuidanceResult
+    claim_coverage: academic_claim_coverage.ClaimCoverageAssessment
     references: list[VerifiedReferenceProposal]
     source_claims: list[SourceClaimResult]
     technical_claims: list[TechnicalClaimResult]
@@ -420,6 +422,10 @@ def assess_academic_draft(
         academic_claims.ClaimAssessmentResult,
     ] | None = None,
     methodological_assessor: Callable[..., Any] | None = None,
+    coverage_assessor: Callable[
+        ..., academic_claim_coverage.ClaimCoverageAssessment
+    ]
+    | None = None,
 ) -> AcademicFirstStageResult:
     """Assess an already-generated AcademicDraft through the release pipeline.
 
@@ -572,9 +578,36 @@ def assess_academic_draft(
             )
         )
 
+    claims_for_assessment = list(draft.technical_claims)
+
+    if coverage_assessor is None:
+        claim_coverage = (
+            academic_claim_coverage.ClaimCoverageAssessment.not_attempted(
+                "No claim-coverage assessor was supplied."
+            )
+        )
+    else:
+        claim_coverage = coverage_assessor(
+            answer_draft=draft.answer_draft,
+            existing_claims=draft.technical_claims,
+        )
+
+        if not isinstance(
+            claim_coverage,
+            academic_claim_coverage.ClaimCoverageAssessment,
+        ):
+            raise TypeError(
+                "Coverage assessor must return a ClaimCoverageAssessment."
+            )
+
+    if claim_coverage.result is not None:
+        claims_for_assessment.extend(
+            claim_coverage.result.missing_claims
+        )
+
     technical_claims = []
 
-    for claim in draft.technical_claims:
+    for claim in claims_for_assessment:
         verification = technical_verifier(claim)
         methodological_consistency = None
 
@@ -606,6 +639,7 @@ def assess_academic_draft(
     return AcademicFirstStageResult(
         draft=draft,
         local_guidance=local_guidance,
+        claim_coverage=claim_coverage,
         references=verified_references,
         source_claims=source_claims,
         technical_claims=technical_claims,

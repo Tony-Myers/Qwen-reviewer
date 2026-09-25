@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 import academic_chat
+import academic_claim_coverage
 import academic_claims
 import academic_orchestrator
 import academic_technical
@@ -2392,5 +2393,304 @@ check(
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
+
+
+print("\n[claim coverage] discovered claims enter ordinary technical checking")
+
+coverage_draft = academic_chat.AcademicDraft(
+    answer_draft=(
+        "The broad claim is represented already. "
+        "A second material proposition also appears in the answer."
+    ),
+    references=[],
+    source_claims=[],
+    technical_claims=[
+        academic_chat.TechnicalClaim(
+            type="methodological",
+            concept="existing proposition",
+            statement="The broad claim is represented already.",
+            parameterisation=None,
+        )
+    ],
+)
+
+coverage_guidance = academic_orchestrator.LocalGuidanceResult(
+    passages=[]
+)
+
+coverage_calls = []
+technical_calls = []
+
+
+def fake_coverage_assessor(*, answer_draft, existing_claims):
+    coverage_calls.append(
+        {
+            "answer_draft": answer_draft,
+            "existing_claims": list(existing_claims),
+        }
+    )
+    return academic_claim_coverage.ClaimCoverageAssessment.from_result(
+        academic_claim_coverage.ClaimCoverageResult(
+            missing_claims=[
+                academic_chat.TechnicalClaim(
+                    type="methodological",
+                    concept="missing proposition",
+                    statement=(
+                        "A second material proposition also appears in the answer."
+                    ),
+                    parameterisation=None,
+                )
+            ]
+        )
+    )
+
+
+def fake_technical_verifier(claim):
+    technical_calls.append(claim)
+    return academic_technical.TechnicalVerification(
+        status=academic_technical.TECHNICAL_STATUS_NOT_VERIFIED,
+        verifier=None,
+        canonical_claim=None,
+        reasons=[
+            "Synthetic verifier does not cover this proposition."
+        ],
+    )
+
+
+coverage_result = academic_orchestrator.assess_academic_draft(
+    coverage_draft,
+    local_guidance=coverage_guidance,
+    technical_verifier=fake_technical_verifier,
+    coverage_assessor=fake_coverage_assessor,
+)
+
+assert len(coverage_calls) == 1
+assert coverage_calls[0]["answer_draft"] == coverage_draft.answer_draft
+assert coverage_calls[0]["existing_claims"] == coverage_draft.technical_claims
+
+assert len(technical_calls) == 2
+assert technical_calls[0] is coverage_draft.technical_claims[0]
+assert technical_calls[1].statement == (
+    "A second material proposition also appears in the answer."
+)
+
+assert len(coverage_result.technical_claims) == 2
+assert coverage_result.technical_claims[0].claim is technical_calls[0]
+assert coverage_result.technical_claims[1].claim is technical_calls[1]
+
+assert coverage_result.draft is coverage_draft
+assert len(coverage_result.draft.technical_claims) == 1
+
+print("PASS: coverage receives only answer and existing technical claims")
+print("PASS: discovered claim enters the same technical-verification path")
+print("PASS: original AcademicDraft is retained without mutation")
+
+print("\n[claim coverage] discovered claims enter methodological assessment")
+
+coverage_method_note = (
+    "Synthetic local guidance for testing coverage-discovered claims."
+)
+
+coverage_method_guidance = academic_orchestrator.LocalGuidanceResult(
+    passages=[
+        reviewer_notes.Passage(
+            note="synthetic-method-note",
+            heading="Coverage methodology",
+            text=coverage_method_note,
+            score=1.0,
+        )
+    ]
+)
+
+coverage_method_calls = []
+
+
+def fake_coverage_methodological_assessor(*, prompt, schema):
+    coverage_method_calls.append(
+        {
+            "prompt": prompt,
+            "schema": schema,
+        }
+    )
+    return {
+        "status": "methodologically_consistent",
+        "reason": "The supplied guidance addresses this proposition.",
+    }
+
+
+coverage_method_result = academic_orchestrator.assess_academic_draft(
+    coverage_draft,
+    local_guidance=coverage_method_guidance,
+    technical_verifier=fake_technical_verifier,
+    methodological_assessor=fake_coverage_methodological_assessor,
+    coverage_assessor=fake_coverage_assessor,
+)
+
+assert len(coverage_method_calls) == 2
+
+assert (
+    "The broad claim is represented already."
+    in coverage_method_calls[0]["prompt"]
+)
+assert (
+    "A second material proposition also appears in the answer."
+    in coverage_method_calls[1]["prompt"]
+)
+
+assert coverage_method_note in coverage_method_calls[0]["prompt"]
+assert coverage_method_note in coverage_method_calls[1]["prompt"]
+
+assert (
+    coverage_method_result.technical_claims[0]
+    .methodological_consistency.status
+    == "methodologically_consistent"
+)
+assert (
+    coverage_method_result.technical_claims[1]
+    .methodological_consistency.status
+    == "methodologically_consistent"
+)
+
+assert (
+    coverage_method_result.technical_claims[1]
+    .methodological_consistency.claim
+    is coverage_method_result.technical_claims[1].claim
+)
+
+print("PASS: original claim enters methodological assessment")
+print("PASS: coverage-discovered claim enters the same methodological path")
+print("PASS: discovered claim retains its methodological assessment")
+
+
+print("\n[claim coverage] assessment state remains explicit")
+
+no_missing_calls = []
+
+
+def fake_no_missing_coverage(*, answer_draft, existing_claims):
+    no_missing_calls.append((answer_draft, list(existing_claims)))
+    return academic_claim_coverage.ClaimCoverageAssessment.from_result(
+        academic_claim_coverage.ClaimCoverageResult(
+            missing_claims=[]
+        )
+    )
+
+
+no_missing_result = academic_orchestrator.assess_academic_draft(
+    coverage_draft,
+    local_guidance=coverage_guidance,
+    technical_verifier=fake_technical_verifier,
+    coverage_assessor=fake_no_missing_coverage,
+)
+
+assert no_missing_result.claim_coverage.status == (
+    academic_claim_coverage.COVERAGE_STATUS_NO_MISSING_PROPOSED
+)
+assert no_missing_result.claim_coverage.result is not None
+assert no_missing_result.claim_coverage.result.missing_claims == []
+assert len(no_missing_result.technical_claims) == 1
+
+print("PASS: successful empty coverage remains explicit")
+
+
+unavailable_calls = []
+
+
+def fake_unavailable_coverage(*, answer_draft, existing_claims):
+    unavailable_calls.append((answer_draft, list(existing_claims)))
+    return academic_claim_coverage.ClaimCoverageAssessment.unavailable(
+        "Synthetic local coverage assessment unavailable."
+    )
+
+
+unavailable_result = academic_orchestrator.assess_academic_draft(
+    coverage_draft,
+    local_guidance=coverage_guidance,
+    technical_verifier=fake_technical_verifier,
+    coverage_assessor=fake_unavailable_coverage,
+)
+
+assert unavailable_result.claim_coverage.status == (
+    academic_claim_coverage.COVERAGE_STATUS_UNAVAILABLE
+)
+assert unavailable_result.claim_coverage.result is None
+assert unavailable_result.claim_coverage.reasons == [
+    "Synthetic local coverage assessment unavailable."
+]
+
+# Unavailable coverage adds no invented claims, but it is not represented
+# as a successful empty assessment.
+assert len(unavailable_result.technical_claims) == 1
+assert (
+    unavailable_result.claim_coverage.status
+    != no_missing_result.claim_coverage.status
+)
+
+print("PASS: unavailable coverage cannot masquerade as successful empty coverage")
+print("PASS: unavailable coverage invents no technical claims")
+
+
+# Coverage state is retained internally without changing the established
+# public Academic Chat payload contract.
+assert coverage_result.claim_coverage.status == (
+    academic_claim_coverage.COVERAGE_STATUS_MISSING_FOUND
+)
+
+coverage_payload = coverage_result.to_dict()
+
+assert "claim_coverage" not in coverage_payload
+assert set(coverage_payload) == {
+    "answer_draft",
+    "local_guidance",
+    "references",
+    "source_claims",
+    "technical_claims",
+    "release",
+}
+
+print("PASS: coverage state is retained internally without changing API shape")
+print("\n[claim coverage] bare coverage result is rejected")
+
+def fake_bare_coverage_result(*, answer_draft, existing_claims):
+    return academic_claim_coverage.ClaimCoverageResult(
+        missing_claims=[]
+    )
+
+
+try:
+    academic_orchestrator.assess_academic_draft(
+        coverage_draft,
+        local_guidance=coverage_guidance,
+        technical_verifier=fake_technical_verifier,
+        coverage_assessor=fake_bare_coverage_result,
+    )
+except TypeError as exc:
+    assert "ClaimCoverageAssessment" in str(exc)
+else:
+    raise AssertionError(
+        "Bare ClaimCoverageResult was accepted as a coverage assessment."
+    )
+
+print("PASS: orchestrator requires explicit coverage assessment state")
+
+
+print("\n[claim coverage] absent assessor remains explicitly unattempted")
+
+not_attempted_result = academic_orchestrator.assess_academic_draft(
+    coverage_draft,
+    local_guidance=coverage_guidance,
+    technical_verifier=fake_technical_verifier,
+)
+
+assert not_attempted_result.claim_coverage.status == (
+    academic_claim_coverage.COVERAGE_STATUS_NOT_ATTEMPTED
+)
+assert not_attempted_result.claim_coverage.result is None
+assert not_attempted_result.claim_coverage.reasons == [
+    "No claim-coverage assessor was supplied."
+]
+
+print("PASS: absence of coverage assessor is not reported as assessment failure")
+
 
 print("\nAll Academic Chat orchestration checks passed.")
