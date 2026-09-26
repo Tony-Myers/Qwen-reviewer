@@ -588,12 +588,26 @@ cmd_stop() {
 
 # --- Status ----------------------------------------------------------------
 cmd_status() {
-  local app_pid llama_pid
+  local app_pid llama_pid running_model
   app_pid="$(running_pid "$APP_PID_FILE" "server.py")"
   llama_pid="$(running_pid "$LLAMA_PID_FILE" "llama-server")"
 
+  running_model=""
+  if [[ "$(llama_state)" == "ready" ]]; then
+    running_model="$(curl -fsS -m 3 "http://$LLAMA_HOST:$LLAMA_PORT/props" 2>/dev/null | \
+      "$VENV_PYTHON" -c 'import json,sys; print(json.load(sys.stdin).get("model_path", ""))' \
+      2>/dev/null || true)"
+  fi
+
   echo "Project:     $PROJECT_DIR"
-  echo "Model:       $(basename "$MODEL")"
+  if [[ -n "$running_model" ]]; then
+    echo "Model:       $(basename "$running_model")"
+    if [[ "$(basename "$running_model")" != "$(basename "$MODEL")" ]]; then
+      echo "Default:     $(basename "$MODEL")"
+    fi
+  else
+    echo "Model:       $(basename "$MODEL")"
+  fi
   echo ""
 
   local lstate

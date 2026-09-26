@@ -281,7 +281,7 @@ review_jobs: dict = {}
 
 HTML_PATH = SCRIPT_DIR / "chat.html"
 ROOT_DIR = SCRIPT_DIR.parent
-LAUNCHER_PATH = ROOT_DIR / "start_server.sh"
+SERVICE_PATH = ROOT_DIR / "scripts" / "qwen_service.sh"
 
 MODEL_CHOICES = [
     {
@@ -524,16 +524,19 @@ async def list_model_aliases():
 
 
 def _restart_after_response(model_choice: str):
-    """Spawn the launcher with the requested model, then stop this process."""
+    """Delegate the whole restart to the service manager.
+
+    qwen_service.sh owns both managed processes and their PID files.  The
+    browser must not create a second lifecycle by launching start_server.sh
+    directly.  The service command is detached because its stop phase will
+    terminate this FastAPI process.
+    """
     time.sleep(0.75)
     cmd = [
-        str(LAUNCHER_PATH),
+        str(SERVICE_PATH),
+        "restart",
         "--model",
         model_choice,
-        "--port",
-        str(SERVER_PORT),
-        "--host",
-        SERVER_HOST,
         "--no-open",
     ]
     try:
@@ -544,10 +547,6 @@ def _restart_after_response(model_choice: str):
         )
     except Exception:
         traceback.print_exc()
-        return
-
-    time.sleep(0.25)
-    os._exit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -573,13 +572,6 @@ async def restart_server(request: dict):
             {"error": "A review is running. Wait for it to finish before switching models."},
             status_code=409,
         )
-
-    if resolved_model == MODEL_NAME:
-        return {
-            "status": "unchanged",
-            "model": resolved_model,
-            "message": "That model is already loaded.",
-        }
 
     with restart_lock:
         if restart_scheduled:

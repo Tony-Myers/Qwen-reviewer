@@ -390,8 +390,13 @@ async function checkServer() {
     if (r.ok) {
       const d = await r.json();
       const currentModel = d?.data?.[0]?.id || 'connected';
+      const select = document.getElementById('modelSelect');
+      const match = [...select.options].find(o => o.dataset.model === currentModel);
+      const statusText = document.getElementById('statusText');
+
       document.getElementById('statusDot').className = 'dot connected';
-      document.getElementById('statusText').textContent = currentModel;
+      statusText.textContent = match?.textContent || currentModel;
+      statusText.title = currentModel;
       syncSelectedModel(currentModel);
       return currentModel;
     }
@@ -484,11 +489,6 @@ async function restartWithSelectedModel() {
   const select = document.getElementById('modelSelect');
   const opt = select.selectedOptions[0];
   if (!opt || !select.value || isRestarting) return;
-  if (opt.dataset.model === select.dataset.currentModel) {
-    setRestartNote('Already loaded');
-    return;
-  }
-
   isRestarting = true;
   setControlsDisabled(true);
   setRestartNote('Restarting...');
@@ -502,12 +502,6 @@ async function restartWithSelectedModel() {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-    if (d.status === 'unchanged') {
-      setRestartNote('Already loaded');
-      isRestarting = false;
-      setControlsDisabled(false);
-      return;
-    }
     await waitForRestart(d.model || opt.dataset.model);
   } catch (e) {
     setRestartNote(e.message, true);
