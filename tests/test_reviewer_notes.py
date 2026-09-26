@@ -156,8 +156,8 @@ eti_hdi_expanded = rn.expand_section_siblings(eti_hdi, index.passages)
 check("headed section expansion recovers the split ETI/HDI sibling",
       len(eti_hdi_expanded) == len(eti_hdi) + 1)
 
-check("expanded ETI/HDI section contains the skewness warning",
-      any("should not be assumed to be narrower than an eti"
+check("expanded ETI/HDI section contains the conditional width guidance",
+      any("it therefore cannot be wider than an eti"
           in p.text.lower()
           for p in eti_hdi_expanded))
 
@@ -166,10 +166,13 @@ target_chunks = [
     p for p in eti_hdi_expanded
     if p.heading == target_heading
 ]
-check("sibling chunks remain together in corpus order",
-      len(target_chunks) == 2
-      and target_chunks[0].text.startswith("##### Are all 95%")
-      and target_chunks[1].text.startswith("ct is positive"))
+corpus_target_chunks = [
+    p for p in index.passages
+    if p.heading == target_heading
+]
+check("sibling expansion recovers all headed chunks in corpus order",
+      [(p.note, p.heading, p.text) for p in target_chunks]
+      == [(p.note, p.heading, p.text) for p in corpus_target_chunks])
 
 # Headingless fixed-size chunks are not semantic Markdown sections. Expanding
 # one BARG fallback chunk must therefore not pull in the entire long note.

@@ -51,7 +51,7 @@ check(
 
 check(
     any(
-        "should not be assumed to be narrower than an eti"
+        "do not generalise the minimum-width hdi relationship"
         in passage.text.lower()
         for passage in methodological_context.passages
     ),

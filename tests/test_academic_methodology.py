@@ -81,7 +81,28 @@ print("PASS: prompt forbids outside knowledge")
 print("PASS: silence is not treated as consistency")
 
 
-print("\n[3] explicit HDI contradiction is representable")
+print("\n[2b] prompt preserves quantifiers and modality")
+
+normalised_prompt = " ".join(prompt.split())
+
+assert (
+    "not necessarily, universally, or automatically true"
+    in normalised_prompt
+)
+assert (
+    "may, sometimes, often, or under some conditions be true"
+    in normalised_prompt
+)
+assert (
+    "frequency, modality, and quantifiers as material"
+    in normalised_prompt
+)
+
+print("PASS: prompt prevents caution from becoming contradiction")
+print("PASS: prompt treats frequency, modality, and quantifiers as material")
+
+
+print("\n[3] structurally valid conflict is representable")
 
 result = am.build_methodological_consistency(
     hdi_claim,

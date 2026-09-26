@@ -36,9 +36,11 @@ No. A 95% credible interval describes an interval containing 95% of the posterio
 
 An **equal-tailed interval (ETI)** leaves equal posterior probability in each tail. For a 95% ETI, 2.5% of the posterior probability lies below the lower bound and 2.5% lies above the upper bound.
 
-A **highest-density interval (HDI or HPDI)** contains 95% of the posterior probability while favouring values with higher posterior density. It need not leave equal probability in each tail. HDIs are sometimes described as shortest credible intervals under conditions where the highest-density set forms a single interval, but "shortest interval" should not be treated as a universally interchangeable definition of highest density.
+A **highest-density region (HDR)** contains the specified posterior probability while including values of higher posterior density in preference to values of lower density. An HDR may be disconnected. When the relevant highest-density region is a single interval, it is commonly described as a **highest-density interval (HDI or HPDI)**.
 
-ETIs and HDIs can be identical or very similar for some symmetric, unimodal posterior distributions, but symmetry and unimodality alone should not be used as a general guarantee of identical endpoints. They can differ appreciably for skewed or irregular distributions. Neither construction is automatically more precise, more credible, or generally preferable merely because its interval is narrower. Reviewers should therefore identify which interval has been reported and interpret it according to its construction rather than assuming that a "95% credible interval" is a **central 95% interval**.
+For a continuous posterior where the highest-density region forms a single interval, that HDI is a minimum-width credible interval for the specified probability content. It therefore cannot be wider than an ETI containing the same posterior probability, because the ETI is one candidate interval with that probability content. This minimum-width property should not be extended uncritically to a single contiguous "HDI" when the highest-density region is disconnected or otherwise irregular.
+
+ETIs and HDIs coincide in common symmetric unimodal cases; for skewed unimodal posteriors their endpoints generally differ and the minimum-width HDI may be narrower. Interval width alone does not make one construction more precise, more credible, or scientifically preferable. Reviewers should therefore identify which interval or region has been reported and interpret it according to its construction rather than assuming that a "95% credible interval" is a **central 95% interval**.
 
 For multimodal or otherwise irregular posterior distributions, a highest-density **region** can be disconnected and may not be well represented by a single contiguous interval. Reviewers should consider the posterior distribution itself where a single interval could obscure important features.
 
@@ -46,10 +48,10 @@ When the scientific question concerns the probability that an effect is positive
 
 Reviewers should be cautious of several common overstatements:
 
-- an HDI should not be defined universally as simply the shortest credible interval;
-- symmetry and unimodality alone should not be treated as a general guarantee that ETI and HDI endpoints are identical;
-- an HDI should not be assumed to be narrower than an ETI merely because the posterior is skewed;
-- a narrower HDI is not automatically more precise, more credible or preferable;
+- distinguish a highest-density **region**, which may be disconnected, from a contiguous highest-density **interval**;
+- do not assume that an arbitrary contiguous interval around a mode inherits the minimum-width property of a highest-density region;
+- do not generalise the minimum-width HDI relationship to cases where the highest-density region is disconnected or otherwise irregular;
+- a narrower interval is not automatically more precise, more credible or preferable;
 - an ETI should not be described as analogous to a frequentist confidence interval merely because both may use quantile-based endpoints.
 
 ##### What should be reported instead of only whether the interval crosses zero?

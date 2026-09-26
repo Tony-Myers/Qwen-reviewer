@@ -159,6 +159,12 @@ A related passage is not necessarily relevant to the proposition being
 assessed. Use methodological_conflict only when the supplied guidance provides
 clear contrary guidance about the same relevant proposition and context.
 
+A caution that a proposition is not necessarily, universally, or automatically
+true does not by itself conflict with a claim that it may, sometimes, often, or
+under some conditions be true. Conversely, guidance that something may or
+sometimes occurs does not establish that it generally, necessarily, or always
+occurs. Treat differences in frequency, modality, and quantifiers as material.
+
 OUTPUT DISCIPLINE
 Decide the status before writing the reason.
 The reason must be one concise sentence of no more than 30 words.
