@@ -102,6 +102,30 @@ print("PASS: prompt prevents caution from becoming contradiction")
 print("PASS: prompt treats frequency, modality, and quantifiers as material")
 
 
+print("\n[2c] prompt distinguishes non-establishment from contradiction")
+
+assert (
+    "A stronger claim is not established merely because the guidance supports "
+    "a weaker version" in normalised_prompt
+)
+assert (
+    "unsupported strengthening is not by itself a methodological conflict"
+    in normalised_prompt
+)
+assert (
+    "methodological_conflict requires the guidance to establish an "
+    "incompatible proposition" in normalised_prompt
+)
+assert (
+    "Omitting a condition from a claim does not by itself establish conflict"
+    in normalised_prompt
+)
+
+print("PASS: unsupported strengthening maps to non-establishment")
+print("PASS: conflict requires an incompatible proposition")
+print("PASS: omitted conditions are not automatically contradictions")
+
+
 print("\n[3] structurally valid conflict is representable")
 
 result = am.build_methodological_consistency(

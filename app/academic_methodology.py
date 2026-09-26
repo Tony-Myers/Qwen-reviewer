@@ -165,6 +165,19 @@ under some conditions be true. Conversely, guidance that something may or
 sometimes occurs does not establish that it generally, necessarily, or always
 occurs. Treat differences in frequency, modality, and quantifiers as material.
 
+A stronger claim is not established merely because the guidance supports a
+weaker version; unsupported strengthening is not by itself a methodological
+conflict. In that situation use methodological_consistency_not_established
+unless the supplied guidance also establishes an incompatible proposition.
+methodological_conflict requires the guidance to establish an incompatible
+proposition about the same relevant concept, conditions, and context.
+
+Treat omitted conditions in the same way. Omitting a condition from a claim
+does not by itself establish conflict. An unconditional or more general claim
+is not established by guidance that supports the proposition only under a
+condition. Use methodological_conflict only if the supplied guidance establishes
+that the claim is incompatible when the relevant condition is absent.
+
 OUTPUT DISCIPLINE
 Decide the status before writing the reason.
 The reason must be one concise sentence of no more than 30 words.
