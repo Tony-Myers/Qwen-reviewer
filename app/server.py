@@ -46,6 +46,7 @@ import design_expectations as de  # noqa: E402
 import reviewer_notes as notes  # noqa: E402  standard library only, no model
 import llm_backend  # noqa: E402
 import academic_chat  # noqa: E402
+import academic_claim_coverage  # noqa: E402
 import academic_claims  # noqa: E402
 import academic_claim_assessor  # noqa: E402
 import academic_orchestrator  # noqa: E402
@@ -644,6 +645,79 @@ def assess_academic_methodology(*, prompt, schema):
     )
 
 
+ACADEMIC_COVERAGE_DISCOVERY_MAX_TOKENS = 2000
+ACADEMIC_COVERAGE_REPRESENTATION_MAX_TOKENS = 256
+
+
+def assess_academic_claim_coverage(
+    *,
+    answer_draft: str,
+    existing_claims: list[academic_chat.TechnicalClaim],
+) -> academic_claim_coverage.ClaimCoverageAssessment:
+    """Discover omitted technical claims using two bounded local stages."""
+
+    def assessor(*, prompt, schema):
+        if schema == academic_claim_coverage.claim_discovery_output_schema():
+            max_tokens = ACADEMIC_COVERAGE_DISCOVERY_MAX_TOKENS
+        elif (
+            schema
+            == academic_claim_coverage.claim_representation_output_schema()
+        ):
+            max_tokens = ACADEMIC_COVERAGE_REPRESENTATION_MAX_TOKENS
+        else:
+            raise TypeError(
+                "Unexpected schema supplied to two-stage claim coverage."
+            )
+
+        try:
+            return academic_claim_assessor.generate_claim_assessor_output(
+                model,
+                tokenizer,
+                prompt,
+                schema,
+                max_tokens=max_tokens,
+            )
+        except (
+            BackendError,
+            academic_claim_assessor.ClaimAssessorOutputError,
+        ) as exc:
+            if (
+                schema
+                == academic_claim_coverage.claim_representation_output_schema()
+            ):
+                # Representation only earns permission to suppress a
+                # discovered proposition. Failure to establish representation
+                # must therefore retain the proposition for downstream
+                # checking rather than erase it.
+                raise academic_claim_coverage.ClaimCoverageOutputError(
+                    "Claim representation could not be established."
+                ) from exc
+            raise
+
+    try:
+        result = academic_claim_coverage.assess_claim_coverage_two_stage(
+            answer_draft=answer_draft,
+            existing_claims=existing_claims,
+            assessor=assessor,
+        )
+    except BackendError:
+        return academic_claim_coverage.ClaimCoverageAssessment.unavailable(
+            "Local claim-coverage inference was unavailable."
+        )
+    except academic_claim_assessor.ClaimAssessorOutputError:
+        return academic_claim_coverage.ClaimCoverageAssessment.unavailable(
+            "Local claim-coverage output could not be decoded."
+        )
+    except academic_claim_coverage.ClaimCoverageOutputError:
+        return academic_claim_coverage.ClaimCoverageAssessment.unavailable(
+            "Local claim-coverage output could not be validated."
+        )
+
+    return academic_claim_coverage.ClaimCoverageAssessment.from_result(
+        result
+    )
+
+
 # ---------------------------------------------------------------------------
 # POST /api/chat/academic
 # Academic Chat generation, checking, and bounded reconciliation.
@@ -692,6 +766,7 @@ async def academic_chat_first_stage(request: dict):
             claim_locator=academic_claims.prepare_claim_support,
             claim_assessor=assess_academic_claim,
             methodological_assessor=assess_academic_methodology,
+            coverage_assessor=assess_academic_claim_coverage,
         )
 
     def draft_assessor(draft, *, local_guidance):
@@ -703,6 +778,7 @@ async def academic_chat_first_stage(request: dict):
             claim_locator=academic_claims.prepare_claim_support,
             claim_assessor=assess_academic_claim,
             methodological_assessor=assess_academic_methodology,
+            coverage_assessor=assess_academic_claim_coverage,
         )
 
     try:

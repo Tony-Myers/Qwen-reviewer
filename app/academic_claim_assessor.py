@@ -11,6 +11,10 @@ from typing import Any
 import llm_backend
 
 
+class ClaimAssessorOutputError(ValueError):
+    """Raised when untrusted local-assessor output cannot be decoded."""
+
+
 def generate_claim_assessor_output(
     model: Any,
     tokenizer: Any,
@@ -56,12 +60,12 @@ def generate_claim_assessor_output(
     try:
         decoded = json.loads(raw)
     except (json.JSONDecodeError, TypeError) as exc:
-        raise ValueError(
+        raise ClaimAssessorOutputError(
             "Claim assessor did not return valid JSON."
         ) from exc
 
     if not isinstance(decoded, dict):
-        raise ValueError(
+        raise ClaimAssessorOutputError(
             "Claim assessor output must decode to a JSON object."
         )
 

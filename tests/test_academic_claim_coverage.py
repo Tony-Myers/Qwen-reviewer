@@ -420,4 +420,729 @@ assert not_attempted_assessment.to_dict() == {
 print("PASS: unattempted coverage remains distinct from failed assessment")
 
 
+
+print("\n[14] untrusted coverage output has a dedicated failure type")
+
+malformed_outputs = [
+    {},
+    {"missing_claims": "not-an-array"},
+    {
+        "missing_claims": [
+            {
+                "type": "methodological",
+                "concept": "HDI width",
+                "statement": "",
+                "parameterisation": None,
+            }
+        ]
+    },
+    {
+        "missing_claims": [],
+        "verification": "technically_verified",
+    },
+]
+
+for malformed_output in malformed_outputs:
+    try:
+        coverage.build_claim_coverage(
+            answer_draft="Synthetic answer.",
+            existing_claims=[],
+            assessor_output=malformed_output,
+        )
+    except coverage.ClaimCoverageOutputError:
+        pass
+    else:
+        raise AssertionError(
+            f"Malformed assessor output did not raise "
+            f"ClaimCoverageOutputError: {malformed_output!r}"
+        )
+
+print("PASS: malformed untrusted coverage output has a dedicated exception")
+
+
+print("\n[15] trusted coverage input errors remain ordinary contract errors")
+
+try:
+    coverage.build_claim_coverage(
+        answer_draft="",
+        existing_claims=[],
+        assessor_output={"missing_claims": []},
+    )
+except ValueError as exc:
+    assert not isinstance(exc, coverage.ClaimCoverageOutputError)
+else:
+    raise AssertionError("Empty trusted answer_draft was accepted.")
+
+print("PASS: trusted input failure is not misclassified as assessor-output failure")
+
+
 print("\nAll academic claim-coverage contract checks passed.")
+
+
+print("\n[16] coverage prompt exposes embedded propositions atomically")
+
+embedded_answer = """
+The adjusted model often gives smaller estimates because the additional
+covariate accounts for part of the association. In some datasets the
+difference may be negligible. A smaller estimate is not automatically more
+accurate or preferable. Therefore, analysts should choose the adjusted model
+when the covariate is scientifically relevant.
+""".strip()
+
+embedded_prompt = coverage.build_claim_coverage_prompt(
+    answer_draft=embedded_answer,
+    existing_claims=[],
+)
+
+embedded_normalized = " ".join(embedded_prompt.lower().split())
+
+required_fragments = [
+    "explanatory prose can contain",
+    "qualifiers or frequency statements",
+    "comparative or conditional statements",
+    "explanatory, inferential, causal, or mechanistic links",
+    "interpretive conclusions",
+    "recommendations or preferences",
+    "independently differ in support or correctness",
+]
+
+for fragment in required_fragments:
+    assert fragment in embedded_normalized, fragment
+
+print(
+    "PASS: coverage prompt distinguishes explanatory prose from "
+    "embedded checkable propositions"
+)
+print(
+    "PASS: coverage prompt requires independently assessable "
+    "propositions to remain atomic"
+)
+
+
+print("\n[17] pure discovery schema exposes discovered claims only")
+
+discovery_schema = coverage.claim_discovery_output_schema()
+
+assert set(discovery_schema) == {
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+}
+assert discovery_schema["required"] == ["discovered_claims"]
+assert discovery_schema["additionalProperties"] is False
+
+discovered_schema = discovery_schema["properties"]["discovered_claims"]
+assert discovered_schema["type"] == "array"
+
+discovered_item = discovered_schema["items"]
+assert set(discovered_item["required"]) == {
+    "type",
+    "concept",
+    "statement",
+    "parameterisation",
+}
+assert discovered_item["additionalProperties"] is False
+
+print("PASS: discovery schema is structurally bounded")
+
+
+print("\n[18] pure discovery sees answer but not existing claims")
+
+discovery_prompt = coverage.build_claim_discovery_prompt(
+    answer_draft=embedded_answer,
+)
+
+discovery_normalized = " ".join(
+    discovery_prompt.lower().split()
+)
+
+assert embedded_answer in discovery_prompt
+assert "EXISTING TECHNICAL CLAIMS" not in discovery_prompt
+assert "already represented" not in discovery_normalized
+assert "missing claim" not in discovery_normalized
+assert "deduplic" not in discovery_normalized
+
+for fragment in required_fragments:
+    assert fragment in discovery_normalized, fragment
+
+assert "do not judge whether" in discovery_normalized
+assert "true" in discovery_normalized
+assert "false" in discovery_normalized
+
+print("PASS: discovery is independent of representation assessment")
+
+
+print("\n[19] injected discovery assessor produces application-owned claims")
+
+discovery_captured = {}
+
+
+def fake_discovery_assessor(*, prompt, schema):
+    discovery_captured["prompt"] = prompt
+    discovery_captured["schema"] = schema
+    return {
+        "discovered_claims": [
+            {
+                "type": "recommendation",
+                "concept": "model selection",
+                "statement": (
+                    "Analysts should choose the adjusted model when "
+                    "the covariate is scientifically relevant."
+                ),
+                "parameterisation": None,
+            },
+            {
+                "type": "interpretation",
+                "concept": "estimate size",
+                "statement": (
+                    "A smaller estimate is not automatically more "
+                    "accurate or preferable."
+                ),
+                "parameterisation": None,
+            },
+        ]
+    }
+
+
+discovered = coverage.discover_answer_claims(
+    answer_draft=embedded_answer,
+    assessor=fake_discovery_assessor,
+)
+
+assert len(discovered) == 2
+assert all(
+    isinstance(claim, academic_chat.TechnicalClaim)
+    for claim in discovered
+)
+assert discovered[0].statement == (
+    "Analysts should choose the adjusted model when "
+    "the covariate is scientifically relevant."
+)
+assert discovery_captured["schema"] == (
+    coverage.claim_discovery_output_schema()
+)
+assert embedded_answer in discovery_captured["prompt"]
+
+print("PASS: pure discovery returns application-owned TechnicalClaims")
+
+
+print("\n[20] representation schema exposes decision and source index only")
+
+representation_schema = coverage.claim_representation_output_schema()
+
+assert set(representation_schema) == {
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+}
+assert set(representation_schema["required"]) == {
+    "represented",
+    "represented_by",
+}
+assert representation_schema["additionalProperties"] is False
+
+assert representation_schema["properties"]["represented"] == {
+    "type": "boolean"
+}
+assert representation_schema["properties"]["represented_by"] == {
+    "type": ["integer", "null"]
+}
+
+print("PASS: representation schema is structurally bounded")
+
+
+print("\n[21] representation prompt sees candidate and existing claims only")
+
+candidate = academic_chat.TechnicalClaim(
+    type="comparison",
+    concept="interval width",
+    statement=(
+        "In some skewed distributions, the HDI may be narrower "
+        "than the ETI."
+    ),
+    parameterisation=None,
+)
+
+representation_prompt = coverage.build_claim_representation_prompt(
+    candidate_claim=candidate,
+    existing_claims=EXISTING,
+)
+
+representation_normalized = " ".join(
+    representation_prompt.lower().split()
+)
+
+assert candidate.statement in representation_prompt
+assert EXISTING[0].statement in representation_prompt
+assert "answer draft" not in representation_normalized
+assert "same material proposition" in representation_normalized
+assert "sharing the same topic" in representation_normalized
+assert "broader related claim" in representation_normalized
+assert "do not judge whether" in representation_normalized
+assert "true" in representation_normalized
+assert "false" in representation_normalized
+
+print("PASS: representation assessment has a bounded proposition-level role")
+
+
+print("\n[22] representation decisions are validated application state")
+
+represented_candidate = academic_chat.TechnicalClaim(
+    type="methodological",
+    concept="same proposition",
+    statement="The relative widths depend on distribution shape.",
+    parameterisation=None,
+)
+
+represented = coverage.build_claim_representation(
+    candidate_claim=represented_candidate,
+    existing_claims=EXISTING,
+    assessor_output={
+        "represented": True,
+        "represented_by": 1,
+    },
+)
+
+assert represented.represented is True
+assert represented.represented_by == 1
+
+not_represented = coverage.build_claim_representation(
+    candidate_claim=candidate,
+    existing_claims=EXISTING,
+    assessor_output={
+        "represented": False,
+        "represented_by": None,
+    },
+)
+
+assert not_represented.represented is False
+assert not_represented.represented_by is None
+
+print("PASS: representation decisions become validated application state")
+
+
+print("\n[23] invalid representation output cannot establish suppression")
+
+invalid_representation_outputs = [
+    {},
+    {
+        "represented": True,
+        "represented_by": None,
+    },
+    {
+        "represented": False,
+        "represented_by": 1,
+    },
+    {
+        "represented": True,
+        "represented_by": 0,
+    },
+    {
+        "represented": True,
+        "represented_by": len(EXISTING) + 1,
+    },
+    {
+        "represented": "yes",
+        "represented_by": 1,
+    },
+    {
+        "represented": True,
+        "represented_by": 1,
+        "confidence": 0.99,
+    },
+]
+
+for invalid_output in invalid_representation_outputs:
+    try:
+        coverage.build_claim_representation(
+            candidate_claim=candidate,
+            existing_claims=EXISTING,
+            assessor_output=invalid_output,
+        )
+    except coverage.ClaimCoverageOutputError:
+        pass
+    else:
+        raise AssertionError(
+            "Invalid representation output was accepted: "
+            f"{invalid_output!r}"
+        )
+
+print("PASS: malformed representation cannot establish claim suppression")
+
+
+print("\n[24] injected representation assessor receives bounded prompt and schema")
+
+representation_captured = {}
+
+
+def fake_representation_assessor(*, prompt, schema):
+    representation_captured["prompt"] = prompt
+    representation_captured["schema"] = schema
+    return {
+        "represented": False,
+        "represented_by": None,
+    }
+
+
+representation_assessment = coverage.assess_claim_representation(
+    candidate_claim=candidate,
+    existing_claims=EXISTING,
+    assessor=fake_representation_assessor,
+)
+
+assert representation_assessment.represented is False
+assert representation_assessment.represented_by is None
+assert representation_captured["schema"] == (
+    coverage.claim_representation_output_schema()
+)
+assert candidate.statement in representation_captured["prompt"]
+
+print("PASS: injected representation assessor has bounded proposition-level input")
+
+
+print("\n[25] exact duplicate is suppressed without semantic assessment")
+
+exact_duplicate = EXISTING[0]
+semantic_calls = []
+
+
+def should_not_be_called(*, candidate_claim, existing_claims):
+    semantic_calls.append(candidate_claim)
+    raise AssertionError(
+        "Semantic representation assessor was called for an exact duplicate."
+    )
+
+
+exact_filtered = coverage.filter_discovered_claims(
+    discovered_claims=[exact_duplicate],
+    existing_claims=EXISTING,
+    representation_assessor=should_not_be_called,
+)
+
+assert exact_filtered == []
+assert semantic_calls == []
+
+print("PASS: exact duplicates are suppressed deterministically")
+
+
+print("\n[26] only established semantic representation suppresses a candidate")
+
+represented_semantically = academic_chat.TechnicalClaim(
+    type="methodological",
+    concept="relative interval width",
+    statement=(
+        "The relative widths of the HDI and ETI depend on "
+        "the shape of the posterior distribution."
+    ),
+    parameterisation=None,
+)
+
+novel_semantically = academic_chat.TechnicalClaim(
+    type="comparative",
+    concept="HDI sometimes narrower",
+    statement=(
+        "In some skewed distributions, the HDI may be narrower "
+        "than the ETI."
+    ),
+    parameterisation=None,
+)
+
+
+def semantic_representation(*, candidate_claim, existing_claims):
+    if candidate_claim is represented_semantically:
+        return coverage.ClaimRepresentation(
+            represented=True,
+            represented_by=1,
+        )
+
+    return coverage.ClaimRepresentation(
+        represented=False,
+        represented_by=None,
+    )
+
+
+semantic_filtered = coverage.filter_discovered_claims(
+    discovered_claims=[
+        represented_semantically,
+        novel_semantically,
+    ],
+    existing_claims=EXISTING,
+    representation_assessor=semantic_representation,
+)
+
+assert semantic_filtered == [novel_semantically]
+
+print("PASS: only established semantic representation suppresses a claim")
+
+
+print("\n[27] invalid representation output fails open into checking")
+
+fail_open_candidate = academic_chat.TechnicalClaim(
+    type="interpretive",
+    concept="precision",
+    statement=(
+        "A narrower HDI is not automatically more precise or preferable."
+    ),
+    parameterisation=None,
+)
+
+
+def invalid_representation(*, candidate_claim, existing_claims):
+    raise coverage.ClaimCoverageOutputError(
+        "Synthetic malformed representation output."
+    )
+
+
+fail_open_filtered = coverage.filter_discovered_claims(
+    discovered_claims=[fail_open_candidate],
+    existing_claims=EXISTING,
+    representation_assessor=invalid_representation,
+)
+
+assert fail_open_filtered == [fail_open_candidate]
+
+print("PASS: invalid representation retains candidate for checking")
+
+
+print("\n[28] unexpected representation faults still propagate")
+
+
+def broken_representation(*, candidate_claim, existing_claims):
+    raise TypeError("Synthetic programming fault.")
+
+
+try:
+    coverage.filter_discovered_claims(
+        discovered_claims=[fail_open_candidate],
+        existing_claims=EXISTING,
+        representation_assessor=broken_representation,
+    )
+except TypeError as exc:
+    assert "Synthetic programming fault" in str(exc)
+else:
+    raise AssertionError(
+        "Unexpected representation fault was swallowed."
+    )
+
+print("PASS: unexpected representation faults are not hidden")
+
+
+print("\n[29] two-stage coverage separates discovery from representation")
+
+two_stage_answer = """
+For symmetric posteriors the two intervals may be similar. In some skewed
+posteriors the HDI may be narrower than the ETI. A narrower interval is not
+automatically preferable.
+""".strip()
+
+two_stage_existing = [
+    academic_chat.TechnicalClaim(
+        type="comparative",
+        concept="interval similarity",
+        statement=(
+            "For symmetric posteriors the ETI and HDI may be similar."
+        ),
+        parameterisation=None,
+    )
+]
+
+discovery_prompts = []
+representation_candidates = []
+
+
+def two_stage_assessor(*, prompt, schema):
+    if schema == coverage.claim_discovery_output_schema():
+        discovery_prompts.append(prompt)
+        return {
+            "discovered_claims": [
+                {
+                    "type": "comparative",
+                    "concept": "interval similarity",
+                    "statement": (
+                        "For symmetric posteriors the ETI and HDI "
+                        "may be similar."
+                    ),
+                    "parameterisation": None,
+                },
+                {
+                    "type": "comparative",
+                    "concept": "interval width",
+                    "statement": (
+                        "In some skewed posteriors the HDI may be "
+                        "narrower than the ETI."
+                    ),
+                    "parameterisation": None,
+                },
+                {
+                    "type": "interpretive",
+                    "concept": "interval preference",
+                    "statement": (
+                        "A narrower interval is not automatically preferable."
+                    ),
+                    "parameterisation": None,
+                },
+            ]
+        }
+
+    if schema == coverage.claim_representation_output_schema():
+        if "HDI may be narrower than the ETI" in prompt:
+            representation_candidates.append("width")
+            return {
+                "represented": False,
+                "represented_by": None,
+            }
+
+        if "not automatically preferable" in prompt:
+            representation_candidates.append("preference")
+            return {
+                "represented": False,
+                "represented_by": None,
+            }
+
+        raise AssertionError(
+            "Exact duplicate unexpectedly reached semantic representation."
+        )
+
+    raise AssertionError("Unexpected schema supplied to two-stage assessor.")
+
+
+two_stage_result = coverage.assess_claim_coverage_two_stage(
+    answer_draft=two_stage_answer,
+    existing_claims=two_stage_existing,
+    assessor=two_stage_assessor,
+)
+
+assert len(discovery_prompts) == 1
+assert two_stage_answer in discovery_prompts[0]
+assert "EXISTING TECHNICAL CLAIMS" not in discovery_prompts[0]
+
+assert representation_candidates == [
+    "width",
+    "preference",
+]
+
+assert [
+    claim.statement
+    for claim in two_stage_result.missing_claims
+] == [
+    (
+        "In some skewed posteriors the HDI may be "
+        "narrower than the ETI."
+    ),
+    "A narrower interval is not automatically preferable.",
+]
+
+print("PASS: discovery and representation remain separate in composition")
+
+
+print("\n[30] two-stage coverage retains malformed representation candidates")
+
+malformed_candidate_statement = (
+    "A narrower interval is not automatically more precise."
+)
+
+
+def malformed_two_stage_assessor(*, prompt, schema):
+    if schema == coverage.claim_discovery_output_schema():
+        return {
+            "discovered_claims": [
+                {
+                    "type": "interpretive",
+                    "concept": "precision",
+                    "statement": malformed_candidate_statement,
+                    "parameterisation": None,
+                }
+            ]
+        }
+
+    if schema == coverage.claim_representation_output_schema():
+        return {
+            "represented": True,
+            "represented_by": None,
+        }
+
+    raise AssertionError("Unexpected schema.")
+
+
+malformed_two_stage = coverage.assess_claim_coverage_two_stage(
+    answer_draft=malformed_candidate_statement,
+    existing_claims=two_stage_existing,
+    assessor=malformed_two_stage_assessor,
+)
+
+assert [
+    claim.statement
+    for claim in malformed_two_stage.missing_claims
+] == [malformed_candidate_statement]
+
+print("PASS: malformed representation fails open into downstream checking")
+
+
+print("\n[31] discovery failure still fails the coverage assessment")
+
+
+def malformed_discovery_assessor(*, prompt, schema):
+    if schema == coverage.claim_discovery_output_schema():
+        return {
+            "discovered_claims": "not-an-array",
+        }
+
+    raise AssertionError(
+        "Representation must not run after malformed discovery."
+    )
+
+
+try:
+    coverage.assess_claim_coverage_two_stage(
+        answer_draft=two_stage_answer,
+        existing_claims=two_stage_existing,
+        assessor=malformed_discovery_assessor,
+    )
+except coverage.ClaimCoverageOutputError:
+    pass
+else:
+    raise AssertionError(
+        "Malformed discovery was treated as successful coverage."
+    )
+
+print("PASS: discovery failure cannot masquerade as successful coverage")
+
+
+print("\n[32] unexpected representation fault propagates from two-stage coverage")
+
+
+def broken_two_stage_assessor(*, prompt, schema):
+    if schema == coverage.claim_discovery_output_schema():
+        return {
+            "discovered_claims": [
+                {
+                    "type": "interpretive",
+                    "concept": "precision",
+                    "statement": malformed_candidate_statement,
+                    "parameterisation": None,
+                }
+            ]
+        }
+
+    if schema == coverage.claim_representation_output_schema():
+        raise TypeError("Synthetic two-stage programming fault.")
+
+    raise AssertionError("Unexpected schema.")
+
+
+try:
+    coverage.assess_claim_coverage_two_stage(
+        answer_draft=two_stage_answer,
+        existing_claims=two_stage_existing,
+        assessor=broken_two_stage_assessor,
+    )
+except TypeError as exc:
+    assert "Synthetic two-stage programming fault" in str(exc)
+else:
+    raise AssertionError(
+        "Unexpected two-stage representation fault was swallowed."
+    )
+
+print("PASS: unexpected two-stage faults remain visible")

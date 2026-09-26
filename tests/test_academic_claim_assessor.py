@@ -164,14 +164,14 @@ for malformed in (
             prompt="Synthetic prompt.",
             schema=inner_schema,
         )
-    except ValueError:
+    except academic_claim_assessor.ClaimAssessorOutputError:
         pass
     else:
         raise AssertionError(
             f"Malformed model output was accepted: {malformed!r}"
         )
 
-print("PASS: malformed and non-object model output is rejected")
+print("PASS: malformed and non-object model output has a dedicated exception")
 
 
 def backend_failure(

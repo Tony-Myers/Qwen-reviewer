@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 import academic_chat
+import academic_claim_coverage
 import academic_claims
 import llm_backend
 import server
@@ -281,6 +282,12 @@ try:
         )
 
         check(
+            first_kwargs["coverage_assessor"]
+            is server.assess_academic_claim_coverage,
+            "first stage receives production claim-coverage assessment",
+        )
+
+        check(
             reassessment_value is reassessment_sentinel,
             "reassessment closure delegates to ordinary draft assessment",
         )
@@ -322,6 +329,12 @@ try:
             reassess_kwargs["claim_assessor"]
             is server.assess_academic_claim,
             "reassessment repeats production semantic assessment",
+        )
+
+        check(
+            reassess_kwargs["coverage_assessor"]
+            is server.assess_academic_claim_coverage,
+            "reassessment repeats production claim-coverage assessment",
         )
 
         check(
@@ -674,6 +687,311 @@ try:
         server.academic_claim_assessor.generate_claim_assessor_output = (
             original_claim_assessor
         )
+
+
+    print("\n[10] production coverage uses two bounded local stages")
+
+    coverage_calls = []
+    existing_claim = academic_chat.TechnicalClaim(
+        type="definition",
+        concept="equal-tailed interval",
+        statement="A 95% ETI leaves 2.5% probability in each tail.",
+        parameterisation=None,
+    )
+
+    def fake_two_stage_output(
+        model,
+        tokenizer,
+        prompt,
+        schema,
+        *,
+        max_tokens=512,
+    ):
+        coverage_calls.append(
+            {
+                "model": model,
+                "tokenizer": tokenizer,
+                "prompt": prompt,
+                "schema": schema,
+                "max_tokens": max_tokens,
+            }
+        )
+
+        if schema == academic_claim_coverage.claim_discovery_output_schema():
+            return {
+                "discovered_claims": [
+                    {
+                        "type": "definition",
+                        "concept": "equal-tailed interval",
+                        "statement": (
+                            "A 95% ETI leaves 2.5% probability in each tail."
+                        ),
+                        "parameterisation": None,
+                    },
+                    {
+                        "type": "methodological",
+                        "concept": "HDI width",
+                        "statement": (
+                            "For many skewed distributions, the HDI may be "
+                            "narrower than the ETI."
+                        ),
+                        "parameterisation": None,
+                    },
+                ]
+            }
+
+        if schema == academic_claim_coverage.claim_representation_output_schema():
+            return {
+                "represented": False,
+                "represented_by": None,
+            }
+
+        raise AssertionError("Unexpected coverage schema.")
+
+    original_coverage_output = (
+        server.academic_claim_assessor.generate_claim_assessor_output
+    )
+
+    try:
+        server.academic_claim_assessor.generate_claim_assessor_output = (
+            fake_two_stage_output
+        )
+        server.model = "LOCAL-MODEL"
+        server.tokenizer = "LOCAL-TOKENIZER"
+
+        coverage_assessment = server.assess_academic_claim_coverage(
+            answer_draft="Synthetic ETI and HDI answer.",
+            existing_claims=[existing_claim],
+        )
+
+        check(
+            len(coverage_calls) == 2,
+            "production coverage performs discovery then representation",
+        )
+        check(
+            all(
+                call["model"] == "LOCAL-MODEL"
+                and call["tokenizer"] == "LOCAL-TOKENIZER"
+                for call in coverage_calls
+            ),
+            "both coverage stages use the configured local model",
+        )
+        check(
+            coverage_calls[0]["schema"]
+            == academic_claim_coverage.claim_discovery_output_schema(),
+            "first coverage call is pure discovery",
+        )
+        check(
+            coverage_calls[0]["max_tokens"]
+            == server.ACADEMIC_COVERAGE_DISCOVERY_MAX_TOKENS
+            == 2000,
+            "discovery has its own high-recall token budget",
+        )
+        check(
+            "Synthetic ETI and HDI answer." in coverage_calls[0]["prompt"]
+            and existing_claim.statement not in coverage_calls[0]["prompt"],
+            "discovery sees the answer but not existing claims",
+        )
+        check(
+            coverage_calls[1]["schema"]
+            == academic_claim_coverage.claim_representation_output_schema(),
+            "second coverage call is bounded representation assessment",
+        )
+        check(
+            coverage_calls[1]["max_tokens"]
+            == server.ACADEMIC_COVERAGE_REPRESENTATION_MAX_TOKENS
+            == 256,
+            "representation has its own small token budget",
+        )
+        check(
+            existing_claim.statement in coverage_calls[1]["prompt"],
+            "representation sees existing structured claims",
+        )
+        check(
+            coverage_assessment.status
+            == academic_claim_coverage.COVERAGE_STATUS_MISSING_FOUND,
+            "novel discovered proposition becomes successful coverage result",
+        )
+        check(
+            coverage_assessment.result is not None
+            and len(coverage_assessment.result.missing_claims) == 1,
+            "exact duplicate is removed and novel proposition is retained",
+        )
+
+    finally:
+        server.academic_claim_assessor.generate_claim_assessor_output = (
+            original_coverage_output
+        )
+
+
+    print("\n[11] discovery failures make coverage unavailable")
+
+    discovery_failure_factories = [
+        lambda: llm_backend.BackendError("synthetic backend unavailable"),
+        lambda: server.academic_claim_assessor.ClaimAssessorOutputError(
+            "synthetic malformed JSON"
+        ),
+        lambda: server.academic_claim_coverage.ClaimCoverageOutputError(
+            "synthetic invalid discovery proposal"
+        ),
+    ]
+
+    for failure_factory in discovery_failure_factories:
+        original_coverage_output = (
+            server.academic_claim_assessor.generate_claim_assessor_output
+        )
+
+        def failing_discovery_output(
+            model,
+            tokenizer,
+            prompt,
+            schema,
+            *,
+            max_tokens=512,
+            _factory=failure_factory,
+        ):
+            if schema == academic_claim_coverage.claim_discovery_output_schema():
+                raise _factory()
+            raise AssertionError(
+                "Representation should not run after discovery failure."
+            )
+
+        try:
+            server.academic_claim_assessor.generate_claim_assessor_output = (
+                failing_discovery_output
+            )
+
+            coverage_assessment = server.assess_academic_claim_coverage(
+                answer_draft="Synthetic answer.",
+                existing_claims=[],
+            )
+
+            check(
+                coverage_assessment.status
+                == academic_claim_coverage.COVERAGE_STATUS_UNAVAILABLE,
+                (
+                    f"{failure_factory().__class__.__name__} during discovery "
+                    "makes coverage unavailable"
+                ),
+            )
+            check(
+                coverage_assessment.result is None,
+                "failed discovery invents no coverage result",
+            )
+        finally:
+            server.academic_claim_assessor.generate_claim_assessor_output = (
+                original_coverage_output
+            )
+
+
+    print("\n[12] representation inference failures retain discovered claims")
+
+    representation_failure_factories = [
+        lambda: llm_backend.BackendError(
+            "synthetic representation backend unavailable"
+        ),
+        lambda: server.academic_claim_assessor.ClaimAssessorOutputError(
+            "synthetic representation malformed JSON"
+        ),
+    ]
+
+    for failure_factory in representation_failure_factories:
+        original_coverage_output = (
+            server.academic_claim_assessor.generate_claim_assessor_output
+        )
+
+        def failing_representation_output(
+            model,
+            tokenizer,
+            prompt,
+            schema,
+            *,
+            max_tokens=512,
+            _factory=failure_factory,
+        ):
+            if schema == academic_claim_coverage.claim_discovery_output_schema():
+                return {
+                    "discovered_claims": [
+                        {
+                            "type": "interpretive",
+                            "concept": "interval precision",
+                            "statement": (
+                                "A narrower HDI is not automatically "
+                                "more precise."
+                            ),
+                            "parameterisation": None,
+                        }
+                    ]
+                }
+
+            if schema == academic_claim_coverage.claim_representation_output_schema():
+                raise _factory()
+
+            raise AssertionError("Unexpected coverage schema.")
+
+        try:
+            server.academic_claim_assessor.generate_claim_assessor_output = (
+                failing_representation_output
+            )
+
+            coverage_assessment = server.assess_academic_claim_coverage(
+                answer_draft="Synthetic answer.",
+                existing_claims=[existing_claim],
+            )
+
+            check(
+                coverage_assessment.status
+                == academic_claim_coverage.COVERAGE_STATUS_MISSING_FOUND,
+                (
+                    f"{failure_factory().__class__.__name__} during "
+                    "representation does not erase discovered claim"
+                ),
+            )
+            check(
+                coverage_assessment.result is not None
+                and len(coverage_assessment.result.missing_claims) == 1,
+                "representation failure fails open into downstream checking",
+            )
+        finally:
+            server.academic_claim_assessor.generate_claim_assessor_output = (
+                original_coverage_output
+            )
+
+
+    print("\n[13] unexpected coverage programming failures still propagate")
+
+    original_coverage_function = (
+        server.academic_claim_coverage.assess_claim_coverage_two_stage
+    )
+
+    def programming_failure(**kwargs):
+        raise TypeError("synthetic programming failure")
+
+    try:
+        server.academic_claim_coverage.assess_claim_coverage_two_stage = (
+            programming_failure
+        )
+
+        try:
+            server.assess_academic_claim_coverage(
+                answer_draft="Synthetic answer.",
+                existing_claims=[],
+            )
+        except TypeError as exc:
+            check(
+                str(exc) == "synthetic programming failure",
+                "unexpected programming failure propagates unchanged",
+            )
+        else:
+            check(
+                False,
+                "unexpected programming failure was incorrectly swallowed",
+            )
+    finally:
+        server.academic_claim_coverage.assess_claim_coverage_two_stage = (
+            original_coverage_function
+        )
+
 
 finally:
     server.ensure_model = original_ensure_model

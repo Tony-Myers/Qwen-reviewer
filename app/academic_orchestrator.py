@@ -675,17 +675,24 @@ def run_academic_first_stage(
         [str], LocalGuidanceResult
     ] | None = None,
     methodological_assessor: Callable[..., Any] | None = None,
+    coverage_assessor: Callable[
+        ..., academic_claim_coverage.ClaimCoverageAssessment
+    ]
+    | None = None,
 ) -> AcademicFirstStageResult:
     """
     Generate a local academic draft, verify its proposed references and
     deterministic technical claims, and resolve source-claim proposals to
     their corresponding verified-reference proposals.
 
-    The full question is passed only to the local draft generator. Reference
+    The full question remains within the local first stage: it is used by the
+    local methodological retriever and local draft generator. Reference
     verification receives only the five bibliographic fields defined by the
     AcademicReference contract. Source-claim resolution is local and does not
-    establish that a reference supports its associated claim. Technical
-    verification receives only each structured TechnicalClaim.
+    establish that a reference supports its associated claim. Claim-coverage
+    assessment receives only the generated answer and its existing structured
+    technical claims. Technical verification receives only each structured
+    TechnicalClaim.
     """
     if draft_generator is None:
         draft_generator = academic_chat.generate_academic_draft
@@ -725,4 +732,5 @@ def run_academic_first_stage(
         claim_locator=claim_locator,
         claim_assessor=claim_assessor,
         methodological_assessor=methodological_assessor,
+        coverage_assessor=coverage_assessor,
     )
