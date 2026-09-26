@@ -877,6 +877,7 @@ function renderAcademicSourceClaim(item, index) {
 function renderAcademicTechnicalClaim(item, index) {
   const claim = item?.claim || {};
   const verification = item?.verification || {};
+  const methodology = item?.methodological_consistency || null;
 
   let h = '<div class="academic-audit-card">';
   h += '<div><strong>Technical claim ' + (index + 1) + ':</strong> ' +
@@ -898,6 +899,41 @@ function renderAcademicTechnicalClaim(item, index) {
 
   h += '</div>';
   h += academicReasons(verification.reasons);
+
+  if (methodology) {
+    h += '<div class="academic-audit-grid" style="margin-top:8px;">';
+    h += '<div><strong>Methodological check:</strong> ' +
+      esc(academicStatusLabel(methodology.status)) + '</div>';
+    h += '</div>';
+    h += academicReasons(methodology.reasons);
+
+    const passages = Array.isArray(methodology.passages)
+      ? methodology.passages
+      : [];
+
+    if (passages.length) {
+      h += '<details style="margin-top:8px;">';
+      h += '<summary>Guidance considered for this claim</summary>';
+
+      for (const passage of passages) {
+        const note = passage?.note || 'Reviewer note';
+        const heading = passage?.heading || '';
+
+        h += '<div style="margin-top:8px;">';
+        h += '<strong>' + esc(note) + '</strong>';
+
+        if (heading) {
+          h += '<div class="academic-reference-meta">' +
+            esc(heading) + '</div>';
+        }
+
+        h += '</div>';
+      }
+
+      h += '</details>';
+    }
+  }
+
   h += '</div>';
   return h;
 }
