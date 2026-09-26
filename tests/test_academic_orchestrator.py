@@ -2125,6 +2125,7 @@ assessed_context_result = academic_orchestrator.run_academic_first_stage(
     reference_verifier=context_reference_verifier,
     technical_verifier=context_technical_verifier,
     methodological_retriever=synthetic_methodological_retriever,
+    claim_methodological_retriever=synthetic_methodological_retriever,
     methodological_assessor=synthetic_methodological_assessor,
 )
 
@@ -2193,6 +2194,180 @@ check(
 )
 
 
+print("\n[methodological consistency] claim-specific guidance is used for assessment")
+
+CLAIM_METHOD_NOTE = (
+    "CLAIM-METHOD-NOTE-4A71: guidance retrieved specifically for the "
+    "structured technical claim."
+)
+
+claim_methodological_retrieval_calls = []
+
+
+def synthetic_claim_methodological_retriever(query):
+    claim_methodological_retrieval_calls.append(query)
+    return academic_orchestrator.LocalGuidanceResult(
+        passages=[
+            reviewer_notes.Passage(
+                note="Claim-Specific Method Note",
+                heading="Claim interpretation",
+                text=CLAIM_METHOD_NOTE,
+                score=0.9,
+            )
+        ]
+    )
+
+
+claim_specific_assessment_calls = []
+
+
+def claim_specific_methodological_assessor(*, prompt, schema):
+    claim_specific_assessment_calls.append(
+        {
+            "prompt": prompt,
+            "schema": schema,
+        }
+    )
+    return {
+        "status": "methodologically_consistent",
+        "reason": "Claim-specific guidance directly addresses the proposition.",
+    }
+
+
+claim_specific_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=context_draft_generator,
+    reference_verifier=context_reference_verifier,
+    technical_verifier=context_technical_verifier,
+    methodological_retriever=synthetic_methodological_retriever,
+    claim_methodological_retriever=synthetic_claim_methodological_retriever,
+    methodological_assessor=claim_specific_methodological_assessor,
+)
+
+check(
+    len(claim_methodological_retrieval_calls) == 1,
+    "each technical claim triggers claim-specific methodological retrieval",
+)
+
+check(
+    "A structured methodological proposition."
+    in claim_methodological_retrieval_calls[0],
+    "claim-specific retrieval query contains the structured claim statement",
+)
+
+check(
+    SECRET not in claim_methodological_retrieval_calls[0]
+    and question not in claim_methodological_retrieval_calls[0],
+    "claim-specific retrieval receives no original confidential question",
+)
+
+check(
+    len(claim_specific_assessment_calls) == 1
+    and CLAIM_METHOD_NOTE in claim_specific_assessment_calls[0]["prompt"],
+    "methodological assessor receives claim-specific guidance",
+)
+
+check(
+    METHOD_NOTE not in claim_specific_assessment_calls[0]["prompt"],
+    "question-level guidance is not reused for claim assessment",
+)
+
+claim_specific_methodology = (
+    claim_specific_result.technical_claims[0].methodological_consistency
+)
+
+check(
+    claim_specific_methodology is not None
+    and claim_specific_methodology.passages[0].note
+    == "Claim-Specific Method Note",
+    "claim result retains exact claim-specific guidance provenance",
+)
+
+check(
+    claim_specific_result.local_guidance.passages[0].note
+    == "Synthetic Method Note",
+    "question-level guidance remains separately attached to the result",
+)
+
+
+print("\n[methodological consistency] claim guidance can exist without question guidance")
+
+independent_claim_retrieval_calls = []
+independent_assessment_calls = []
+
+
+def independent_claim_retriever(query):
+    independent_claim_retrieval_calls.append(query)
+    return academic_orchestrator.LocalGuidanceResult(
+        passages=[
+            reviewer_notes.Passage(
+                note="Independent Claim Note",
+                heading="Specific claim guidance",
+                text=(
+                    "INDEPENDENT-CLAIM-GUIDANCE-8D31: this guidance is "
+                    "available for the structured claim."
+                ),
+                score=0.8,
+            )
+        ]
+    )
+
+
+def independent_methodological_assessor(*, prompt, schema):
+    independent_assessment_calls.append(
+        {
+            "prompt": prompt,
+            "schema": schema,
+        }
+    )
+    return {
+        "status": "methodologically_consistent",
+        "reason": "Claim-specific guidance directly addresses the proposition.",
+    }
+
+
+independent_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=context_draft_generator,
+    reference_verifier=context_reference_verifier,
+    technical_verifier=context_technical_verifier,
+    methodological_retriever=empty_methodological_retriever,
+    claim_methodological_retriever=independent_claim_retriever,
+    methodological_assessor=independent_methodological_assessor,
+)
+
+check(
+    independent_result.local_guidance.passages == [],
+    "question-level methodological retrieval can remain empty",
+)
+
+check(
+    context_draft_calls[-1]["methodological_context"] is None,
+    "empty question-level guidance does not add methodological context to generation",
+)
+
+check(
+    len(independent_claim_retrieval_calls) == 1,
+    "structured claim still triggers independent methodological retrieval",
+)
+
+check(
+    len(independent_assessment_calls) == 1
+    and "INDEPENDENT-CLAIM-GUIDANCE-8D31"
+    in independent_assessment_calls[0]["prompt"],
+    "claim-specific guidance still reaches methodological assessment",
+)
+
+check(
+    independent_result.technical_claims[0].methodological_consistency
+    is not None,
+    "claim can be methodologically assessed without question-level guidance",
+)
+
 print("\n[methodological consistency] no guidance means no assessment")
 
 no_guidance_assessment_calls = []
@@ -2218,6 +2393,7 @@ no_guidance_result = academic_orchestrator.run_academic_first_stage(
     reference_verifier=fake_reference_verifier,
     technical_verifier=fake_technical_verifier,
     methodological_retriever=empty_methodological_retriever,
+    claim_methodological_retriever=empty_methodological_retriever,
     methodological_assessor=should_not_assess_methodology,
 )
 

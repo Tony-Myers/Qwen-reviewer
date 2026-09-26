@@ -770,6 +770,9 @@ async def academic_chat_first_stage(request: dict):
             claim_locator=academic_claims.prepare_claim_support,
             claim_assessor=assess_academic_claim,
             methodological_assessor=assess_academic_methodology,
+            claim_methodological_retriever=(
+                academic_orchestrator.retrieve_methodological_context
+            ),
             coverage_assessor=assess_academic_claim_coverage,
         )
 

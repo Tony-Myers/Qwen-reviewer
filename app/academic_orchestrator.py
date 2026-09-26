@@ -81,6 +81,23 @@ def retrieve_methodological_context(
     return LocalGuidanceResult(passages=passages)
 
 
+def _technical_claim_methodological_query(
+    claim: academic_chat.TechnicalClaim,
+) -> str:
+    """Build a deterministic local-guidance query from a technical claim."""
+    parts = [
+        claim.type,
+        claim.concept,
+        claim.statement,
+        claim.parameterisation,
+    ]
+    return "\n".join(
+        part.strip()
+        for part in parts
+        if isinstance(part, str) and part.strip()
+    )
+
+
 def _normalise_retrieval_doi(doi: str | None) -> str | None:
     """Normalise a DOI for retrieval-identity continuity checks."""
     if doi is None:
@@ -422,6 +439,9 @@ def assess_academic_draft(
         academic_claims.ClaimAssessmentResult,
     ] | None = None,
     methodological_assessor: Callable[..., Any] | None = None,
+    claim_methodological_retriever: Callable[
+        [str], LocalGuidanceResult
+    ] | None = None,
     coverage_assessor: Callable[
         ..., academic_claim_coverage.ClaimCoverageAssessment
     ]
@@ -431,7 +451,10 @@ def assess_academic_draft(
 
     This stage receives neither the original question nor model/tokenizer
     handles. It operates only on the structured draft, application-owned local
-    guidance, and the explicitly supplied verification components.
+    guidance, and the explicitly supplied verification components. Question-level
+    guidance may be retained from generation, while an optional claim-specific
+    retriever can obtain local guidance independently for each structured
+    technical claim.
     """
     if reference_verifier is None:
         reference_verifier = verify_academic_reference
@@ -611,14 +634,20 @@ def assess_academic_draft(
         verification = technical_verifier(claim)
         methodological_consistency = None
 
+        claim_guidance = local_guidance
+        if claim_methodological_retriever is not None:
+            claim_guidance = claim_methodological_retriever(
+                _technical_claim_methodological_query(claim)
+            )
+
         if (
-            local_guidance.passages
+            claim_guidance.passages
             and methodological_assessor is not None
         ):
             methodological_consistency = (
                 academic_methodology.assess_methodological_consistency(
                     claim=claim,
-                    passages=local_guidance.passages,
+                    passages=claim_guidance.passages,
                     assessor=methodological_assessor,
                 )
             )
@@ -675,6 +704,9 @@ def run_academic_first_stage(
         [str], LocalGuidanceResult
     ] | None = None,
     methodological_assessor: Callable[..., Any] | None = None,
+    claim_methodological_retriever: Callable[
+        [str], LocalGuidanceResult
+    ] | None = None,
     coverage_assessor: Callable[
         ..., academic_claim_coverage.ClaimCoverageAssessment
     ]
@@ -706,6 +738,9 @@ def run_academic_first_stage(
     if methodological_retriever is None:
         methodological_retriever = retrieve_methodological_context
 
+    if claim_methodological_retriever is None:
+        claim_methodological_retriever = retrieve_methodological_context
+
     local_guidance = methodological_retriever(question)
 
     if local_guidance.passages:
@@ -732,5 +767,6 @@ def run_academic_first_stage(
         claim_locator=claim_locator,
         claim_assessor=claim_assessor,
         methodological_assessor=methodological_assessor,
+        claim_methodological_retriever=claim_methodological_retriever,
         coverage_assessor=coverage_assessor,
     )
