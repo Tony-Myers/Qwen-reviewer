@@ -1037,6 +1037,34 @@ assert [
 print("PASS: discovery and representation remain separate in composition")
 
 
+print("\n[29b] two-stage coverage retains the independent atomic discovery set")
+
+assert [
+    claim.statement
+    for claim in two_stage_result.discovered_claims
+] == [
+    "For symmetric posteriors the ETI and HDI may be similar.",
+    (
+        "In some skewed posteriors the HDI may be "
+        "narrower than the ETI."
+    ),
+    "A narrower interval is not automatically preferable.",
+]
+
+assert [
+    claim.statement
+    for claim in two_stage_result.missing_claims
+] == [
+    (
+        "In some skewed posteriors the HDI may be "
+        "narrower than the ETI."
+    ),
+    "A narrower interval is not automatically preferable.",
+]
+
+print("PASS: independent discovery is retained separately from missing claims")
+
+
 print("\n[30] two-stage coverage retains malformed representation candidates")
 
 malformed_candidate_statement = (

@@ -57,6 +57,8 @@ Simply stating that "only 5% was missing" is not sufficient.
 
 The mechanism producing missingness matters more than the percentage alone.
 
+MCAR is sufficient for unbiased complete-case estimation in many settings, but it is not a universally necessary condition. Under some MAR mechanisms, complete-case estimates can remain unbiased; this depends on the analysis model, the estimand, and how missingness relates to the variables in that model. Reviewers should therefore not assume either that complete-case analysis is unbiased only under MCAR or that MAR automatically implies biased complete-case estimates.
+
 ##### What are MCAR, MAR and MNAR?
 
 **MCAR (Missing Completely At Random)**
@@ -78,6 +80,12 @@ MNAR is often possible.
 Neither assumption can usually be confirmed from the observed data alone.
 
 A partial exception is worth knowing. MCAR is testable to a limited extent, and a reviewer may meet Little's MCAR test in a manuscript. Failing it is evidence against MCAR; passing it is not evidence for it, and it says nothing at all about the distinction between MAR and MNAR, which is the distinction that matters.
+
+##### What can baseline comparisons between completers and dropouts show?
+
+Comparing observed baseline characteristics between participants who complete follow-up and those who drop out can describe whether the groups differ on those measured characteristics. Such comparisons do not establish the missing-data mechanism. In particular, finding no statistically significant baseline differences does not demonstrate MCAR and does not show that restricting the analysis to complete cases is unbiased. A non-significant comparison may reflect limited information or statistical power rather than absence of a meaningful difference.
+
+Conversely, observed baseline differences may provide evidence that dropout is related to measured participant characteristics, but they do not by themselves establish MAR or MNAR. Baseline comparisons cannot determine whether missingness depends on unobserved information or on the missing outcome itself. Reviewers should therefore treat completer-dropout comparisons as descriptive information about observed differences, not as a test that validates a missing-data assumption.
 
 ##### Can MAR be tested?
 

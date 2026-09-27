@@ -2738,6 +2738,115 @@ print("PASS: coverage-discovered claim enters the same methodological path")
 print("PASS: discovered claim retains its methodological assessment")
 
 
+print("\n[claim coverage] atomic discovery prevents compound-claim masking")
+
+compound_cca_claim = academic_chat.TechnicalClaim(
+    type="conditional statement",
+    concept="complete-case analysis",
+    statement=(
+        "Complete-case analysis is generally biased unless the missing data "
+        "mechanism is Missing Completely at Random (MCAR). MCAR is sufficient "
+        "for unbiased estimation in many settings but not universally "
+        "necessary; under some Missing at Random (MAR) mechanisms, "
+        "complete-case estimates can remain unbiased depending on the "
+        "analysis model and estimand."
+    ),
+    parameterisation=None,
+)
+
+atomic_mcar_claim = academic_chat.TechnicalClaim(
+    type="conditional statement",
+    concept="complete-case analysis",
+    statement=(
+        "Complete-case analysis is generally biased unless the missing data "
+        "mechanism is Missing Completely at Random (MCAR)."
+    ),
+    parameterisation=None,
+)
+
+atomic_mar_claim = academic_chat.TechnicalClaim(
+    type="conditional statement",
+    concept="complete-case analysis",
+    statement=(
+        "Under some Missing at Random (MAR) mechanisms, complete-case "
+        "estimates can remain unbiased."
+    ),
+    parameterisation=None,
+)
+
+compound_cca_draft = academic_chat.AcademicDraft(
+    answer_draft=(
+        compound_cca_claim.statement
+    ),
+    references=[],
+    source_claims=[],
+    technical_claims=[compound_cca_claim],
+)
+
+
+def fake_atomic_coverage(*, answer_draft, existing_claims):
+    assert answer_draft == compound_cca_draft.answer_draft
+    assert existing_claims == [compound_cca_claim]
+    return academic_claim_coverage.ClaimCoverageAssessment.from_result(
+        academic_claim_coverage.ClaimCoverageResult(
+            missing_claims=[],
+            discovered_claims=[
+                atomic_mcar_claim,
+                atomic_mar_claim,
+            ],
+        )
+    )
+
+
+atomic_method_calls = []
+
+
+def fake_atomic_methodological_assessor(*, prompt, schema):
+    atomic_method_calls.append(prompt)
+
+    if atomic_mcar_claim.statement in prompt:
+        return {
+            "status": "methodological_conflict",
+            "reason": (
+                "The supplied guidance states that MCAR is not universally "
+                "necessary for unbiased complete-case estimation."
+            ),
+        }
+
+    return {
+        "status": "methodologically_consistent",
+        "reason": "Synthetic guidance is consistent with this proposition.",
+    }
+
+
+atomic_masking_result = academic_orchestrator.assess_academic_draft(
+    compound_cca_draft,
+    local_guidance=coverage_method_guidance,
+    technical_verifier=fake_technical_verifier,
+    methodological_assessor=fake_atomic_methodological_assessor,
+    coverage_assessor=fake_atomic_coverage,
+)
+
+assert [
+    result.claim.statement
+    for result in atomic_masking_result.technical_claims
+] == [
+    compound_cca_claim.statement,
+    atomic_mcar_claim.statement,
+    atomic_mar_claim.statement,
+]
+
+assert len(atomic_method_calls) == 3
+
+assert atomic_masking_result.release.status == (
+    "blocked_methodological_conflict"
+)
+assert atomic_masking_result.release.safe_to_present is False
+
+print("PASS: independently discovered atomic claims are checked separately")
+print("PASS: atomic methodological conflict cannot be masked by compound claim")
+
+
 print("\n[claim coverage] assessment state remains explicit")
 
 no_missing_calls = []

@@ -11,7 +11,7 @@ This module validates that proposal and converts accepted omissions into
 application-owned TechnicalClaim objects for later independent checking.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import academic_chat
@@ -32,9 +32,12 @@ class ClaimRepresentation:
 
 @dataclass
 class ClaimCoverageResult:
-    """Application-owned technical claims proposed as missing from an answer."""
+    """Application-owned result of independent technical-claim coverage."""
 
     missing_claims: list[academic_chat.TechnicalClaim]
+    discovered_claims: list[academic_chat.TechnicalClaim] = field(
+        default_factory=list
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -909,4 +912,5 @@ def assess_claim_coverage_two_stage(
 
     return ClaimCoverageResult(
         missing_claims=missing_claims,
+        discovered_claims=discovered_claims,
     )

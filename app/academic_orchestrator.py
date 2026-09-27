@@ -624,9 +624,57 @@ def assess_academic_draft(
             )
 
     if claim_coverage.result is not None:
-        claims_for_assessment.extend(
-            claim_coverage.result.missing_claims
-        )
+        assessed_keys = {
+            (
+                claim.type.strip(),
+                claim.concept.strip(),
+                claim.statement.strip(),
+                (
+                    claim.parameterisation.strip()
+                    if isinstance(claim.parameterisation, str)
+                    else claim.parameterisation
+                ),
+            )
+            for claim in claims_for_assessment
+        }
+
+        for claim in claim_coverage.result.discovered_claims:
+            key = (
+                claim.type.strip(),
+                claim.concept.strip(),
+                claim.statement.strip(),
+                (
+                    claim.parameterisation.strip()
+                    if isinstance(claim.parameterisation, str)
+                    else claim.parameterisation
+                ),
+            )
+
+            if key in assessed_keys:
+                continue
+
+            claims_for_assessment.append(claim)
+            assessed_keys.add(key)
+
+        # Compatibility for application-owned coverage results produced by
+        # callers that supply missing claims without a discovery set.
+        for claim in claim_coverage.result.missing_claims:
+            key = (
+                claim.type.strip(),
+                claim.concept.strip(),
+                claim.statement.strip(),
+                (
+                    claim.parameterisation.strip()
+                    if isinstance(claim.parameterisation, str)
+                    else claim.parameterisation
+                ),
+            )
+
+            if key in assessed_keys:
+                continue
+
+            claims_for_assessment.append(claim)
+            assessed_keys.add(key)
 
     technical_claims = []
 

@@ -96,6 +96,33 @@ check("'should heteroscedasticity be corrected' -> remedies section remains with
       any("what should authors do if heteroscedasticity is present"
           in h.heading.lower() for h in hetero))
 
+# Complete-case analysis is not restricted to MCAR in every setting. The
+# retrieved guidance must expose that qualification rather than allowing the
+# common but over-strong "unbiased only under MCAR" rule to pass unchallenged.
+cca = index.search(
+    "Complete-case analysis is generally biased unless the data are "
+    "Missing Completely at Random (MCAR).",
+    k=3,
+)
+check("'complete-case analysis is biased unless MCAR' -> top passage gives the qualification",
+      bool(cca)
+      and "not a universally necessary condition" in cca[0].text.lower()
+      and "under some mar mechanisms" in cca[0].text.lower())
+
+
+baseline_dropout = index.search(
+    "No statistically significant baseline differences between completers "
+    "and dropouts demonstrate that missing data are MCAR.",
+    k=3,
+)
+check("completer-dropout baseline comparison -> missing-data limitation",
+      bool(baseline_dropout)
+      and any(
+          "does not demonstrate mcar" in passage.text.lower()
+          and "do not establish the missing-data mechanism" in passage.text.lower()
+          for passage in baseline_dropout
+      ))
+
 # Known coverage gap rather than a retrieval fault: prior predictive checks are
 # required by the BARG and appear in exactly one passage, inside the BARG
 # summary table, with no section of their own in any note. Recorded here so the
