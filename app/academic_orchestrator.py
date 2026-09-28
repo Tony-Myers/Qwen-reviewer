@@ -802,6 +802,7 @@ def run_academic_first_stage(
         ..., academic_claim_coverage.ClaimCoverageAssessment
     ]
     | None = None,
+    material_restriction_assessor: Callable[..., Any] | None = None,
 ) -> AcademicFirstStageResult:
     """
     Generate a local academic draft, verify its proposed references and
@@ -860,4 +861,5 @@ def run_academic_first_stage(
         methodological_assessor=methodological_assessor,
         claim_methodological_retriever=claim_methodological_retriever,
         coverage_assessor=coverage_assessor,
+        material_restriction_assessor=material_restriction_assessor,
     )

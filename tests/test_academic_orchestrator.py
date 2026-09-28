@@ -3032,6 +3032,57 @@ print("PASS: deterministic source context remains retained without semantic asse
 print("PASS: absent restriction assessment remains explicit as None")
 
 
+print(
+    "\n[claim coverage] first-stage runner propagates restriction assessor"
+)
+
+first_stage_restriction_calls = []
+
+
+def first_stage_duplicate_generator(
+    model,
+    tokenizer,
+    question,
+    *,
+    methodological_context=None,
+):
+    return duplicate_occurrence_draft
+
+
+def first_stage_restriction_assessor(*, prompt, schema):
+    first_stage_restriction_calls.append((prompt, schema))
+    return {"material_restriction_omitted": False}
+
+
+first_stage_restriction_result = (
+    academic_orchestrator.run_academic_first_stage(
+        model,
+        tokenizer,
+        question,
+        draft_generator=first_stage_duplicate_generator,
+        technical_verifier=fake_technical_verifier,
+        methodological_retriever=lambda question: coverage_method_guidance,
+        coverage_assessor=fake_duplicate_coverage,
+        material_restriction_assessor=first_stage_restriction_assessor,
+    )
+)
+
+assert len(first_stage_restriction_calls) == 1
+assert len(
+    first_stage_restriction_result.discovered_claim_assessments
+) == 1
+assert (
+    first_stage_restriction_result
+    .discovered_claim_assessments[0]
+    .material_restriction
+    .material_restriction_omitted
+    is False
+)
+
+print("PASS: first-stage runner propagates restriction assessor")
+print("PASS: first-stage result retains occurrence-level restriction state")
+
+
 print("\n[claim coverage] assessment state remains explicit")
 
 no_missing_calls = []

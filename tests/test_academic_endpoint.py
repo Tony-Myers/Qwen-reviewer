@@ -288,6 +288,12 @@ try:
         )
 
         check(
+            first_kwargs["material_restriction_assessor"]
+            is server.assess_academic_material_restriction,
+            "first stage receives production material-restriction assessment",
+        )
+
+        check(
             reassessment_value is reassessment_sentinel,
             "reassessment closure delegates to ordinary draft assessment",
         )
@@ -341,6 +347,12 @@ try:
             reassess_kwargs["methodological_assessor"]
             is server.assess_academic_methodology,
             "reassessment repeats production methodological assessment",
+        )
+
+        check(
+            reassess_kwargs["material_restriction_assessor"]
+            is server.assess_academic_material_restriction,
+            "reassessment repeats production material-restriction assessment",
         )
 
         check(
@@ -681,6 +693,85 @@ try:
         check(
             assessment.evidence[0].page_number == 7,
             "application-owned physical page provenance survives assessment",
+        )
+
+    finally:
+        server.academic_claim_assessor.generate_claim_assessor_output = (
+            original_claim_assessor
+        )
+
+
+    print(
+        "\n[9b] production material-restriction assessor "
+        "preserves structured-output contract"
+    )
+
+    material_restriction_calls = []
+    material_restriction_schema = (
+        academic_claim_coverage.material_restriction_output_schema()
+    )
+
+    def fake_material_restriction_output(
+        model,
+        tokenizer,
+        prompt,
+        schema,
+        *,
+        max_tokens=512,
+    ):
+        material_restriction_calls.append(
+            {
+                "model": model,
+                "tokenizer": tokenizer,
+                "prompt": prompt,
+                "schema": schema,
+                "max_tokens": max_tokens,
+            }
+        )
+        return {"material_restriction_omitted": True}
+
+    try:
+        server.academic_claim_assessor.generate_claim_assessor_output = (
+            fake_material_restriction_output
+        )
+        server.model = "LOCAL-MODEL"
+        server.tokenizer = "LOCAL-TOKENIZER"
+
+        material_restriction_output = (
+            server.assess_academic_material_restriction(
+                prompt="Synthetic bounded restriction prompt.",
+                schema=material_restriction_schema,
+            )
+        )
+
+        check(
+            len(material_restriction_calls) == 1,
+            "material-restriction assessor invokes local model adapter exactly once",
+        )
+
+        check(
+            material_restriction_calls[0]["model"] == "LOCAL-MODEL"
+            and material_restriction_calls[0]["tokenizer"]
+            == "LOCAL-TOKENIZER",
+            "material-restriction assessment uses the configured local model",
+        )
+
+        check(
+            material_restriction_calls[0]["prompt"]
+            == "Synthetic bounded restriction prompt.",
+            "material-restriction prompt is forwarded unchanged",
+        )
+
+        check(
+            material_restriction_calls[0]["schema"]
+            == material_restriction_schema,
+            "material-restriction schema is forwarded unchanged",
+        )
+
+        check(
+            material_restriction_output
+            == {"material_restriction_omitted": True},
+            "material-restriction model output is returned unchanged",
         )
 
     finally:

@@ -637,6 +637,16 @@ def assess_academic_methodology(*, prompt, schema):
     )
 
 
+def assess_academic_material_restriction(*, prompt, schema):
+    """Assess material restriction omission using the configured local model."""
+    return academic_claim_assessor.generate_claim_assessor_output(
+        model,
+        tokenizer,
+        prompt,
+        schema,
+    )
+
+
 ACADEMIC_COVERAGE_DISCOVERY_MAX_TOKENS = 2000
 ACADEMIC_COVERAGE_REPRESENTATION_MAX_TOKENS = 256
 
@@ -759,6 +769,9 @@ async def academic_chat_first_stage(request: dict):
             claim_assessor=assess_academic_claim,
             methodological_assessor=assess_academic_methodology,
             coverage_assessor=assess_academic_claim_coverage,
+            material_restriction_assessor=(
+                assess_academic_material_restriction
+            ),
         )
 
     def draft_assessor(draft, *, local_guidance):
@@ -774,6 +787,9 @@ async def academic_chat_first_stage(request: dict):
                 academic_orchestrator.retrieve_methodological_context
             ),
             coverage_assessor=assess_academic_claim_coverage,
+            material_restriction_assessor=(
+                assess_academic_material_restriction
+            ),
         )
 
     try:
