@@ -727,6 +727,9 @@ try:
                             "A 95% ETI leaves 2.5% probability in each tail."
                         ),
                         "parameterisation": None,
+                        "source_anchor": (
+                            "A 95% ETI leaves 2.5% probability in each tail"
+                        ),
                     },
                     {
                         "type": "methodological",
@@ -736,6 +739,10 @@ try:
                             "narrower than the ETI."
                         ),
                         "parameterisation": None,
+                        "source_anchor": (
+                            "For many skewed distributions, the HDI may be "
+                            "narrower than the ETI"
+                        ),
                     },
                 ]
             }
@@ -760,7 +767,11 @@ try:
         server.tokenizer = "LOCAL-TOKENIZER"
 
         coverage_assessment = server.assess_academic_claim_coverage(
-            answer_draft="Synthetic ETI and HDI answer.",
+            answer_draft=(
+                "A 95% ETI leaves 2.5% probability in each tail. "
+                "For many skewed distributions, the HDI may be narrower "
+                "than the ETI."
+            ),
             existing_claims=[existing_claim],
         )
 
@@ -788,8 +799,13 @@ try:
             "discovery has its own high-recall token budget",
         )
         check(
-            "Synthetic ETI and HDI answer." in coverage_calls[0]["prompt"]
-            and existing_claim.statement not in coverage_calls[0]["prompt"],
+            (
+                "For many skewed distributions, the HDI may be narrower "
+                "than the ETI."
+            )
+            in coverage_calls[0]["prompt"]
+            and "ANSWER DRAFT" in coverage_calls[0]["prompt"]
+            and "EXISTING TECHNICAL CLAIMS" not in coverage_calls[0]["prompt"],
             "discovery sees the answer but not existing claims",
         )
         check(
@@ -920,6 +936,10 @@ try:
                                 "more precise."
                             ),
                             "parameterisation": None,
+                            "source_anchor": (
+                                "A narrower HDI is not automatically "
+                                "more precise"
+                            ),
                         }
                     ]
                 }
@@ -935,7 +955,9 @@ try:
             )
 
             coverage_assessment = server.assess_academic_claim_coverage(
-                answer_draft="Synthetic answer.",
+                answer_draft=(
+                    "A narrower HDI is not automatically more precise."
+                ),
                 existing_claims=[existing_claim],
             )
 

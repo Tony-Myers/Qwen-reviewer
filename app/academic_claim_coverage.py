@@ -12,6 +12,7 @@ application-owned TechnicalClaim objects for later independent checking.
 """
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Callable
 
 import academic_chat
@@ -20,6 +21,38 @@ import academic_chat
 class ClaimCoverageOutputError(ValueError):
     """Raised when untrusted claim-coverage assessor output is invalid."""
 
+
+class MaterialRestrictionOutputError(ValueError):
+    """Raised when untrusted material-restriction output is invalid."""
+
+
+@dataclass
+class DiscoveredClaim:
+    """Application-owned proposition with verified answer provenance."""
+
+    claim: academic_chat.TechnicalClaim
+    source_anchor: str
+    source_start: int
+    source_end: int
+
+
+@dataclass
+class ClaimSourceContext:
+    """Application-owned source sentence and bounded preceding context."""
+
+    source_sentence: str
+    source_sentence_start: int
+    source_sentence_end: int
+    context_excerpt: str
+    context_start: int
+    context_end: int
+
+
+@dataclass
+class MaterialRestrictionAssessment:
+    """Application-owned material-restriction omission decision."""
+
+    material_restriction_omitted: bool
 
 
 @dataclass
@@ -135,6 +168,79 @@ class ClaimCoverageAssessment:
         }
 
 
+
+
+def material_restriction_output_schema() -> dict[str, Any]:
+    """Return the strict schema for material-restriction omission."""
+    return {
+        "type": "object",
+        "properties": {
+            "material_restriction_omitted": {
+                "type": "boolean",
+            },
+        },
+        "required": ["material_restriction_omitted"],
+        "additionalProperties": False,
+    }
+
+
+def build_material_restriction_prompt(
+    *,
+    candidate_claim: academic_chat.TechnicalClaim,
+    source_context: ClaimSourceContext,
+) -> str:
+    """Build a prompt limited to material-restriction omission."""
+    if not isinstance(candidate_claim, academic_chat.TechnicalClaim):
+        raise TypeError(
+            "Candidate claim must be a TechnicalClaim object."
+        )
+
+    if not isinstance(source_context, ClaimSourceContext):
+        raise TypeError(
+            "Source context must be a ClaimSourceContext object."
+        )
+
+    parameterisation = (
+        candidate_claim.parameterisation
+        if candidate_claim.parameterisation is not None
+        else "not specified"
+    )
+
+    return f"""Compare the SOURCE SENTENCE and STANDALONE TECHNICAL CLAIM using
+the supplied LOCAL ANSWER CONTEXT.
+
+STANDALONE TECHNICAL CLAIM
+type: {candidate_claim.type}
+concept: {candidate_claim.concept}
+statement: {candidate_claim.statement}
+parameterisation: {parameterisation}
+
+SOURCE SENTENCE
+{source_context.source_sentence}
+
+LOCAL ANSWER CONTEXT
+{source_context.context_excerpt}
+
+RULES
+Decide only whether the standalone technical claim omits a material restriction
+expressed by the source sentence or established by the local answer context as
+governing the source proposition.
+A material restriction can include scope, condition, population, study design,
+referent, modality, direction, parameterisation, causal status, or another
+qualification that changes what is asserted.
+Do not treat information as a restriction merely because it appears in the
+preceding context. It must govern or supply meaning to the source proposition.
+Use only the technical claim, source sentence, and local answer context supplied
+above.
+Do not use outside knowledge.
+Do not judge whether either statement is scientifically correct.
+Do not assess methodological correctness, evidential support, or source
+verification.
+Do not rewrite, repair, strengthen, weaken, or explain the claim.
+
+Return exactly:
+- material_restriction_omitted
+"""
 
 
 def claim_representation_output_schema() -> dict[str, Any]:
@@ -278,12 +384,17 @@ def claim_discovery_output_schema() -> dict[str, Any]:
                         "parameterisation": {
                             "type": ["string", "null"],
                         },
+                        "source_anchor": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
                     },
                     "required": [
                         "type",
                         "concept",
                         "statement",
                         "parameterisation",
+                        "source_anchor",
                     ],
                     "additionalProperties": False,
                 },
@@ -344,15 +455,20 @@ For each material proposition return exactly:
 - concept
 - statement
 - parameterisation
+- source_anchor
 
 Use null when parameterisation is not specified.
+source_anchor must be a short verbatim contiguous span from the answer that
+uniquely identifies where the proposition is stated. Prefer the shortest span
+that is unique within the answer. Do not paraphrase, insert ellipses, or combine
+non-contiguous text in source_anchor.
 
 If the answer contains no material checkable proposition, return an empty
 discovered_claims array.
 
-Return only the required discovered_claims object. Do not return verification
-status, coverage status, confidence, provenance, reasoning, commentary, or the
-answer draft.
+Return only the required discovered_claims object. source_anchor is the only
+permitted model-proposed provenance. Do not return verification status,
+coverage status, confidence, reasoning, commentary, or the answer draft.
 """
 
 
@@ -504,6 +620,141 @@ status, coverage status, confidence, provenance, reasoning, commentary, the
 answer draft, or the existing claims.
 """
 
+
+def resolve_claim_source_context(
+    *,
+    answer_draft: str,
+    source_start: int,
+    source_end: int,
+) -> ClaimSourceContext:
+    """Resolve the containing sentence and one preceding sentence."""
+
+    if (
+        source_start < 0
+        or source_end <= source_start
+        or source_end > len(answer_draft)
+    ):
+        raise ValueError("Source span is outside the answer draft.")
+
+    sentence_spans: list[tuple[int, int]] = []
+    sentence_start = 0
+
+    for match in re.finditer(r"[.!?](?=\s|$)", answer_draft):
+        sentence_end = match.end()
+
+        while (
+            sentence_start < sentence_end
+            and answer_draft[sentence_start].isspace()
+        ):
+            sentence_start += 1
+
+        if sentence_start < sentence_end:
+            sentence_spans.append((sentence_start, sentence_end))
+
+        sentence_start = sentence_end
+
+    while (
+        sentence_start < len(answer_draft)
+        and answer_draft[sentence_start].isspace()
+    ):
+        sentence_start += 1
+
+    if sentence_start < len(answer_draft):
+        sentence_spans.append((sentence_start, len(answer_draft)))
+
+    source_index = None
+
+    for index, (start, end) in enumerate(sentence_spans):
+        if start <= source_start and source_end <= end:
+            source_index = index
+            break
+
+    if source_index is None:
+        raise ValueError("Source span does not resolve to one sentence.")
+
+    source_sentence_start, source_sentence_end = sentence_spans[source_index]
+
+    context_index = max(0, source_index - 1)
+    context_start = sentence_spans[context_index][0]
+    context_end = source_sentence_end
+
+    return ClaimSourceContext(
+        source_sentence=answer_draft[
+            source_sentence_start:source_sentence_end
+        ],
+        source_sentence_start=source_sentence_start,
+        source_sentence_end=source_sentence_end,
+        context_excerpt=answer_draft[context_start:context_end],
+        context_start=context_start,
+        context_end=context_end,
+    )
+
+
+def _parse_discovered_claim(
+    value: Any,
+    index: int,
+    *,
+    answer_draft: str,
+) -> DiscoveredClaim:
+    """Parse one discovered proposition and resolve unique answer provenance."""
+    if not isinstance(value, dict):
+        raise ClaimCoverageOutputError(
+            f"discovered_claims[{index}] must be an object."
+        )
+
+    expected = {
+        "type",
+        "concept",
+        "statement",
+        "parameterisation",
+        "source_anchor",
+    }
+
+    if set(value) != expected:
+        raise ClaimCoverageOutputError(
+            f"discovered_claims[{index}] must contain exactly "
+            "type, concept, statement, parameterisation, and source_anchor."
+        )
+
+    claim_value = {
+        field: value[field]
+        for field in (
+            "type",
+            "concept",
+            "statement",
+            "parameterisation",
+        )
+    }
+    claim = _parse_missing_claim(claim_value, index)
+
+    source_anchor = value["source_anchor"]
+    if not isinstance(source_anchor, str) or not source_anchor.strip():
+        raise ClaimCoverageOutputError(
+            f"discovered_claims[{index}].source_anchor "
+            "must be non-empty text."
+        )
+
+    source_anchor = source_anchor.strip()
+    source_start = answer_draft.find(source_anchor)
+
+    if source_start < 0:
+        raise ClaimCoverageOutputError(
+            f"discovered_claims[{index}].source_anchor "
+            "must be a verbatim contiguous span from the answer draft."
+        )
+
+    if answer_draft.find(source_anchor, source_start + 1) >= 0:
+        raise ClaimCoverageOutputError(
+            f"discovered_claims[{index}].source_anchor "
+            "must occur exactly once in the answer draft."
+        )
+
+    return DiscoveredClaim(
+        claim=claim,
+        source_anchor=source_anchor,
+        source_start=source_start,
+        source_end=source_start + len(source_anchor),
+    )
 
 def _parse_missing_claim(
     value: Any,
@@ -665,6 +916,74 @@ def assess_claim_coverage(
 
 
 
+def build_material_restriction_assessment(
+    *,
+    candidate_claim: academic_chat.TechnicalClaim,
+    source_context: ClaimSourceContext,
+    assessor_output: Any,
+) -> MaterialRestrictionAssessment:
+    """Validate an untrusted material-restriction omission decision."""
+    if not isinstance(candidate_claim, academic_chat.TechnicalClaim):
+        raise TypeError(
+            "Candidate claim must be a TechnicalClaim object."
+        )
+
+    if not isinstance(source_context, ClaimSourceContext):
+        raise TypeError(
+            "Source context must be a ClaimSourceContext object."
+        )
+
+    if not isinstance(assessor_output, dict):
+        raise MaterialRestrictionOutputError(
+            "Material restriction assessor output must be an object."
+        )
+
+    if set(assessor_output) != {"material_restriction_omitted"}:
+        raise MaterialRestrictionOutputError(
+            "Material restriction assessor output must contain exactly "
+            "'material_restriction_omitted'."
+        )
+
+    material_restriction_omitted = assessor_output[
+        "material_restriction_omitted"
+    ]
+
+    if not isinstance(material_restriction_omitted, bool):
+        raise MaterialRestrictionOutputError(
+            "Material restriction material_restriction_omitted "
+            "must be boolean."
+        )
+
+    return MaterialRestrictionAssessment(
+        material_restriction_omitted=material_restriction_omitted,
+    )
+
+
+def assess_material_restriction(
+    *,
+    candidate_claim: academic_chat.TechnicalClaim,
+    source_context: ClaimSourceContext,
+    assessor: Callable[..., Any],
+) -> MaterialRestrictionAssessment:
+    """Assess whether an atomic claim omits a material source restriction."""
+    prompt = build_material_restriction_prompt(
+        candidate_claim=candidate_claim,
+        source_context=source_context,
+    )
+    schema = material_restriction_output_schema()
+
+    assessor_output = assessor(
+        prompt=prompt,
+        schema=schema,
+    )
+
+    return build_material_restriction_assessment(
+        candidate_claim=candidate_claim,
+        source_context=source_context,
+        assessor_output=assessor_output,
+    )
+
+
 def build_claim_representation(
     *,
     candidate_claim: academic_chat.TechnicalClaim,
@@ -736,7 +1055,7 @@ def discover_answer_claims(
     *,
     answer_draft: str,
     assessor: Callable[..., Any],
-) -> list[academic_chat.TechnicalClaim]:
+) -> list[DiscoveredClaim]:
     """Discover material atomic propositions without representation filtering."""
     prompt = build_claim_discovery_prompt(
         answer_draft=answer_draft,
@@ -769,13 +1088,17 @@ def discover_answer_claims(
     discovered_keys = set()
 
     for index, value in enumerate(raw_discovered):
-        claim = _parse_missing_claim(value, index)
-        key = _claim_key(claim)
+        discovered_claim = _parse_discovered_claim(
+            value,
+            index,
+            answer_draft=answer_draft,
+        )
+        key = _claim_key(discovered_claim.claim)
 
         if key in discovered_keys:
             continue
 
-        discovered.append(claim)
+        discovered.append(discovered_claim)
         discovered_keys.add(key)
 
     return discovered
@@ -904,13 +1227,18 @@ def assess_claim_coverage_two_stage(
             assessor=assessor,
         )
 
+    discovered_technical_claims = [
+        discovered.claim
+        for discovered in discovered_claims
+    ]
+
     missing_claims = filter_discovered_claims(
-        discovered_claims=discovered_claims,
+        discovered_claims=discovered_technical_claims,
         existing_claims=existing_claims,
         representation_assessor=representation_assessor,
     )
 
     return ClaimCoverageResult(
         missing_claims=missing_claims,
-        discovered_claims=discovered_claims,
+        discovered_claims=discovered_technical_claims,
     )

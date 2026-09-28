@@ -541,6 +541,11 @@ assert set(discovered_item["required"]) == {
     "concept",
     "statement",
     "parameterisation",
+    "source_anchor",
+}
+assert discovered_item["properties"]["source_anchor"] == {
+    "type": "string",
+    "minLength": 1,
 }
 assert discovered_item["additionalProperties"] is False
 
@@ -577,6 +582,9 @@ print("\n[19] injected discovery assessor produces application-owned claims")
 
 discovery_captured = {}
 
+recommendation_anchor = "covariate is scientifically relevant"
+interpretation_anchor = "accurate or preferable"
+
 
 def fake_discovery_assessor(*, prompt, schema):
     discovery_captured["prompt"] = prompt
@@ -591,6 +599,7 @@ def fake_discovery_assessor(*, prompt, schema):
                     "the covariate is scientifically relevant."
                 ),
                 "parameterisation": None,
+                "source_anchor": recommendation_anchor,
             },
             {
                 "type": "interpretation",
@@ -600,6 +609,7 @@ def fake_discovery_assessor(*, prompt, schema):
                     "accurate or preferable."
                 ),
                 "parameterisation": None,
+                "source_anchor": interpretation_anchor,
             },
         ]
     }
@@ -612,19 +622,44 @@ discovered = coverage.discover_answer_claims(
 
 assert len(discovered) == 2
 assert all(
-    isinstance(claim, academic_chat.TechnicalClaim)
-    for claim in discovered
+    isinstance(item, coverage.DiscoveredClaim)
+    for item in discovered
 )
-assert discovered[0].statement == (
+assert all(
+    isinstance(item.claim, academic_chat.TechnicalClaim)
+    for item in discovered
+)
+assert discovered[0].claim.statement == (
     "Analysts should choose the adjusted model when "
     "the covariate is scientifically relevant."
+)
+assert discovered[0].source_anchor == recommendation_anchor
+assert discovered[0].source_start == embedded_answer.index(
+    recommendation_anchor
+)
+assert discovered[0].source_end == (
+    discovered[0].source_start + len(recommendation_anchor)
+)
+assert discovered[1].claim.statement == (
+    "A smaller estimate is not automatically more "
+    "accurate or preferable."
+)
+assert discovered[1].source_anchor == interpretation_anchor
+assert discovered[1].source_start == embedded_answer.index(
+    interpretation_anchor
+)
+assert discovered[1].source_end == (
+    discovered[1].source_start + len(interpretation_anchor)
 )
 assert discovery_captured["schema"] == (
     coverage.claim_discovery_output_schema()
 )
 assert embedded_answer in discovery_captured["prompt"]
 
-print("PASS: pure discovery returns application-owned TechnicalClaims")
+print(
+    "PASS: pure discovery returns application-owned claims "
+    "with verified provenance"
+)
 
 
 print("\n[20] representation schema exposes decision and source index only")
@@ -965,6 +1000,7 @@ def two_stage_assessor(*, prompt, schema):
                         "may be similar."
                     ),
                     "parameterisation": None,
+                    "source_anchor": "two intervals may be similar",
                 },
                 {
                     "type": "comparative",
@@ -974,6 +1010,7 @@ def two_stage_assessor(*, prompt, schema):
                         "narrower than the ETI."
                     ),
                     "parameterisation": None,
+                    "source_anchor": "HDI may be narrower than the ETI",
                 },
                 {
                     "type": "interpretive",
@@ -982,6 +1019,7 @@ def two_stage_assessor(*, prompt, schema):
                         "A narrower interval is not automatically preferable."
                     ),
                     "parameterisation": None,
+                    "source_anchor": "automatically preferable",
                 },
             ]
         }
@@ -1081,6 +1119,7 @@ def malformed_two_stage_assessor(*, prompt, schema):
                     "concept": "precision",
                     "statement": malformed_candidate_statement,
                     "parameterisation": None,
+                    "source_anchor": malformed_candidate_statement,
                 }
             ]
         }
@@ -1140,6 +1179,8 @@ print("PASS: discovery failure cannot masquerade as successful coverage")
 
 print("\n[32] unexpected representation fault propagates from two-stage coverage")
 
+broken_two_stage_answer = malformed_candidate_statement
+
 
 def broken_two_stage_assessor(*, prompt, schema):
     if schema == coverage.claim_discovery_output_schema():
@@ -1150,6 +1191,7 @@ def broken_two_stage_assessor(*, prompt, schema):
                     "concept": "precision",
                     "statement": malformed_candidate_statement,
                     "parameterisation": None,
+                    "source_anchor": malformed_candidate_statement,
                 }
             ]
         }
@@ -1162,7 +1204,7 @@ def broken_two_stage_assessor(*, prompt, schema):
 
 try:
     coverage.assess_claim_coverage_two_stage(
-        answer_draft=two_stage_answer,
+        answer_draft=broken_two_stage_answer,
         existing_claims=two_stage_existing,
         assessor=broken_two_stage_assessor,
     )
@@ -1174,3 +1216,416 @@ else:
     )
 
 print("PASS: unexpected two-stage faults remain visible")
+
+print("\n[29c] claim discovery resolves a unique verbatim source anchor")
+
+rct_context_answer = (
+    "In randomised trials, the primary rationale for covariate adjustment "
+    "is statistical efficiency, not confounding control. Adjusting for "
+    "baseline variables that strongly predict the outcome reduces residual "
+    "variation, narrows confidence intervals, and increases power."
+)
+
+rct_source_anchor = "narrows confidence intervals, and increases power"
+
+rct_discovery_output = {
+    "discovered_claims": [
+        {
+            "type": "methodological",
+            "concept": "covariate adjustment",
+            "statement": (
+                "Adjusting for baseline variables that strongly predict "
+                "the outcome increases power."
+            ),
+            "parameterisation": None,
+            "source_anchor": rct_source_anchor,
+        }
+    ]
+}
+
+
+def rct_provenance_assessor(*, prompt, schema):
+    assert rct_context_answer in prompt
+    return rct_discovery_output
+
+
+rct_discovered = coverage.discover_answer_claims(
+    answer_draft=rct_context_answer,
+    assessor=rct_provenance_assessor,
+)
+
+assert len(rct_discovered) == 1
+assert rct_discovered[0].claim.statement == (
+    "Adjusting for baseline variables that strongly predict "
+    "the outcome increases power."
+)
+assert rct_discovered[0].source_anchor == rct_source_anchor
+assert rct_discovered[0].source_start == rct_context_answer.index(
+    rct_source_anchor
+)
+assert rct_discovered[0].source_end == (
+    rct_discovered[0].source_start + len(rct_source_anchor)
+)
+
+print("PASS: unique verbatim source anchor resolves to exact answer position")
+
+
+print("\n[29d] claim discovery rejects missing or ambiguous source anchors")
+
+
+def missing_anchor_assessor(*, prompt, schema):
+    return {
+        "discovered_claims": [
+            {
+                "type": "methodological",
+                "concept": "covariate adjustment",
+                "statement": (
+                    "Adjusting for baseline variables that strongly predict "
+                    "the outcome increases power."
+                ),
+                "parameterisation": None,
+                "source_anchor": "text that is not in the answer",
+            }
+        ]
+    }
+
+
+try:
+    coverage.discover_answer_claims(
+        answer_draft=rct_context_answer,
+        assessor=missing_anchor_assessor,
+    )
+except coverage.ClaimCoverageOutputError:
+    pass
+else:
+    raise AssertionError(
+        "Missing discovery source anchor was unexpectedly accepted."
+    )
+
+
+ambiguous_answer = (
+    "Adjustment increases power in one setting. "
+    "Adjustment increases power in another setting."
+)
+
+
+def ambiguous_anchor_assessor(*, prompt, schema):
+    return {
+        "discovered_claims": [
+            {
+                "type": "methodological",
+                "concept": "power",
+                "statement": "Adjustment can increase power.",
+                "parameterisation": None,
+                "source_anchor": "increases power",
+            }
+        ]
+    }
+
+
+try:
+    coverage.discover_answer_claims(
+        answer_draft=ambiguous_answer,
+        assessor=ambiguous_anchor_assessor,
+    )
+except coverage.ClaimCoverageOutputError:
+    pass
+else:
+    raise AssertionError(
+        "Ambiguous discovery source anchor was unexpectedly accepted."
+    )
+
+print("PASS: missing and ambiguous source anchors are rejected")
+
+
+print("\n[29e] verified anchor resolves to source sentence and preceding context")
+
+rct_source_sentence = (
+    "Adjusting for baseline variables that strongly predict the outcome "
+    "reduces residual variation, narrows confidence intervals, and "
+    "increases power."
+)
+rct_preceding_sentence = (
+    "In randomised trials, the primary rationale for covariate adjustment "
+    "is statistical efficiency, not confounding control."
+)
+
+rct_provenance = coverage.resolve_claim_source_context(
+    answer_draft=rct_context_answer,
+    source_start=rct_discovered[0].source_start,
+    source_end=rct_discovered[0].source_end,
+)
+
+assert rct_provenance.source_sentence == rct_source_sentence
+assert rct_provenance.source_sentence_start == (
+    rct_context_answer.index(rct_source_sentence)
+)
+assert rct_provenance.source_sentence_end == (
+    rct_provenance.source_sentence_start + len(rct_source_sentence)
+)
+assert rct_provenance.context_excerpt == (
+    rct_preceding_sentence + " " + rct_source_sentence
+)
+assert rct_provenance.context_start == 0
+assert rct_provenance.context_end == len(rct_context_answer)
+
+print(
+    "PASS: application resolves exact source sentence and bounded "
+    "preceding context"
+)
+
+
+print("\n[29f] statistical decimals do not create false sentence boundaries")
+
+statistical_answer = (
+    "The baseline age difference was statistically significant "
+    "(p = .03). The adjusted analysis gave p = 0.04 for the treatment "
+    "effect. This result was interpreted cautiously."
+)
+statistical_anchor = "adjusted analysis gave p = 0.04"
+
+statistical_start = statistical_answer.index(statistical_anchor)
+statistical_end = statistical_start + len(statistical_anchor)
+
+statistical_provenance = coverage.resolve_claim_source_context(
+    answer_draft=statistical_answer,
+    source_start=statistical_start,
+    source_end=statistical_end,
+)
+
+assert statistical_provenance.source_sentence == (
+    "The adjusted analysis gave p = 0.04 for the treatment effect."
+)
+assert statistical_provenance.context_excerpt == (
+    "The baseline age difference was statistically significant "
+    "(p = .03). The adjusted analysis gave p = 0.04 for the treatment "
+    "effect."
+)
+
+print("PASS: statistical decimal punctuation preserves sentence provenance")
+
+
+print("\n[29g] first-sentence source uses only its own sentence as context")
+
+first_sentence_answer = (
+    "Adjustment can improve precision. "
+    "The second sentence adds unrelated detail."
+)
+first_sentence_anchor = "improve precision"
+first_sentence_start = first_sentence_answer.index(first_sentence_anchor)
+
+first_sentence_provenance = coverage.resolve_claim_source_context(
+    answer_draft=first_sentence_answer,
+    source_start=first_sentence_start,
+    source_end=first_sentence_start + len(first_sentence_anchor),
+)
+
+assert first_sentence_provenance.source_sentence == (
+    "Adjustment can improve precision."
+)
+assert first_sentence_provenance.context_excerpt == (
+    "Adjustment can improve precision."
+)
+assert first_sentence_provenance.source_sentence_start == 0
+assert first_sentence_provenance.context_start == 0
+
+print("PASS: first-sentence provenance does not invent preceding context")
+
+
+print("\n[29h] invalid and cross-sentence source spans are rejected")
+
+try:
+    coverage.resolve_claim_source_context(
+        answer_draft=first_sentence_answer,
+        source_start=-1,
+        source_end=5,
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Negative source span was unexpectedly accepted.")
+
+cross_sentence_start = first_sentence_answer.index("precision")
+cross_sentence_end = (
+    first_sentence_answer.index("second sentence")
+    + len("second sentence")
+)
+
+try:
+    coverage.resolve_claim_source_context(
+        answer_draft=first_sentence_answer,
+        source_start=cross_sentence_start,
+        source_end=cross_sentence_end,
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError(
+        "Cross-sentence source span was unexpectedly accepted."
+    )
+
+print("PASS: invalid and cross-sentence provenance spans are rejected")
+
+
+print("\n[33] restriction schema exposes only the omission decision")
+
+restriction_schema = coverage.material_restriction_output_schema()
+
+assert restriction_schema["type"] == "object"
+assert set(restriction_schema["properties"]) == {
+    "material_restriction_omitted"
+}
+assert restriction_schema["required"] == [
+    "material_restriction_omitted"
+]
+assert restriction_schema["additionalProperties"] is False
+assert restriction_schema["properties"]["material_restriction_omitted"] == {
+    "type": "boolean",
+}
+
+print("PASS: restriction schema grants no repair or methodological authority")
+
+
+print("\n[34] restriction prompt has a bounded source-comparison role")
+
+rct_restriction_claim = academic_chat.TechnicalClaim(
+    type="statistical_mechanism",
+    concept="effect_of_predictive_covariates",
+    statement=(
+        "Adjusting for baseline variables that strongly predict the outcome "
+        "increases power."
+    ),
+    parameterisation=None,
+)
+
+rct_restriction_source = coverage.resolve_claim_source_context(
+    answer_draft=rct_context_answer,
+    source_start=rct_discovered[0].source_start,
+    source_end=rct_discovered[0].source_end,
+)
+
+restriction_prompt = coverage.build_material_restriction_prompt(
+    candidate_claim=rct_restriction_claim,
+    source_context=rct_restriction_source,
+)
+
+assert rct_restriction_claim.statement in restriction_prompt
+assert rct_restriction_source.source_sentence in restriction_prompt
+assert rct_restriction_source.context_excerpt in restriction_prompt
+assert "outside knowledge" in restriction_prompt.lower()
+assert "scientifically correct" in restriction_prompt.lower()
+assert "scope" in restriction_prompt.lower()
+assert "condition" in restriction_prompt.lower()
+assert "population" in restriction_prompt.lower()
+assert "study design" in restriction_prompt.lower()
+assert "referent" in restriction_prompt.lower()
+assert "modality" in restriction_prompt.lower()
+assert "direction" in restriction_prompt.lower()
+assert "parameterisation" in restriction_prompt.lower()
+assert "govern" in restriction_prompt.lower()
+assert "merely because" in restriction_prompt.lower()
+
+print("PASS: restriction prompt asks only about material omission")
+
+
+print("\n[35] material restriction loss can be represented explicitly")
+
+rct_scope_loss = coverage.build_material_restriction_assessment(
+    candidate_claim=rct_restriction_claim,
+    source_context=rct_restriction_source,
+    assessor_output={"material_restriction_omitted": True},
+)
+
+assert rct_scope_loss.material_restriction_omitted is True
+
+print("PASS: material restriction loss is application-owned state")
+
+
+print("\n[36] preserved proposition has no material restriction omission")
+
+scoped_rct_claim = academic_chat.TechnicalClaim(
+    type="statistical_mechanism",
+    concept="effect_of_predictive_covariates",
+    statement=(
+        "In randomised trials, adjusting for baseline variables that strongly "
+        "predict the outcome increases power."
+    ),
+    parameterisation=None,
+)
+
+rct_scope_preserved = coverage.build_material_restriction_assessment(
+    candidate_claim=scoped_rct_claim,
+    source_context=rct_restriction_source,
+    assessor_output={"material_restriction_omitted": False},
+)
+
+assert rct_scope_preserved.material_restriction_omitted is False
+
+print("PASS: absence of material restriction loss is represented explicitly")
+
+
+print("\n[37] restriction output cannot acquire repair or reasoning authority")
+
+for malformed_restriction_output in (
+    {
+        "material_restriction_omitted": True,
+        "corrected_claim": (
+            "In randomised trials, adjustment increases power."
+        ),
+    },
+    {
+        "material_restriction_omitted": True,
+        "reason": "The RCT condition was omitted.",
+    },
+    {
+        "material_restriction_omitted": "true",
+    },
+):
+    try:
+        coverage.build_material_restriction_assessment(
+            candidate_claim=rct_restriction_claim,
+            source_context=rct_restriction_source,
+            assessor_output=malformed_restriction_output,
+        )
+    except coverage.MaterialRestrictionOutputError:
+        pass
+    else:
+        raise AssertionError(
+            "Malformed or authority-bearing restriction output was accepted."
+        )
+
+print("PASS: restriction assessor cannot rewrite or explain the claim")
+
+
+print("\n[38] injected restriction assessor receives bounded comparison input")
+
+captured_restriction_call = {}
+
+
+def injected_restriction_assessor(*, prompt, schema):
+    captured_restriction_call["prompt"] = prompt
+    captured_restriction_call["schema"] = schema
+    return {"material_restriction_omitted": True}
+
+
+assessed_restriction = coverage.assess_material_restriction(
+    candidate_claim=rct_restriction_claim,
+    source_context=rct_restriction_source,
+    assessor=injected_restriction_assessor,
+)
+
+assert assessed_restriction.material_restriction_omitted is True
+assert captured_restriction_call["schema"] == (
+    coverage.material_restriction_output_schema()
+)
+assert rct_restriction_claim.statement in captured_restriction_call["prompt"]
+assert (
+    rct_restriction_source.source_sentence
+    in captured_restriction_call["prompt"]
+)
+assert (
+    rct_restriction_source.context_excerpt
+    in captured_restriction_call["prompt"]
+)
+
+print("PASS: injected restriction assessor remains proposition-and-source bounded")
