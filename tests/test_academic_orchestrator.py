@@ -2871,6 +2871,167 @@ print("PASS: independently discovered atomic claims are checked separately")
 print("PASS: atomic methodological conflict cannot be masked by compound claim")
 
 
+print(
+    "\n[claim coverage] restriction assessment survives proposition deduplication"
+)
+
+duplicate_context_sentence = (
+    "The following statement concerns complete-case analysis."
+)
+duplicate_occurrence_draft = academic_chat.AcademicDraft(
+    answer_draft=(
+        duplicate_context_sentence
+        + " "
+        + atomic_mcar_claim.statement
+    ),
+    references=[],
+    source_claims=[],
+    technical_claims=[atomic_mcar_claim],
+)
+
+duplicate_anchor = "Missing Completely at Random (MCAR)"
+duplicate_start = duplicate_occurrence_draft.answer_draft.index(
+    duplicate_anchor
+)
+
+duplicate_discovered = academic_claim_coverage.DiscoveredClaim(
+    claim=atomic_mcar_claim,
+    source_anchor=duplicate_anchor,
+    source_start=duplicate_start,
+    source_end=duplicate_start + len(duplicate_anchor),
+)
+
+
+def fake_duplicate_coverage(*, answer_draft, existing_claims):
+    assert answer_draft == duplicate_occurrence_draft.answer_draft
+    assert existing_claims == [atomic_mcar_claim]
+    return academic_claim_coverage.ClaimCoverageAssessment.from_result(
+        academic_claim_coverage.ClaimCoverageResult(
+            missing_claims=[],
+            discovered_claims=[duplicate_discovered],
+        )
+    )
+
+
+restriction_calls = []
+
+
+def fake_material_restriction_assessor(*, prompt, schema):
+    restriction_calls.append((prompt, schema))
+    return {"material_restriction_omitted": False}
+
+
+duplicate_technical_calls = []
+
+
+def fake_duplicate_technical_verifier(claim):
+    duplicate_technical_calls.append(claim)
+    return fake_technical_verifier(claim)
+
+
+duplicate_occurrence_result = academic_orchestrator.assess_academic_draft(
+    duplicate_occurrence_draft,
+    local_guidance=coverage_method_guidance,
+    technical_verifier=fake_duplicate_technical_verifier,
+    coverage_assessor=fake_duplicate_coverage,
+    material_restriction_assessor=fake_material_restriction_assessor,
+)
+
+assert len(restriction_calls) == 1
+restriction_prompt, restriction_schema = restriction_calls[0]
+
+assert restriction_schema == (
+    academic_claim_coverage.material_restriction_output_schema()
+)
+assert atomic_mcar_claim.statement in restriction_prompt
+assert duplicate_context_sentence in restriction_prompt
+
+resolved_duplicate_context = (
+    academic_claim_coverage.resolve_claim_source_context(
+        answer_draft=duplicate_occurrence_draft.answer_draft,
+        source_start=duplicate_discovered.source_start,
+        source_end=duplicate_discovered.source_end,
+    )
+)
+assert (
+    resolved_duplicate_context.source_sentence
+    in restriction_prompt
+)
+assert (
+    resolved_duplicate_context.context_excerpt
+    in restriction_prompt
+)
+
+assert len(duplicate_technical_calls) == 1
+assert [
+    result.claim
+    for result in duplicate_occurrence_result.technical_claims
+] == [atomic_mcar_claim]
+
+assert len(
+    duplicate_occurrence_result.discovered_claim_assessments
+) == 1
+
+duplicate_occurrence_assessment = (
+    duplicate_occurrence_result.discovered_claim_assessments[0]
+)
+
+assert (
+    duplicate_occurrence_assessment.discovered_claim
+    == duplicate_discovered
+)
+assert (
+    duplicate_occurrence_assessment.source_context
+    == resolved_duplicate_context
+)
+assert (
+    duplicate_occurrence_assessment
+    .material_restriction
+    .material_restriction_omitted
+    is False
+)
+
+print("PASS: discovered occurrence reaches restriction assessment")
+print("PASS: verified occurrence resolves to bounded source context")
+print("PASS: restriction assessor receives claim, source sentence, and context")
+print("PASS: occurrence-level restriction state is retained")
+print("PASS: proposition deduplication still prevents duplicate technical checking")
+
+
+print(
+    "\n[claim coverage] occurrence provenance survives absent restriction assessor"
+)
+
+no_restriction_assessor_result = academic_orchestrator.assess_academic_draft(
+    duplicate_occurrence_draft,
+    local_guidance=coverage_method_guidance,
+    technical_verifier=fake_technical_verifier,
+    coverage_assessor=fake_duplicate_coverage,
+)
+
+assert len(
+    no_restriction_assessor_result.discovered_claim_assessments
+) == 1
+
+no_restriction_occurrence = (
+    no_restriction_assessor_result.discovered_claim_assessments[0]
+)
+
+assert (
+    no_restriction_occurrence.discovered_claim
+    == duplicate_discovered
+)
+assert (
+    no_restriction_occurrence.source_context
+    == resolved_duplicate_context
+)
+assert no_restriction_occurrence.material_restriction is None
+
+print("PASS: discovered occurrence remains retained without semantic assessor")
+print("PASS: deterministic source context remains retained without semantic assessor")
+print("PASS: absent restriction assessment remains explicit as None")
+
+
 print("\n[claim coverage] assessment state remains explicit")
 
 no_missing_calls = []

@@ -281,6 +281,17 @@ class TechnicalClaimResult:
 
 
 @dataclass
+class DiscoveredClaimAssessment:
+    """Occurrence-level evidence retained for an independently discovered claim."""
+
+    discovered_claim: academic_claim_coverage.DiscoveredClaim
+    source_context: academic_claim_coverage.ClaimSourceContext
+    material_restriction: (
+        academic_claim_coverage.MaterialRestrictionAssessment | None
+    ) = None
+
+
+@dataclass
 class AcademicReleaseAssessment:
     status: str
     safe_to_present: bool
@@ -389,6 +400,7 @@ class AcademicFirstStageResult:
     references: list[VerifiedReferenceProposal]
     source_claims: list[SourceClaimResult]
     technical_claims: list[TechnicalClaimResult]
+    discovered_claim_assessments: list[DiscoveredClaimAssessment]
     release: AcademicReleaseAssessment
 
     @property
@@ -446,6 +458,7 @@ def assess_academic_draft(
         ..., academic_claim_coverage.ClaimCoverageAssessment
     ]
     | None = None,
+    material_restriction_assessor: Callable[..., Any] | None = None,
 ) -> AcademicFirstStageResult:
     """Assess an already-generated AcademicDraft through the release pipeline.
 
@@ -602,6 +615,7 @@ def assess_academic_draft(
         )
 
     claims_for_assessment = list(draft.technical_claims)
+    discovered_claim_assessments: list[DiscoveredClaimAssessment] = []
 
     if coverage_assessor is None:
         claim_coverage = (
@@ -624,6 +638,33 @@ def assess_academic_draft(
             )
 
     if claim_coverage.result is not None:
+        for discovered in claim_coverage.result.discovered_claims:
+            source_context = (
+                academic_claim_coverage.resolve_claim_source_context(
+                    answer_draft=draft.answer_draft,
+                    source_start=discovered.source_start,
+                    source_end=discovered.source_end,
+                )
+            )
+
+            material_restriction = None
+            if material_restriction_assessor is not None:
+                material_restriction = (
+                    academic_claim_coverage.assess_material_restriction(
+                        candidate_claim=discovered.claim,
+                        source_context=source_context,
+                        assessor=material_restriction_assessor,
+                    )
+                )
+
+            discovered_claim_assessments.append(
+                DiscoveredClaimAssessment(
+                    discovered_claim=discovered,
+                    source_context=source_context,
+                    material_restriction=material_restriction,
+                )
+            )
+
         assessed_keys = {
             (
                 claim.type.strip(),
@@ -721,6 +762,7 @@ def assess_academic_draft(
         references=verified_references,
         source_claims=source_claims,
         technical_claims=technical_claims,
+        discovered_claim_assessments=discovered_claim_assessments,
         release=release,
     )
 
