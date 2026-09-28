@@ -68,7 +68,7 @@ class ClaimCoverageResult:
     """Application-owned result of independent technical-claim coverage."""
 
     missing_claims: list[academic_chat.TechnicalClaim]
-    discovered_claims: list[academic_chat.TechnicalClaim] = field(
+    discovered_claims: list[DiscoveredClaim] = field(
         default_factory=list
     )
 
@@ -1240,5 +1240,5 @@ def assess_claim_coverage_two_stage(
 
     return ClaimCoverageResult(
         missing_claims=missing_claims,
-        discovered_claims=discovered_technical_claims,
+        discovered_claims=discovered_claims,
     )

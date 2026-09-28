@@ -1077,9 +1077,14 @@ print("PASS: discovery and representation remain separate in composition")
 
 print("\n[29b] two-stage coverage retains the independent atomic discovery set")
 
+assert all(
+    isinstance(discovered, coverage.DiscoveredClaim)
+    for discovered in two_stage_result.discovered_claims
+)
+
 assert [
-    claim.statement
-    for claim in two_stage_result.discovered_claims
+    discovered.claim.statement
+    for discovered in two_stage_result.discovered_claims
 ] == [
     "For symmetric posteriors the ETI and HDI may be similar.",
     (
@@ -1088,6 +1093,14 @@ assert [
     ),
     "A narrower interval is not automatically preferable.",
 ]
+
+for discovered in two_stage_result.discovered_claims:
+    assert (
+        two_stage_answer[
+            discovered.source_start:discovered.source_end
+        ]
+        == discovered.source_anchor
+    )
 
 assert [
     claim.statement

@@ -2791,8 +2791,32 @@ def fake_atomic_coverage(*, answer_draft, existing_claims):
         academic_claim_coverage.ClaimCoverageResult(
             missing_claims=[],
             discovered_claims=[
-                atomic_mcar_claim,
-                atomic_mar_claim,
+                academic_claim_coverage.DiscoveredClaim(
+                    claim=atomic_mcar_claim,
+                    source_anchor="Missing Completely at Random (MCAR)",
+                    source_start=compound_cca_draft.answer_draft.index(
+                        "Missing Completely at Random (MCAR)"
+                    ),
+                    source_end=(
+                        compound_cca_draft.answer_draft.index(
+                            "Missing Completely at Random (MCAR)"
+                        )
+                        + len("Missing Completely at Random (MCAR)")
+                    ),
+                ),
+                academic_claim_coverage.DiscoveredClaim(
+                    claim=atomic_mar_claim,
+                    source_anchor="complete-case estimates can remain unbiased",
+                    source_start=compound_cca_draft.answer_draft.index(
+                        "complete-case estimates can remain unbiased"
+                    ),
+                    source_end=(
+                        compound_cca_draft.answer_draft.index(
+                            "complete-case estimates can remain unbiased"
+                        )
+                        + len("complete-case estimates can remain unbiased")
+                    ),
+                ),
             ],
         )
     )

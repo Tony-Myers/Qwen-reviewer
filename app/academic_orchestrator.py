@@ -638,7 +638,8 @@ def assess_academic_draft(
             for claim in claims_for_assessment
         }
 
-        for claim in claim_coverage.result.discovered_claims:
+        for discovered in claim_coverage.result.discovered_claims:
+            claim = discovered.claim
             key = (
                 claim.type.strip(),
                 claim.concept.strip(),
