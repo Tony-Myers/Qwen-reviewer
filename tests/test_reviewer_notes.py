@@ -123,6 +123,57 @@ check("completer-dropout baseline comparison -> missing-data limitation",
           for passage in baseline_dropout
       ))
 
+# Randomised-trial baseline balance and covariate adjustment need dedicated
+# methodological coverage. These probes distinguish that RCT problem from the
+# existing missing-data and observational-causal-inference guidance.
+rct_baseline = index.search(
+    "A statistically significant baseline difference between randomised "
+    "groups shows that randomisation was unsuccessful.",
+    k=3,
+)
+check("RCT baseline significance -> randomisation validity",
+      bool(rct_baseline)
+      and any(
+          "does not" in passage.text.lower()
+          and "randomisation" in passage.text.lower()
+          and "baseline" in passage.text.lower()
+          for passage in rct_baseline
+      ))
+
+rct_covariate_selection = index.search(
+    "Covariates should be selected for adjustment because their baseline "
+    "differences between randomised groups are statistically significant.",
+    k=3,
+)
+check("RCT baseline p-values -> covariate selection",
+      bool(rct_covariate_selection)
+      and any(
+          "covariate" in passage.text.lower()
+          and "baseline" in passage.text.lower()
+          and (
+              "not recommended" in passage.text.lower()
+              or "not an appropriate" in passage.text.lower()
+              or "do not select" in passage.text.lower()
+          )
+          for passage in rct_covariate_selection
+      ))
+
+rct_prognostic = index.search(
+    "Why adjust for prognostic baseline covariates in a randomised trial?",
+    k=3,
+)
+check("RCT prognostic covariates -> precision and efficiency",
+      bool(rct_prognostic)
+      and any(
+          "why adjust for baseline covariates in a randomised trial"
+          in passage.heading.lower()
+          and (
+              "precision" in passage.text.lower()
+              or "efficiency" in passage.text.lower()
+          )
+          for passage in rct_prognostic
+      ))
+
 # Known coverage gap rather than a retrieval fault: prior predictive checks are
 # required by the BARG and appear in exactly one passage, inside the BARG
 # summary table, with no section of their own in any note. Recorded here so the
