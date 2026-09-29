@@ -106,8 +106,6 @@ def _format_methodological_claim(
 
     return "\n".join(
         [
-            f"type: {claim.type}",
-            f"concept: {claim.concept}",
             f"statement: {claim.statement}",
             f"parameterisation: {parameterisation}",
         ]

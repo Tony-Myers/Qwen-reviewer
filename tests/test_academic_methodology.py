@@ -126,6 +126,25 @@ print("PASS: conflict requires an incompatible proposition")
 print("PASS: omitted conditions are not automatically contradictions")
 
 
+print("\n[2d] methodology prompt ignores non-semantic claim metadata")
+
+metadata_variant_claim = academic_chat.TechnicalClaim(
+    type="different_generated_type",
+    concept="different_generated_concept",
+    statement=hdi_claim.statement,
+    parameterisation=hdi_claim.parameterisation,
+)
+
+metadata_variant_prompt = am.build_methodological_consistency_prompt(
+    metadata_variant_claim,
+    passages,
+)
+
+assert metadata_variant_prompt == prompt
+
+print("PASS: type and concept do not alter methodology assessment prompt")
+
+
 print("\n[3] structurally valid conflict is representable")
 
 result = am.build_methodological_consistency(
@@ -356,6 +375,28 @@ assert (
 
 print("PASS: contextual prompt retains claim, verified context, and guidance")
 print("PASS: answer context has interpretive but not methodological authority")
+
+
+print("\n[8b] contextual prompt ignores non-semantic claim metadata")
+
+rct_metadata_variant = academic_chat.TechnicalClaim(
+    type="different_generated_type",
+    concept="different_generated_concept",
+    statement=rct_claim.statement,
+    parameterisation=rct_claim.parameterisation,
+)
+
+contextual_metadata_variant_prompt = (
+    am.build_contextual_methodological_consistency_prompt(
+        claim=rct_metadata_variant,
+        source_context=rct_context,
+        passages=rct_passages,
+    )
+)
+
+assert contextual_metadata_variant_prompt == contextual_prompt
+
+print("PASS: type and concept do not alter contextual methodology prompt")
 
 
 print("\n[9] contextual methodology retains application-owned provenance")
