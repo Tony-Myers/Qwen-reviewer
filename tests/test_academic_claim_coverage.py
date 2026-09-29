@@ -1502,13 +1502,13 @@ print("PASS: restriction schema grants no repair or methodological authority")
 print("\n[34] restriction prompt has a bounded source-comparison role")
 
 rct_restriction_claim = academic_chat.TechnicalClaim(
-    type="statistical_mechanism",
-    concept="effect_of_predictive_covariates",
+    type="GENERATED-TYPE-MUST-NOT-AUTHORISE-SEMANTICS",
+    concept="GENERATED-CONCEPT-MUST-NOT-AUTHORISE-SEMANTICS",
     statement=(
         "Adjusting for baseline variables that strongly predict the outcome "
         "increases power."
     ),
-    parameterisation=None,
+    parameterisation="strongly predictive baseline variables",
 )
 
 rct_restriction_source = coverage.resolve_claim_source_context(
@@ -1523,6 +1523,9 @@ restriction_prompt = coverage.build_material_restriction_prompt(
 )
 
 assert rct_restriction_claim.statement in restriction_prompt
+assert rct_restriction_claim.parameterisation in restriction_prompt
+assert rct_restriction_claim.type not in restriction_prompt
+assert rct_restriction_claim.concept not in restriction_prompt
 assert rct_restriction_source.source_sentence in restriction_prompt
 assert rct_restriction_source.context_excerpt in restriction_prompt
 assert "outside knowledge" in restriction_prompt.lower()

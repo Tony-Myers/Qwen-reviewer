@@ -210,8 +210,6 @@ def build_material_restriction_prompt(
 the supplied LOCAL ANSWER CONTEXT.
 
 STANDALONE TECHNICAL CLAIM
-type: {candidate_claim.type}
-concept: {candidate_claim.concept}
 statement: {candidate_claim.statement}
 parameterisation: {parameterisation}
 
