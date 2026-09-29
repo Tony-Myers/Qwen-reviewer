@@ -86,8 +86,6 @@ def _technical_claim_methodological_query(
 ) -> str:
     """Build a deterministic local-guidance query from a technical claim."""
     parts = [
-        claim.type,
-        claim.concept,
         claim.statement,
         claim.parameterisation,
     ]

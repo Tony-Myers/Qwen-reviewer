@@ -68,16 +68,25 @@ check(
 )
 
 
-print("\n[0b] contextual methodological query preserves verified answer context")
+print(
+    "\n[0b] methodological retrieval query uses substantive claim content"
+)
 
 contextual_claim = academic_chat.TechnicalClaim(
-    type="statistical principle",
-    concept="covariate adjustment",
+    type="GENERATED-TYPE-ALPHA-7F3A",
+    concept="GENERATED-CONCEPT-ALPHA-7F3A",
     statement=(
         "Adjusting for baseline variables that strongly predict the outcome "
         "reduces residual variation."
     ),
-    parameterisation=None,
+    parameterisation="baseline prognostic covariates",
+)
+
+metadata_variant_claim = academic_chat.TechnicalClaim(
+    type="GENERATED-TYPE-BETA-8C4B",
+    concept="GENERATED-CONCEPT-BETA-8C4B",
+    statement=contextual_claim.statement,
+    parameterisation=contextual_claim.parameterisation,
 )
 
 contextual_source = academic_claim_coverage.ClaimSourceContext(
@@ -97,16 +106,54 @@ contextual_source = academic_claim_coverage.ClaimSourceContext(
     context_end=224,
 )
 
+claim_query = academic_orchestrator._technical_claim_methodological_query(
+    contextual_claim
+)
+metadata_variant_query = (
+    academic_orchestrator._technical_claim_methodological_query(
+        metadata_variant_claim
+    )
+)
+
+check(
+    contextual_claim.statement in claim_query
+    and contextual_claim.parameterisation in claim_query,
+    "claim query retains statement and parameterisation",
+)
+
+check(
+    contextual_claim.type not in claim_query
+    and contextual_claim.concept not in claim_query,
+    "claim query excludes generated classification metadata",
+)
+
+check(
+    claim_query == metadata_variant_query,
+    "claim query is invariant to generated type and concept",
+)
+
 contextual_query = academic_orchestrator._contextual_claim_methodological_query(
     contextual_claim,
     contextual_source,
 )
 
+metadata_variant_contextual_query = (
+    academic_orchestrator._contextual_claim_methodological_query(
+        metadata_variant_claim,
+        contextual_source,
+    )
+)
+
 check(
-    contextual_claim.type in contextual_query
-    and contextual_claim.concept in contextual_query
-    and contextual_claim.statement in contextual_query,
-    "contextual query retains the structured atomic claim",
+    contextual_claim.statement in contextual_query
+    and contextual_claim.parameterisation in contextual_query,
+    "contextual query retains substantive claim content",
+)
+
+check(
+    contextual_claim.type not in contextual_query
+    and contextual_claim.concept not in contextual_query,
+    "contextual query excludes generated classification metadata",
 )
 
 check(
@@ -117,6 +164,11 @@ check(
 check(
     contextual_source.context_excerpt in contextual_query,
     "contextual query retains the bounded answer context",
+)
+
+check(
+    contextual_query == metadata_variant_contextual_query,
+    "contextual query is invariant to generated type and concept",
 )
 
 check(
