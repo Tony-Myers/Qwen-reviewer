@@ -79,6 +79,7 @@ class AcademicReferenceResult:
     related_corroboration: CorroborationResult | None
     identity_conflict: bool
     reasons: list[str]
+    corroboration_status: str = "complete"
     claim_verified: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -197,12 +198,16 @@ def _extract_candidate(
     )
 
 
+class OpenAlexUnavailableError(RuntimeError):
+    """OpenAlex remained unavailable after bounded transient retries."""
+
+
 def _get_openalex_json(
     url: str,
     timeout: float = 10.0,
     max_attempts: int = 3,
 ) -> dict[str, Any]:
-    """Retrieve JSON from OpenAlex with bounded HTTP 429 handling."""
+    """Retrieve OpenAlex JSON with bounded retries for transient HTTP errors."""
     request = Request(
         url,
         headers={
@@ -217,9 +222,14 @@ def _get_openalex_json(
                 return json.load(response)
 
         except HTTPError as exc:
-            if exc.code not in {429, 503} or attempt == max_attempts - 1:
+            if exc.code not in {429, 503}:
                 raise RuntimeError(
                     f"OpenAlex request failed: {exc}"
+                ) from exc
+
+            if attempt == max_attempts - 1:
+                raise OpenAlexUnavailableError(
+                    f"OpenAlex request failed after transient retries: {exc}"
                 ) from exc
 
             retry_after = (
@@ -1186,7 +1196,23 @@ def verify_academic_reference(
 
     if doi:
         crossref_doi = resolve_doi(doi)
-        openalex_doi = resolve_openalex_doi(doi)
+
+        try:
+            openalex_doi = resolve_openalex_doi(doi)
+        except OpenAlexUnavailableError:
+            reasons.append(
+                "OpenAlex corroboration was unavailable; Crossref "
+                "verification was preserved, but independent "
+                "cross-database corroboration was not completed."
+            )
+            return AcademicReferenceResult(
+                crossref_verification=verification,
+                doi_corroboration=None,
+                related_corroboration=None,
+                identity_conflict=False,
+                reasons=reasons,
+                corroboration_status="unavailable",
+            )
 
         doi_corroboration = corroborate_candidates(
             crossref_doi,
@@ -1204,10 +1230,26 @@ def verify_academic_reference(
             author=author,
             rows=5,
         )
-        openalex_results = search_openalex(
-            title,
-            rows=5,
-        )
+        try:
+            openalex_results = search_openalex(
+                title,
+                rows=5,
+            )
+        except OpenAlexUnavailableError:
+            reasons.append(
+                "OpenAlex title corroboration was unavailable; "
+                "completed Crossref verification and any completed DOI "
+                "corroboration were preserved, but cross-database title "
+                "corroboration was not completed."
+            )
+            return AcademicReferenceResult(
+                crossref_verification=verification,
+                doi_corroboration=doi_corroboration,
+                related_corroboration=None,
+                identity_conflict=False,
+                reasons=reasons,
+                corroboration_status="unavailable",
+            )
 
         best_crossref = (
             max(

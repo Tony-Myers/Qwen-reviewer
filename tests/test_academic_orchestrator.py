@@ -678,6 +678,59 @@ check(
 )
 
 
+print("\n[10b] incomplete corroboration blocks retrieval")
+
+incomplete_candidate = ReferenceCandidate(
+    title="Incomplete Work",
+    authors=["A. Author"],
+    year=2020,
+    venue="Journal A",
+    doi="10.1234/incomplete",
+    work_type="journal-article",
+)
+
+incomplete_corroboration = CorroborationResult(
+    status="corroborated",
+    crossref=incomplete_candidate,
+    openalex=incomplete_candidate,
+    same_doi=True,
+    title_similarity=1.0,
+    author_agreement=True,
+    venue_similarity=1.0,
+    year_difference=0,
+    reasons=["Synthetic completed DOI corroboration."],
+)
+
+incomplete_reference = AcademicReferenceResult(
+    crossref_verification=VerificationResult(
+        status="verified",
+        candidate=incomplete_candidate,
+        reasons=["Synthetic verified bibliographic identity."],
+    ),
+    doi_corroboration=incomplete_corroboration,
+    related_corroboration=None,
+    identity_conflict=False,
+    reasons=[
+        "Synthetic title corroboration unavailable."
+    ],
+    corroboration_status="unavailable",
+)
+
+incomplete_identity = academic_orchestrator.resolve_retrieval_identity(
+    incomplete_reference
+)
+
+check(
+    incomplete_identity.status == "not_eligible",
+    "incomplete corroboration blocks automatic source retrieval",
+)
+
+check(
+    incomplete_identity.doi is None,
+    "incomplete corroboration exposes no DOI for automatic retrieval",
+)
+
+
 print("\n[11] coherent verified identity permits retrieval")
 
 coherent_candidate = ReferenceCandidate(
@@ -1002,6 +1055,121 @@ check(
 check(
     ineligible_discovery_payload["location"] is None,
     "not-attempted discovery serialises without a location",
+)
+
+
+print("\n[17b] unavailable bibliographic corroboration preserves academic result")
+
+unavailable_discovery_calls = []
+
+
+def unavailable_reference_verifier(**kwargs):
+    if kwargs["title"] == "Second Work":
+        return AcademicReferenceResult(
+            crossref_verification=VerificationResult(
+                status="verified",
+                candidate=coherent_candidate,
+                reasons=["Synthetic verified Crossref identity."],
+            ),
+            doi_corroboration=coherent_corroboration,
+            related_corroboration=None,
+            identity_conflict=False,
+            reasons=[
+                "OpenAlex title corroboration was unavailable; completed "
+                "bibliographic evidence was preserved."
+            ],
+            corroboration_status="unavailable",
+        )
+
+    return fake_reference_verifier(**kwargs)
+
+
+def unavailable_source_discoverer(doi):
+    unavailable_discovery_calls.append(doi)
+    raise AssertionError(
+        "Incomplete bibliographic corroboration must not reach source discovery."
+    )
+
+
+unavailable_result = academic_orchestrator.run_academic_first_stage(
+    model,
+    tokenizer,
+    question,
+    draft_generator=fake_draft_generator,
+    reference_verifier=unavailable_reference_verifier,
+    technical_verifier=fake_technical_verifier,
+    source_discoverer=unavailable_source_discoverer,
+    methodological_retriever=empty_methodological_retriever,
+)
+
+unavailable_source_claim = unavailable_result.source_claims[0]
+
+check(
+    unavailable_result.answer_draft == result.answer_draft,
+    "academic draft survives unavailable bibliographic corroboration",
+)
+
+check(
+    unavailable_source_claim.reference.verification.corroboration_status
+    == "unavailable",
+    "unavailable corroboration remains explicit on verified reference",
+)
+
+check(
+    unavailable_source_claim.retrieval_identity.status == "not_eligible",
+    "unavailable corroboration remains retrieval-ineligible",
+)
+
+check(
+    unavailable_source_claim.retrieval_identity.doi is None,
+    "unavailable corroboration exposes no retrieval DOI",
+)
+
+check(
+    unavailable_discovery_calls == [],
+    "unavailable corroboration never reaches source discovery",
+)
+
+check(
+    unavailable_source_claim.source_discovery.status == "not_attempted",
+    "source discovery remains explicitly unattempted",
+)
+
+check(
+    unavailable_source_claim.source_discovery.location is None,
+    "unavailable corroboration produces no source location",
+)
+
+check(
+    unavailable_source_claim.source_retrieval is None,
+    "unavailable corroboration produces no substantive source retrieval",
+)
+
+check(
+    unavailable_source_claim.claim_assessment is None,
+    "unavailable corroboration produces no source semantic assessment",
+)
+
+unavailable_payload = unavailable_result.to_dict()
+unavailable_source_payload = unavailable_payload["source_claims"][0]
+
+check(
+    unavailable_source_payload["reference"]["verification"][
+        "corroboration_status"
+    ]
+    == "unavailable",
+    "unavailable corroboration status serialises",
+)
+
+check(
+    unavailable_source_payload["retrieval_identity"]["status"]
+    == "not_eligible",
+    "unavailable retrieval state serialises",
+)
+
+check(
+    "support_status" not in unavailable_source_payload,
+    "service unavailability does not become a source-support conclusion",
 )
 
 

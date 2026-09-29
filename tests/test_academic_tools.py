@@ -55,14 +55,16 @@ def fake_openalex_503(request, timeout=10.0):
 at.urlopen = fake_openalex_503
 at.time.sleep = lambda delay: None
 
+openalex_503_error = None
+
 try:
     try:
         at._get_openalex_json(
             "https://api.openalex.org/works/test",
             max_attempts=3,
         )
-    except RuntimeError:
-        pass
+    except RuntimeError as exc:
+        openalex_503_error = exc
 finally:
     at.urlopen = original_urlopen
     at.time.sleep = original_sleep
@@ -71,6 +73,13 @@ check(
     "OpenAlex 503 uses all bounded retry attempts",
     len(openalex_attempts) == 3,
     f"attempts={len(openalex_attempts)}",
+)
+
+check(
+    "exhausted OpenAlex 503 is typed as service unavailable",
+    hasattr(at, "OpenAlexUnavailableError")
+    and isinstance(openalex_503_error, at.OpenAlexUnavailableError),
+    type(openalex_503_error).__name__,
 )
 
 
@@ -93,14 +102,16 @@ def fake_openalex_404(request, timeout=10.0):
 
 at.urlopen = fake_openalex_404
 
+openalex_404_error = None
+
 try:
     try:
         at._get_openalex_json(
             "https://api.openalex.org/works/test",
             max_attempts=3,
         )
-    except RuntimeError:
-        pass
+    except RuntimeError as exc:
+        openalex_404_error = exc
 finally:
     at.urlopen = original_urlopen
 
@@ -109,6 +120,217 @@ check(
     len(openalex_404_attempts) == 1,
     f"attempts={len(openalex_404_attempts)}",
 )
+
+check(
+    "OpenAlex 404 remains an ordinary request failure",
+    isinstance(openalex_404_error, RuntimeError)
+    and not (
+        hasattr(at, "OpenAlexUnavailableError")
+        and isinstance(openalex_404_error, at.OpenAlexUnavailableError)
+    ),
+    type(openalex_404_error).__name__,
+)
+
+
+print("\n[0c] unavailable OpenAlex preserves Crossref verification")
+
+original_verify = at.verify_reference
+original_resolve_doi = at.resolve_doi
+original_resolve_openalex_doi = at.resolve_openalex_doi
+original_search_crossref = at.search_crossref
+original_search_openalex = at.search_openalex
+
+try:
+    preserved_crossref = at.VerificationResult(
+        status="verified",
+        candidate=at.ReferenceCandidate(
+            title="Example Trial",
+            authors=["Example Author"],
+            year=2024,
+            venue="Example Journal",
+            doi="10.1234/example",
+            work_type="journal-article",
+            source="crossref",
+        ),
+        reasons=["Synthetic verified Crossref identity."],
+        claim_verified=False,
+        related_candidate=None,
+    )
+
+    at.verify_reference = lambda **kwargs: preserved_crossref
+    at.resolve_doi = lambda doi: preserved_crossref.candidate
+
+    def unavailable_openalex_doi(doi):
+        raise at.OpenAlexUnavailableError(
+            "OpenAlex request failed after transient retries: "
+            "HTTP Error 503: Service Unavailable"
+        )
+
+    at.resolve_openalex_doi = unavailable_openalex_doi
+    at.search_crossref = lambda title, author=None, rows=5: [
+        preserved_crossref.candidate
+    ]
+    at.search_openalex = lambda title, rows=5: []
+
+    try:
+        unavailable_academic = at.verify_academic_reference(
+            title="Example Trial",
+            author="Example Author",
+            year=2024,
+            venue="Example Journal",
+            doi="10.1234/example",
+        )
+    except RuntimeError:
+        unavailable_academic = None
+
+finally:
+    at.verify_reference = original_verify
+    at.resolve_doi = original_resolve_doi
+    at.resolve_openalex_doi = original_resolve_openalex_doi
+    at.search_crossref = original_search_crossref
+    at.search_openalex = original_search_openalex
+
+check(
+    "OpenAlex failure does not destroy the bibliographic result",
+    unavailable_academic is not None,
+)
+
+if unavailable_academic is not None:
+    check(
+        "verified Crossref result survives unavailable corroboration",
+        unavailable_academic.crossref_verification.status == "verified",
+        unavailable_academic.crossref_verification.status,
+    )
+
+    check(
+        "unavailable OpenAlex produces no DOI corroboration",
+        unavailable_academic.doi_corroboration is None,
+    )
+
+    check(
+        "unavailable OpenAlex is represented explicitly",
+        unavailable_academic.corroboration_status == "unavailable",
+        unavailable_academic.corroboration_status,
+    )
+
+    check(
+        "service unavailability does not become an identity conflict",
+        unavailable_academic.identity_conflict is False,
+    )
+
+    check(
+        "unavailable corroboration explains that OpenAlex was unavailable",
+        any(
+            "OpenAlex" in reason and "unavailable" in reason.lower()
+            for reason in unavailable_academic.reasons
+        ),
+        unavailable_academic.reasons,
+    )
+
+
+print("\n[0d] unavailable OpenAlex title search preserves DOI corroboration")
+
+original_verify = at.verify_reference
+original_resolve_doi = at.resolve_doi
+original_resolve_openalex_doi = at.resolve_openalex_doi
+original_search_crossref = at.search_crossref
+original_search_openalex = at.search_openalex
+
+try:
+    crossref_candidate = at.ReferenceCandidate(
+        title="Example Trial",
+        authors=["Example Author"],
+        year=2024,
+        venue="Example Journal",
+        doi="10.1234/example",
+        work_type="journal-article",
+        source="crossref",
+    )
+
+    openalex_candidate = at.ReferenceCandidate(
+        title="Example Trial",
+        authors=["Example Author"],
+        year=2024,
+        venue="Example Journal",
+        doi="10.1234/example",
+        work_type="article",
+        source="openalex",
+    )
+
+    preserved_crossref = at.VerificationResult(
+        status="verified",
+        candidate=crossref_candidate,
+        reasons=["Synthetic verified Crossref identity."],
+        claim_verified=False,
+        related_candidate=None,
+    )
+
+    at.verify_reference = lambda **kwargs: preserved_crossref
+    at.resolve_doi = lambda doi: crossref_candidate
+    at.resolve_openalex_doi = lambda doi: openalex_candidate
+    at.search_crossref = lambda title, author=None, rows=5: [
+        crossref_candidate
+    ]
+
+    def unavailable_openalex_search(title, rows=5):
+        raise at.OpenAlexUnavailableError(
+            "OpenAlex request failed after transient retries: "
+            "HTTP Error 503: Service Unavailable"
+        )
+
+    at.search_openalex = unavailable_openalex_search
+
+    try:
+        unavailable_title_academic = at.verify_academic_reference(
+            title="Example Trial",
+            author="Example Author",
+            year=2024,
+            venue="Example Journal",
+            doi="10.1234/example",
+        )
+    except RuntimeError:
+        unavailable_title_academic = None
+
+finally:
+    at.verify_reference = original_verify
+    at.resolve_doi = original_resolve_doi
+    at.resolve_openalex_doi = original_resolve_openalex_doi
+    at.search_crossref = original_search_crossref
+    at.search_openalex = original_search_openalex
+
+check(
+    "OpenAlex title-search failure does not destroy bibliographic result",
+    unavailable_title_academic is not None,
+)
+
+if unavailable_title_academic is not None:
+    check(
+        "successful DOI corroboration survives title-search failure",
+        unavailable_title_academic.doi_corroboration is not None
+        and unavailable_title_academic.doi_corroboration.status
+        == "corroborated",
+        (
+            unavailable_title_academic.doi_corroboration.status
+            if unavailable_title_academic.doi_corroboration
+            else "None"
+        ),
+    )
+
+    check(
+        "unavailable title search produces no title corroboration",
+        unavailable_title_academic.related_corroboration is None,
+    )
+
+    check(
+        "partial OpenAlex failure is represented explicitly",
+        unavailable_title_academic.corroboration_status == "unavailable",
+        unavailable_title_academic.corroboration_status,
+    )
+
+    check(
+        "partial service failure does not establish identity conflict",
+        unavailable_title_academic.identity_conflict is False,
+    )
 
 
 def candidate(

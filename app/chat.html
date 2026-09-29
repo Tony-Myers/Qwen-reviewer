@@ -767,6 +767,15 @@ function renderAcademicReference(reference, index) {
       'Bibliographic identity not independently established</div>';
   }
 
+  if (verification.corroboration_status === 'unavailable') {
+    h += '<div class="academic-reference-status">';
+    h += '<strong>Independent corroboration unavailable.</strong> ';
+    h += 'OpenAlex was unavailable, so cross-database corroboration ';
+    h += 'and source retrieval were not completed. ';
+    h += 'Retry Academic Chat to attempt these checks again.';
+    h += '</div>';
+  }
+
   // Keep an unverified related result visibly separate from the proposed
   // citation. It may help the user investigate the reference, but it is not
   // silently promoted into the citation itself.

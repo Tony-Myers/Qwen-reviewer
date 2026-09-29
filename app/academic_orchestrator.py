@@ -169,6 +169,16 @@ def resolve_retrieval_identity(
             ],
         )
 
+    if verification.corroboration_status != "complete":
+        return RetrievalIdentity(
+            status="not_eligible",
+            doi=None,
+            reasons=[
+                "Incomplete cross-database corroboration prevents automatic "
+                "source retrieval."
+            ],
+        )
+
     if verification.crossref_verification.status == "verified":
         verified_candidate = verification.crossref_verification.candidate
         verified_doi = (
