@@ -277,4 +277,148 @@ for output in bad_outputs:
 
 print("PASS: malformed assessor outputs are rejected")
 
+
+print("\n[8] contextual methodology keeps answer context distinct from guidance")
+
+import academic_claim_coverage
+
+rct_claim = academic_chat.TechnicalClaim(
+    type="statistical principle",
+    concept="covariate adjustment",
+    statement=(
+        "Adjusting for baseline variables that strongly predict the outcome "
+        "reduces residual variation."
+    ),
+    parameterisation=None,
+)
+
+rct_context = academic_claim_coverage.ClaimSourceContext(
+    source_sentence=(
+        "Adjusting for baseline variables that strongly predict the outcome "
+        "reduces residual variation."
+    ),
+    source_sentence_start=112,
+    source_sentence_end=224,
+    context_excerpt=(
+        "In randomised trials, the primary rationale for covariate adjustment "
+        "is statistical efficiency, not confounding control. Adjusting for "
+        "baseline variables that strongly predict the outcome reduces residual "
+        "variation."
+    ),
+    context_start=0,
+    context_end=224,
+)
+
+rct_passages = [
+    reviewer_notes.Passage(
+        note="Baseline Balance and Covariate Adjustment in Randomised Trials",
+        heading="Why adjust for baseline covariates in a randomised trial?",
+        text=(
+            "An important reason for covariate adjustment in a randomised "
+            "trial is improved statistical efficiency. Adjustment for "
+            "baseline variables that strongly predict the outcome can reduce "
+            "residual variation."
+        ),
+        score=0.45,
+    )
+]
+
+contextual_prompt = am.build_contextual_methodological_consistency_prompt(
+    claim=rct_claim,
+    source_context=rct_context,
+    passages=rct_passages,
+)
+
+assert rct_claim.statement in contextual_prompt
+assert rct_context.source_sentence in contextual_prompt
+assert rct_context.context_excerpt in contextual_prompt
+assert rct_passages[0].text in contextual_prompt
+
+normalised_contextual_prompt = " ".join(contextual_prompt.split())
+
+assert (
+    "use the verified answer context only to interpret restrictions that govern "
+    "this occurrence of the generated claim"
+    in normalised_contextual_prompt.lower()
+)
+assert (
+    "answer context is not methodological guidance"
+    in normalised_contextual_prompt.lower()
+)
+assert (
+    "only the supplied curated methodological guidance"
+    in normalised_contextual_prompt.lower()
+)
+assert (
+    "do not treat the answer context as changing the stored claim"
+    in normalised_contextual_prompt.lower()
+)
+
+print("PASS: contextual prompt retains claim, verified context, and guidance")
+print("PASS: answer context has interpretive but not methodological authority")
+
+
+print("\n[9] contextual methodology retains application-owned provenance")
+
+contextual_result = am.build_contextual_methodological_consistency(
+    claim=rct_claim,
+    source_context=rct_context,
+    passages=rct_passages,
+    assessor_output={
+        "status": "methodologically_consistent",
+        "reason": (
+            "The RCT-qualified proposition is directly compatible with the "
+            "supplied guidance."
+        ),
+    },
+)
+
+assert isinstance(
+    contextual_result,
+    am.ContextualMethodologicalConsistencyResult,
+)
+assert contextual_result.status == am.METHODOLOGICAL_STATUS_CONSISTENT
+assert contextual_result.claim is rct_claim
+assert contextual_result.source_context is rct_context
+assert contextual_result.passages == rct_passages
+
+print("PASS: contextual result remains distinct from standalone result")
+print("PASS: claim, source context, and guidance provenance remain application-owned")
+
+
+print("\n[10] contextual assessor receives only bounded judgement authority")
+
+contextual_captured = {}
+
+
+def fake_contextual_assessor(*, prompt, schema):
+    contextual_captured["prompt"] = prompt
+    contextual_captured["schema"] = schema
+    return {
+        "status": "methodologically_consistent",
+        "reason": "The context-qualified proposition matches the supplied guidance.",
+    }
+
+
+contextual_assessed = am.assess_contextual_methodological_consistency(
+    claim=rct_claim,
+    source_context=rct_context,
+    passages=rct_passages,
+    assessor=fake_contextual_assessor,
+)
+
+assert contextual_assessed.status == am.METHODOLOGICAL_STATUS_CONSISTENT
+assert (
+    contextual_captured["schema"]
+    == am.methodological_consistency_output_schema()
+)
+assert set(contextual_captured["schema"]["properties"]) == {
+    "status",
+    "reason",
+}
+
+print("PASS: contextual assessment reuses the bounded status/reason schema")
+print("PASS: model cannot supply claim, context, or guidance provenance")
+
+
 print("\nAll methodological-consistency checks passed.")

@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 import academic_chat
 import academic_claim_coverage
 import academic_claims
+import academic_methodology
 import academic_orchestrator
 import academic_technical
 import reviewer_notes
@@ -64,6 +65,67 @@ check(
         for passage in methodological_context.passages
     ) == 2,
     "both chunks of the retrieved ETI/HDI section remain attached",
+)
+
+
+print("\n[0b] contextual methodological query preserves verified answer context")
+
+contextual_claim = academic_chat.TechnicalClaim(
+    type="statistical principle",
+    concept="covariate adjustment",
+    statement=(
+        "Adjusting for baseline variables that strongly predict the outcome "
+        "reduces residual variation."
+    ),
+    parameterisation=None,
+)
+
+contextual_source = academic_claim_coverage.ClaimSourceContext(
+    source_sentence=(
+        "Adjusting for baseline variables that strongly predict the outcome "
+        "reduces residual variation."
+    ),
+    source_sentence_start=112,
+    source_sentence_end=224,
+    context_excerpt=(
+        "In randomised trials, the primary rationale for covariate adjustment "
+        "is statistical efficiency, not confounding control. Adjusting for "
+        "baseline variables that strongly predict the outcome reduces residual "
+        "variation."
+    ),
+    context_start=0,
+    context_end=224,
+)
+
+contextual_query = academic_orchestrator._contextual_claim_methodological_query(
+    contextual_claim,
+    contextual_source,
+)
+
+check(
+    contextual_claim.type in contextual_query
+    and contextual_claim.concept in contextual_query
+    and contextual_claim.statement in contextual_query,
+    "contextual query retains the structured atomic claim",
+)
+
+check(
+    contextual_source.source_sentence in contextual_query,
+    "contextual query retains the verified source sentence",
+)
+
+check(
+    contextual_source.context_excerpt in contextual_query,
+    "contextual query retains the bounded answer context",
+)
+
+check(
+    contextual_query
+    == academic_orchestrator._contextual_claim_methodological_query(
+        contextual_claim,
+        contextual_source,
+    ),
+    "contextual methodological query is deterministic",
 )
 
 
@@ -2990,12 +3052,187 @@ assert (
     .material_restriction_omitted
     is False
 )
+assert (
+    duplicate_occurrence_assessment
+    .contextual_methodological_consistency
+    is None
+)
 
 print("PASS: discovered occurrence reaches restriction assessment")
 print("PASS: verified occurrence resolves to bounded source context")
 print("PASS: restriction assessor receives claim, source sentence, and context")
 print("PASS: occurrence-level restriction state is retained")
 print("PASS: proposition deduplication still prevents duplicate technical checking")
+
+
+print(
+    "\n[claim coverage] omitted restriction triggers contextual methodology"
+)
+
+contextual_retrieval_queries = []
+contextual_methodology_prompts = []
+
+
+def fake_omitted_restriction_assessor(*, prompt, schema):
+    return {"material_restriction_omitted": True}
+
+
+def fake_contextual_methodological_retriever(query):
+    contextual_retrieval_queries.append(query)
+    return coverage_method_guidance
+
+
+def fake_contextual_methodological_assessor(*, prompt, schema):
+    contextual_methodology_prompts.append((prompt, schema))
+
+    if "BOUNDED ANSWER CONTEXT" in prompt:
+        return {
+            "status": "methodologically_consistent",
+            "reason": (
+                "The context-qualified proposition is compatible with the "
+                "supplied guidance."
+            ),
+        }
+
+    return {
+        "status": "methodological_consistency_not_established",
+        "reason": (
+            "The standalone proposition is broader than the supplied guidance."
+        ),
+    }
+
+
+contextual_occurrence_result = academic_orchestrator.assess_academic_draft(
+    duplicate_occurrence_draft,
+    local_guidance=coverage_method_guidance,
+    technical_verifier=fake_technical_verifier,
+    coverage_assessor=fake_duplicate_coverage,
+    material_restriction_assessor=fake_omitted_restriction_assessor,
+    claim_methodological_retriever=(
+        fake_contextual_methodological_retriever
+    ),
+    methodological_assessor=fake_contextual_methodological_assessor,
+)
+
+contextual_occurrence = (
+    contextual_occurrence_result.discovered_claim_assessments[0]
+)
+
+assert (
+    contextual_occurrence.material_restriction
+    .material_restriction_omitted
+    is True
+)
+
+assert (
+    contextual_occurrence.contextual_methodological_consistency.status
+    == academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT
+)
+
+expected_contextual_query = (
+    academic_orchestrator._contextual_claim_methodological_query(
+        duplicate_discovered.claim,
+        contextual_occurrence.source_context,
+    )
+)
+
+assert expected_contextual_query in contextual_retrieval_queries
+assert (
+    academic_orchestrator._technical_claim_methodological_query(
+        duplicate_discovered.claim
+    )
+    in contextual_retrieval_queries
+)
+
+contextual_prompts = [
+    prompt
+    for prompt, _schema in contextual_methodology_prompts
+    if "BOUNDED ANSWER CONTEXT" in prompt
+]
+
+assert len(contextual_prompts) == 1
+assert duplicate_discovered.claim.statement in contextual_prompts[0]
+assert (
+    contextual_occurrence.source_context.context_excerpt
+    in contextual_prompts[0]
+)
+
+standalone_duplicate_result = next(
+    result
+    for result in contextual_occurrence_result.technical_claims
+    if result.claim == duplicate_discovered.claim
+)
+
+assert (
+    standalone_duplicate_result.methodological_consistency.status
+    == academic_methodology.METHODOLOGICAL_STATUS_NOT_ESTABLISHED
+)
+
+assert contextual_occurrence_result.release.safe_to_present is True
+
+print("PASS: omitted restriction triggers occurrence-specific retrieval")
+print("PASS: contextual methodology receives verified occurrence context")
+print("PASS: contextual and standalone methodology remain distinct")
+print("PASS: contextual methodology does not alter release behaviour")
+
+
+print(
+    "\n[claim coverage] contextual retrieval silence remains unassessed"
+)
+
+empty_contextual_queries = []
+empty_contextual_assessor_calls = []
+
+
+def fake_empty_contextual_retriever(query):
+    empty_contextual_queries.append(query)
+    return academic_orchestrator.LocalGuidanceResult(passages=[])
+
+
+def fake_should_not_assess_contextual_methodology(*, prompt, schema):
+    empty_contextual_assessor_calls.append((prompt, schema))
+    raise AssertionError(
+        "Contextual methodology assessor must not run without guidance."
+    )
+
+
+empty_contextual_result = academic_orchestrator.assess_academic_draft(
+    duplicate_occurrence_draft,
+    local_guidance=academic_orchestrator.LocalGuidanceResult(passages=[]),
+    technical_verifier=fake_technical_verifier,
+    coverage_assessor=fake_duplicate_coverage,
+    material_restriction_assessor=fake_omitted_restriction_assessor,
+    claim_methodological_retriever=fake_empty_contextual_retriever,
+    methodological_assessor=fake_should_not_assess_contextual_methodology,
+)
+
+empty_contextual_occurrence = (
+    empty_contextual_result.discovered_claim_assessments[0]
+)
+
+assert (
+    empty_contextual_occurrence.material_restriction
+    .material_restriction_omitted
+    is True
+)
+assert (
+    empty_contextual_occurrence.contextual_methodological_consistency
+    is None
+)
+
+expected_empty_contextual_query = (
+    academic_orchestrator._contextual_claim_methodological_query(
+        duplicate_discovered.claim,
+        empty_contextual_occurrence.source_context,
+    )
+)
+
+assert expected_empty_contextual_query in empty_contextual_queries
+assert empty_contextual_assessor_calls == []
+
+print("PASS: contextual retrieval is attempted after restriction omission")
+print("PASS: empty guidance produces no contextual methodology conclusion")
+print("PASS: semantic assessor is not called without retrieved guidance")
 
 
 print(
@@ -3026,10 +3263,172 @@ assert (
     == resolved_duplicate_context
 )
 assert no_restriction_occurrence.material_restriction is None
+assert (
+    no_restriction_occurrence.contextual_methodological_consistency
+    is None
+)
 
 print("PASS: discovered occurrence remains retained without semantic assessor")
 print("PASS: deterministic source context remains retained without semantic assessor")
 print("PASS: absent restriction assessment remains explicit as None")
+
+
+print(
+    "\n[claim coverage] duplicate proposition retains occurrence-specific context"
+)
+
+shared_statement = atomic_mcar_claim.statement
+scoped_prefix = (
+    "In randomised trials, this effect concerns statistical efficiency. "
+)
+multi_occurrence_answer = (
+    scoped_prefix
+    + shared_statement
+    + " "
+    + shared_statement
+)
+
+multi_occurrence_draft = academic_chat.AcademicDraft(
+    answer_draft=multi_occurrence_answer,
+    references=[],
+    source_claims=[],
+    technical_claims=[atomic_mcar_claim],
+)
+
+first_start = multi_occurrence_answer.find(shared_statement)
+second_start = multi_occurrence_answer.find(
+    shared_statement,
+    first_start + len(shared_statement),
+)
+
+first_discovered = academic_claim_coverage.DiscoveredClaim(
+    claim=atomic_mcar_claim,
+    source_anchor=shared_statement,
+    source_start=first_start,
+    source_end=first_start + len(shared_statement),
+)
+
+second_discovered = academic_claim_coverage.DiscoveredClaim(
+    claim=atomic_mcar_claim,
+    source_anchor=shared_statement,
+    source_start=second_start,
+    source_end=second_start + len(shared_statement),
+)
+
+
+def fake_multi_occurrence_coverage(*, answer_draft, existing_claims):
+    assert answer_draft == multi_occurrence_answer
+    return academic_claim_coverage.ClaimCoverageAssessment.from_result(
+        academic_claim_coverage.ClaimCoverageResult(
+            missing_claims=[],
+            discovered_claims=[
+                first_discovered,
+                second_discovered,
+            ],
+        )
+    )
+
+
+multi_restriction_calls = []
+
+
+def fake_multi_restriction_assessor(*, prompt, schema):
+    multi_restriction_calls.append(prompt)
+
+    return {
+        "material_restriction_omitted": (
+            "In randomised trials" in prompt
+        )
+    }
+
+
+multi_contextual_queries = []
+
+
+def fake_multi_contextual_retriever(query):
+    multi_contextual_queries.append(query)
+    return coverage_method_guidance
+
+
+def fake_multi_methodological_assessor(*, prompt, schema):
+    if "BOUNDED ANSWER CONTEXT" in prompt:
+        return {
+            "status": "methodologically_consistent",
+            "reason": "The occurrence is consistent in its verified context.",
+        }
+
+    return {
+        "status": "methodological_consistency_not_established",
+        "reason": "The standalone proposition lacks the contextual restriction.",
+    }
+
+
+multi_technical_calls = []
+
+
+def fake_multi_technical_verifier(claim):
+    multi_technical_calls.append(claim)
+    return fake_technical_verifier(claim)
+
+
+multi_occurrence_result = academic_orchestrator.assess_academic_draft(
+    multi_occurrence_draft,
+    local_guidance=coverage_method_guidance,
+    technical_verifier=fake_multi_technical_verifier,
+    coverage_assessor=fake_multi_occurrence_coverage,
+    material_restriction_assessor=fake_multi_restriction_assessor,
+    claim_methodological_retriever=fake_multi_contextual_retriever,
+    methodological_assessor=fake_multi_methodological_assessor,
+)
+
+assert len(multi_occurrence_result.discovered_claim_assessments) == 2
+assert len(multi_restriction_calls) == 2
+
+first_occurrence, second_occurrence = (
+    multi_occurrence_result.discovered_claim_assessments
+)
+
+assert (
+    first_occurrence.material_restriction.material_restriction_omitted
+    is True
+)
+assert (
+    second_occurrence.material_restriction.material_restriction_omitted
+    is False
+)
+
+assert (
+    first_occurrence.contextual_methodological_consistency.status
+    == academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT
+)
+assert (
+    second_occurrence.contextual_methodological_consistency
+    is None
+)
+
+assert len(multi_technical_calls) == 1
+assert len(multi_occurrence_result.technical_claims) == 1
+
+expected_first_contextual_query = (
+    academic_orchestrator._contextual_claim_methodological_query(
+        first_discovered.claim,
+        first_occurrence.source_context,
+    )
+)
+assert expected_first_contextual_query in multi_contextual_queries
+
+expected_second_contextual_query = (
+    academic_orchestrator._contextual_claim_methodological_query(
+        second_discovered.claim,
+        second_occurrence.source_context,
+    )
+)
+assert expected_second_contextual_query not in multi_contextual_queries
+
+print("PASS: duplicate proposition retains two occurrence records")
+print("PASS: restriction state remains occurrence-specific")
+print("PASS: contextual methodology runs only for eligible occurrence")
+print("PASS: proposition-level technical assessment remains deduplicated")
 
 
 print(

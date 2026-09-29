@@ -98,6 +98,29 @@ def _technical_claim_methodological_query(
     )
 
 
+def _contextual_claim_methodological_query(
+    claim: academic_chat.TechnicalClaim,
+    source_context: academic_claim_coverage.ClaimSourceContext,
+) -> str:
+    """Build a deterministic guidance query from a claim and verified context."""
+    claim_query = _technical_claim_methodological_query(claim)
+
+    parts = [
+        "TECHNICAL CLAIM",
+        claim_query,
+        "VERIFIED SOURCE SENTENCE",
+        source_context.source_sentence,
+        "BOUNDED ANSWER CONTEXT",
+        source_context.context_excerpt,
+    ]
+
+    return "\n".join(
+        part.strip()
+        for part in parts
+        if isinstance(part, str) and part.strip()
+    )
+
+
 def _normalise_retrieval_doi(doi: str | None) -> str | None:
     """Normalise a DOI for retrieval-identity continuity checks."""
     if doi is None:
@@ -288,6 +311,9 @@ class DiscoveredClaimAssessment:
     source_context: academic_claim_coverage.ClaimSourceContext
     material_restriction: (
         academic_claim_coverage.MaterialRestrictionAssessment | None
+    ) = None
+    contextual_methodological_consistency: (
+        academic_methodology.ContextualMethodologicalConsistencyResult | None
     ) = None
 
 
@@ -657,11 +683,40 @@ def assess_academic_draft(
                     )
                 )
 
+            contextual_methodological_consistency = None
+
+            if (
+                material_restriction is not None
+                and material_restriction.material_restriction_omitted
+                and claim_methodological_retriever is not None
+                and methodological_assessor is not None
+            ):
+                contextual_guidance = claim_methodological_retriever(
+                    _contextual_claim_methodological_query(
+                        discovered.claim,
+                        source_context,
+                    )
+                )
+
+                if contextual_guidance.passages:
+                    contextual_methodological_consistency = (
+                        academic_methodology
+                        .assess_contextual_methodological_consistency(
+                            claim=discovered.claim,
+                            source_context=source_context,
+                            passages=contextual_guidance.passages,
+                            assessor=methodological_assessor,
+                        )
+                    )
+
             discovered_claim_assessments.append(
                 DiscoveredClaimAssessment(
                     discovered_claim=discovered,
                     source_context=source_context,
                     material_restriction=material_restriction,
+                    contextual_methodological_consistency=(
+                        contextual_methodological_consistency
+                    ),
                 )
             )
 

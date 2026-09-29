@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import academic_chat
+import academic_claim_coverage
 import reviewer_notes
 
 
@@ -58,6 +59,17 @@ class MethodologicalConsistencyResult:
         }
 
 
+@dataclass
+class ContextualMethodologicalConsistencyResult:
+    """Occurrence-level assessment against retrieved methodological guidance."""
+
+    status: str
+    claim: academic_chat.TechnicalClaim
+    source_context: academic_claim_coverage.ClaimSourceContext
+    passages: list[reviewer_notes.Passage]
+    reasons: list[str]
+
+
 def methodological_consistency_output_schema() -> dict[str, Any]:
     """Return the strict structured-output schema for consistency assessment."""
     return {
@@ -77,16 +89,35 @@ def methodological_consistency_output_schema() -> dict[str, Any]:
     }
 
 
-def build_methodological_consistency_prompt(
+def _format_methodological_claim(
     claim: academic_chat.TechnicalClaim,
-    passages: list[reviewer_notes.Passage],
 ) -> str:
-    """Build a guidance-bounded methodological-consistency prompt."""
+    """Format one application-owned technical claim for semantic assessment."""
     if not isinstance(claim, academic_chat.TechnicalClaim):
         raise TypeError(
             "Methodological consistency requires a TechnicalClaim."
         )
 
+    parameterisation = (
+        claim.parameterisation
+        if claim.parameterisation is not None
+        else "not specified"
+    )
+
+    return "\n".join(
+        [
+            f"type: {claim.type}",
+            f"concept: {claim.concept}",
+            f"statement: {claim.statement}",
+            f"parameterisation: {parameterisation}",
+        ]
+    )
+
+
+def _format_methodological_guidance(
+    passages: list[reviewer_notes.Passage],
+) -> str:
+    """Format application-owned reviewer-note passages for assessment."""
     if (
         not isinstance(passages, list)
         or not passages
@@ -115,25 +146,12 @@ def build_methodological_consistency_prompt(
             )
         )
 
-    parameterisation = (
-        claim.parameterisation
-        if claim.parameterisation is not None
-        else "not specified"
-    )
+    return "\n".join("\n" + block for block in guidance_blocks)
 
-    return f"""Assess whether the generated methodological claim is consistent
-with the supplied curated methodological guidance.
 
-GENERATED CLAIM
-type: {claim.type}
-concept: {claim.concept}
-statement: {claim.statement}
-parameterisation: {parameterisation}
-
-CURATED METHODOLOGICAL GUIDANCE
-{chr(10).join(chr(10) + block for block in guidance_blocks)}
-
-RULES
+def _methodological_consistency_rules() -> str:
+    """Return the shared methodological judgement and output rules."""
+    return """RULES
 Use only the supplied guidance when judging the claim.
 Do not use outside knowledge.
 Do not treat retrieval of a passage as evidence that it addresses the claim.
@@ -186,7 +204,28 @@ Do not show deliberation, self-correction, or reconsideration in the reason.
 
 Return only the required judgement fields: status and reason.
 Do not return the claim, guidance, note names, headings, retrieval scores, or
-any other provenance field.
+any other provenance field."""
+
+
+def build_methodological_consistency_prompt(
+    claim: academic_chat.TechnicalClaim,
+    passages: list[reviewer_notes.Passage],
+) -> str:
+    """Build a guidance-bounded methodological-consistency prompt."""
+    claim_block = _format_methodological_claim(claim)
+    guidance_block = _format_methodological_guidance(passages)
+    rules = _methodological_consistency_rules()
+
+    return f"""Assess whether the generated methodological claim is consistent
+with the supplied curated methodological guidance.
+
+GENERATED CLAIM
+{claim_block}
+
+CURATED METHODOLOGICAL GUIDANCE
+{guidance_block}
+
+{rules}
 """
 
 
@@ -254,6 +293,117 @@ def build_methodological_consistency(
         claim=claim,
         passages=list(passages),
         reasons=[reason.strip()],
+    )
+
+
+def build_contextual_methodological_consistency_prompt(
+    *,
+    claim: academic_chat.TechnicalClaim,
+    source_context: academic_claim_coverage.ClaimSourceContext,
+    passages: list[reviewer_notes.Passage],
+) -> str:
+    """Build an occurrence-aware methodological-consistency prompt."""
+    if not isinstance(
+        source_context,
+        academic_claim_coverage.ClaimSourceContext,
+    ):
+        raise TypeError(
+            "Contextual methodological consistency requires "
+            "a ClaimSourceContext."
+        )
+
+    claim_block = _format_methodological_claim(claim)
+    guidance_block = _format_methodological_guidance(passages)
+    rules = _methodological_consistency_rules()
+
+    return f"""Assess whether the generated methodological claim, interpreted
+at its verified answer occurrence, is consistent with the supplied curated
+methodological guidance.
+
+GENERATED CLAIM
+{claim_block}
+
+VERIFIED SOURCE SENTENCE
+{source_context.source_sentence}
+
+BOUNDED ANSWER CONTEXT
+{source_context.context_excerpt}
+
+CONTEXT AUTHORITY
+Use the verified answer context only to interpret restrictions that govern
+this occurrence of the generated claim.
+The answer context is not methodological guidance and cannot establish
+methodological consistency or conflict.
+Only the supplied curated methodological guidance may establish methodological
+consistency or conflict.
+Do not treat the answer context as changing the stored claim.
+Do not rewrite, repair, strengthen, or weaken the generated claim.
+
+CURATED METHODOLOGICAL GUIDANCE
+{guidance_block}
+
+{rules}
+"""
+
+
+
+def build_contextual_methodological_consistency(
+    *,
+    claim: academic_chat.TechnicalClaim,
+    source_context: academic_claim_coverage.ClaimSourceContext,
+    passages: list[reviewer_notes.Passage],
+    assessor_output: Any,
+) -> ContextualMethodologicalConsistencyResult:
+    """Validate a contextual judgement and attach application-owned provenance."""
+    if not isinstance(
+        source_context,
+        academic_claim_coverage.ClaimSourceContext,
+    ):
+        raise TypeError(
+            "Contextual methodological consistency requires "
+            "a ClaimSourceContext."
+        )
+
+    validated = build_methodological_consistency(
+        claim=claim,
+        passages=passages,
+        assessor_output=assessor_output,
+    )
+
+    return ContextualMethodologicalConsistencyResult(
+        status=validated.status,
+        claim=claim,
+        source_context=source_context,
+        passages=list(passages),
+        reasons=list(validated.reasons),
+    )
+
+
+def assess_contextual_methodological_consistency(
+    *,
+    claim: academic_chat.TechnicalClaim,
+    source_context: academic_claim_coverage.ClaimSourceContext,
+    passages: list[reviewer_notes.Passage],
+    assessor,
+) -> ContextualMethodologicalConsistencyResult:
+    """Assess one verified claim occurrence against local guidance."""
+    prompt = build_contextual_methodological_consistency_prompt(
+        claim=claim,
+        source_context=source_context,
+        passages=passages,
+    )
+    schema = methodological_consistency_output_schema()
+
+    assessor_output = assessor(
+        prompt=prompt,
+        schema=schema,
+    )
+
+    return build_contextual_methodological_consistency(
+        claim=claim,
+        source_context=source_context,
+        passages=passages,
+        assessor_output=assessor_output,
     )
 
 
