@@ -34,6 +34,83 @@ def check(label, condition, detail=""):
         fails.append(label)
 
 
+print("\n[0] transient OpenAlex 503 is retried within bounded attempts")
+
+original_urlopen = at.urlopen
+original_sleep = at.time.sleep
+openalex_attempts = []
+
+
+def fake_openalex_503(request, timeout=10.0):
+    openalex_attempts.append(request.full_url)
+    raise at.HTTPError(
+        request.full_url,
+        503,
+        "Service Unavailable",
+        None,
+        None,
+    )
+
+
+at.urlopen = fake_openalex_503
+at.time.sleep = lambda delay: None
+
+try:
+    try:
+        at._get_openalex_json(
+            "https://api.openalex.org/works/test",
+            max_attempts=3,
+        )
+    except RuntimeError:
+        pass
+finally:
+    at.urlopen = original_urlopen
+    at.time.sleep = original_sleep
+
+check(
+    "OpenAlex 503 uses all bounded retry attempts",
+    len(openalex_attempts) == 3,
+    f"attempts={len(openalex_attempts)}",
+)
+
+
+print("\n[0b] non-transient OpenAlex 404 fails immediately")
+
+original_urlopen = at.urlopen
+openalex_404_attempts = []
+
+
+def fake_openalex_404(request, timeout=10.0):
+    openalex_404_attempts.append(request.full_url)
+    raise at.HTTPError(
+        request.full_url,
+        404,
+        "Not Found",
+        None,
+        None,
+    )
+
+
+at.urlopen = fake_openalex_404
+
+try:
+    try:
+        at._get_openalex_json(
+            "https://api.openalex.org/works/test",
+            max_attempts=3,
+        )
+    except RuntimeError:
+        pass
+finally:
+    at.urlopen = original_urlopen
+
+check(
+    "OpenAlex 404 fails without retry",
+    len(openalex_404_attempts) == 1,
+    f"attempts={len(openalex_404_attempts)}",
+)
+
+
 def candidate(
     *,
     title,

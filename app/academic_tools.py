@@ -217,12 +217,16 @@ def _get_openalex_json(
                 return json.load(response)
 
         except HTTPError as exc:
-            if exc.code != 429 or attempt == max_attempts - 1:
+            if exc.code not in {429, 503} or attempt == max_attempts - 1:
                 raise RuntimeError(
                     f"OpenAlex request failed: {exc}"
                 ) from exc
 
-            retry_after = exc.headers.get("Retry-After")
+            retry_after = (
+                exc.headers.get("Retry-After")
+                if exc.headers is not None
+                else None
+            )
             try:
                 delay = float(retry_after) if retry_after else 2 ** attempt
             except (TypeError, ValueError):
