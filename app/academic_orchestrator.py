@@ -314,6 +314,37 @@ class DiscoveredClaimAssessment:
         academic_methodology.ContextualMethodologicalConsistencyResult | None
     ) = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Expose a bounded public view of occurrence-level context assessment."""
+        methodology = self.contextual_methodological_consistency
+
+        return {
+            "claim_statement": self.discovered_claim.claim.statement,
+            "source_sentence": self.source_context.source_sentence,
+            "context_excerpt": self.source_context.context_excerpt,
+            "material_restriction_omitted": (
+                self.material_restriction.material_restriction_omitted
+                if self.material_restriction is not None
+                else None
+            ),
+            "contextual_methodological_consistency": (
+                {
+                    "status": methodology.status,
+                    "reasons": list(methodology.reasons),
+                    "passages": [
+                        {
+                            "note": passage.note,
+                            "heading": passage.heading,
+                            "score": passage.score,
+                        }
+                        for passage in methodology.passages
+                    ],
+                }
+                if methodology is not None
+                else None
+            ),
+        }
+
 
 @dataclass
 class AcademicReleaseAssessment:
@@ -447,6 +478,10 @@ class AcademicFirstStageResult:
             "technical_claims": [
                 claim.to_dict()
                 for claim in self.technical_claims
+            ],
+            "claim_context_assessments": [
+                assessment.to_dict()
+                for assessment in self.discovered_claim_assessments
             ],
             "release": self.release.to_dict(),
         }

@@ -127,12 +127,18 @@ expected_payload_keys = {
     "references",
     "source_claims",
     "technical_claims",
+    "claim_context_assessments",
     "release",
 }
 
 check(
     set(retained_payload) == expected_payload_keys,
-    "first-stage serialized API shape remains unchanged",
+    "first-stage serialized API exposes only bounded public fields",
+)
+
+check(
+    retained_payload["claim_context_assessments"] == [],
+    "first-stage payload exposes no invented claim context",
 )
 
 

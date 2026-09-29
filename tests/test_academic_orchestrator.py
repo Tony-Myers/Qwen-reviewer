@@ -3229,6 +3229,73 @@ print("PASS: contextual methodology does not alter release behaviour")
 
 
 print(
+    "\n[claim coverage] occurrence context crosses public boundary narrowly"
+)
+
+contextual_serialised = contextual_occurrence_result.to_dict()
+
+assert "claim_context_assessments" in contextual_serialised
+assert len(contextual_serialised["claim_context_assessments"]) == 1
+
+public_context = contextual_serialised["claim_context_assessments"][0]
+
+assert (
+    public_context["claim_statement"]
+    == duplicate_discovered.claim.statement
+)
+assert (
+    public_context["source_sentence"]
+    == contextual_occurrence.source_context.source_sentence
+)
+assert (
+    public_context["context_excerpt"]
+    == contextual_occurrence.source_context.context_excerpt
+)
+assert public_context["material_restriction_omitted"] is True
+
+public_contextual_methodology = (
+    public_context["contextual_methodological_consistency"]
+)
+
+assert (
+    public_contextual_methodology["status"]
+    == academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT
+)
+assert public_contextual_methodology["reasons"]
+assert public_contextual_methodology["passages"]
+
+public_passage = public_contextual_methodology["passages"][0]
+assert set(public_passage) == {"note", "heading", "score"}
+
+assert set(public_context) == {
+    "claim_statement",
+    "source_sentence",
+    "context_excerpt",
+    "material_restriction_omitted",
+    "contextual_methodological_consistency",
+}
+
+public_context_text = repr(public_context)
+
+assert "GENERATED-TYPE" not in public_context_text
+assert "GENERATED-CONCEPT" not in public_context_text
+assert "source_anchor" not in public_context
+assert "source_start" not in public_context
+assert "source_end" not in public_context
+assert "source_sentence_start" not in public_context
+assert "source_sentence_end" not in public_context
+assert "context_start" not in public_context
+assert "context_end" not in public_context
+assert "text" not in public_passage
+
+print("PASS: public context retains the discovered claim statement")
+print("PASS: public context retains verified answer context")
+print("PASS: public context retains material-restriction state")
+print("PASS: public context retains contextual methodology provenance")
+print("PASS: public context withholds internal provenance machinery")
+
+
+print(
     "\n[claim coverage] contextual retrieval silence remains unassessed"
 )
 
@@ -3602,8 +3669,8 @@ print("PASS: unavailable coverage cannot masquerade as successful empty coverage
 print("PASS: unavailable coverage invents no technical claims")
 
 
-# Coverage state is retained internally without changing the established
-# public Academic Chat payload contract.
+# Coverage state remains internal. Only the deliberately bounded
+# occurrence-context assessment crosses the public Academic Chat boundary.
 assert coverage_result.claim_coverage.status == (
     academic_claim_coverage.COVERAGE_STATUS_MISSING_FOUND
 )
@@ -3617,10 +3684,35 @@ assert set(coverage_payload) == {
     "references",
     "source_claims",
     "technical_claims",
+    "claim_context_assessments",
     "release",
 }
 
-print("PASS: coverage state is retained internally without changing API shape")
+print("PASS: coverage state remains internal while bounded context is public")
+
+
+# Absence of a restriction assessor remains distinct from an assessed
+# negative result at the public boundary.
+no_restriction_payload = no_restriction_assessor_result.to_dict()
+assert len(no_restriction_payload["claim_context_assessments"]) == 1
+
+unassessed_public_context = (
+    no_restriction_payload["claim_context_assessments"][0]
+)
+
+assert (
+    unassessed_public_context["material_restriction_omitted"]
+    is None
+)
+assert (
+    unassessed_public_context[
+        "contextual_methodological_consistency"
+    ]
+    is None
+)
+
+print("PASS: unattempted restriction assessment serialises as null")
+print("PASS: unattempted contextual methodology serialises as null")
 print("\n[claim coverage] bare coverage result is rejected")
 
 def fake_bare_coverage_result(*, answer_draft, existing_claims):

@@ -689,7 +689,10 @@ function academicStatusLabel(status) {
     claim_contradicted: 'Claim contradicted',
     technically_verified: 'Technically verified',
     technical_conflict: 'Technical conflict',
-    not_verified: 'Not verified'
+    not_verified: 'Not verified',
+    methodologically_consistent: 'Methodologically consistent',
+    methodological_conflict: 'Methodological conflict',
+    methodological_consistency_not_established: 'Methodological consistency not established'
   };
   return labels[status] || String(status || 'unknown').replace(/_/g, ' ');
 }
@@ -885,6 +888,7 @@ function renderAcademicTechnicalClaim(item, index) {
 
   if (claim.concept) {
     h += '<div class="academic-reference-meta">' +
+      '<strong>Generated category:</strong> ' +
       esc(claim.concept) + '</div>';
   }
 
@@ -932,6 +936,83 @@ function renderAcademicTechnicalClaim(item, index) {
 
       h += '</details>';
     }
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderAcademicClaimContext(item, index) {
+  const methodology =
+    item?.contextual_methodological_consistency || null;
+  const restriction = item?.material_restriction_omitted;
+
+  let h = '<div class="academic-audit-card">';
+  h += '<div><strong>Claim context ' + (index + 1) + ':</strong> ' +
+    esc(item?.claim_statement || '(empty claim)') + '</div>';
+
+  h += '<div class="academic-audit-grid" style="margin-top:8px;">';
+
+  if (restriction === true) {
+    h += '<div><strong>Context check:</strong> ' +
+      'Material restriction omitted from the atomic claim.</div>';
+  } else if (restriction === false) {
+    h += '<div><strong>Context check:</strong> ' +
+      'No material restriction omission detected.</div>';
+  } else {
+    h += '<div><strong>Context check:</strong> ' +
+      'Context restriction not assessed.</div>';
+  }
+
+  h += '</div>';
+
+  if (item?.source_sentence) {
+    h += '<div style="margin-top:8px;"><strong>Verified source sentence:</strong> ' +
+      esc(item.source_sentence) + '</div>';
+  }
+
+  if (item?.context_excerpt) {
+    h += '<div style="margin-top:8px;"><strong>Bounded answer context:</strong> ' +
+      esc(item.context_excerpt) + '</div>';
+  }
+
+  if (methodology) {
+    h += '<div class="academic-audit-grid" style="margin-top:8px;">';
+    h += '<div><strong>Contextual methodological check:</strong> ' +
+      esc(academicStatusLabel(methodology.status)) + '</div>';
+    h += '</div>';
+
+    h += academicReasons(methodology.reasons);
+
+    const passages = Array.isArray(methodology.passages)
+      ? methodology.passages
+      : [];
+
+    if (passages.length) {
+      h += '<details style="margin-top:8px;">';
+      h += '<summary>Guidance considered in this context</summary>';
+
+      for (const passage of passages) {
+        const note = passage?.note || 'Reviewer note';
+        const heading = passage?.heading || '';
+
+        h += '<div style="margin-top:8px;">';
+        h += '<strong>' + esc(note) + '</strong>';
+
+        if (heading) {
+          h += '<div class="academic-reference-meta">' +
+            esc(heading) + '</div>';
+        }
+
+        h += '</div>';
+      }
+
+      h += '</details>';
+    }
+  } else if (restriction === true) {
+    h += '<div class="academic-reference-meta" style="margin-top:8px;">' +
+      'No contextual methodological conclusion was established.' +
+      '</div>';
   }
 
   h += '</div>';
@@ -1028,6 +1109,9 @@ function renderAcademicLocalGuidance(localGuidance) {
 function renderAcademicAudit(data) {
   const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
   const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
+  const claimContexts = Array.isArray(data.claim_context_assessments)
+    ? data.claim_context_assessments
+    : [];
   const release = data.release || null;
 
   let h = '';
@@ -1058,6 +1142,13 @@ function renderAcademicAudit(data) {
     }
   }
 
+  if (claimContexts.length) {
+    h += '<h4>Claim context</h4>';
+    for (let i = 0; i < claimContexts.length; i++) {
+      h += renderAcademicClaimContext(claimContexts[i], i);
+    }
+  }
+
   return h;
 }
 
@@ -1065,6 +1156,9 @@ function renderAcademicEvidence(data) {
   const references = Array.isArray(data.references) ? data.references : [];
   const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
   const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
+  const claimContexts = Array.isArray(data.claim_context_assessments)
+    ? data.claim_context_assessments
+    : [];
   const localGuidancePassages = Array.isArray(data.local_guidance?.passages)
     ? data.local_guidance.passages
     : [];
@@ -1090,6 +1184,7 @@ function renderAcademicEvidence(data) {
     localGuidancePassages.length ||
     sourceClaims.length ||
     technicalClaims.length ||
+    claimContexts.length ||
     data.release
   ) {
     h += '<section class="academic-verification-summary">';
