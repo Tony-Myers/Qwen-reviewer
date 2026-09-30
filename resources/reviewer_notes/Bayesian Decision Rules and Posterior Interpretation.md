@@ -54,6 +54,26 @@ Reviewers should be cautious of several common overstatements:
 - a narrower interval is not automatically more precise, more credible or preferable;
 - an ETI should not be described as analogous to a frequentist confidence interval merely because both may use quantile-based endpoints.
 
+```references
+- cite: Hyndman, R. J. (1996). Computing and graphing highest density regions. The American Statistician, 50(2), 120–126.
+  doi: 10.1080/00031305.1996.10474359
+  supports: Definition and computation of highest density regions, including regions that are not a single interval.
+  checked: 2026-09-30, Crossref
+- cite: Kruschke, J. K. (2015). Doing Bayesian data analysis: A tutorial with R, JAGS, and Stan (2nd ed.). Academic Press.
+  isbn: 9780124058880
+  url: https://www.sciencedirect.com/book/9780124058880/doing-bayesian-data-analysis
+  supports: Textbook treatment of the highest density interval and its use to summarise a posterior.
+  checked: 2026-09-30, publisher record (no DOI confirmed)
+- cite: Makowski, D., Ben-Shachar, M. S., & Lüdecke, D. (2019). bayestestR: Describing effects and their uncertainty, existence and significance within the Bayesian framework. Journal of Open Source Software, 4(40), 1541.
+  doi: 10.21105/joss.01541
+  supports: Software implementing the HDI, ETI, ROPE and probability of direction for summarising posteriors.
+  checked: 2026-09-30, Crossref
+- cite: easystats. Credible Intervals (CI). bayestestR package documentation.
+  url: https://easystats.github.io/bayestestR/articles/credible_interval.html
+  supports: Practical comparison of HDI and ETI, including that the ETI is unchanged by monotone transformations while the HDI is not. Documentation, not peer reviewed.
+  checked: 2026-09-30, page read
+```
+
 ##### What should be reported instead of only whether the interval crosses zero?
 
 Useful summaries include:
@@ -104,6 +124,17 @@ For example, effects between −δ and +δ might be treated as scientifically tr
 
 The ROPE must be justified substantively rather than selected after inspecting the posterior.
 
+```references
+- cite: Kruschke, J. K. (2018). Rejecting or accepting parameter values in Bayesian estimation. Advances in Methods and Practices in Psychological Science, 1(2), 270–280.
+  doi: 10.1177/2515245918771304
+  supports: Decision rules combining the HDI with a region of practical equivalence, and how a ROPE can be set.
+  checked: 2026-09-30, Crossref
+- cite: Makowski, D., Ben-Shachar, M. S., & Lüdecke, D. (2019). bayestestR: Describing effects and their uncertainty, existence and significance within the Bayesian framework. Journal of Open Source Software, 4(40), 1541.
+  doi: 10.21105/joss.01541
+  supports: Software implementing the HDI, ETI, ROPE and probability of direction for summarising posteriors.
+  checked: 2026-09-30, Crossref
+```
+
 ##### What is a posterior probability threshold?
 
 A decision rule may require a probability such as:
@@ -126,6 +157,13 @@ It is often useful for:
 - probability of eventual trial success;
 - planning future research.
 
+```references
+- cite: Spiegelhalter, D. J., Abrams, K. R., & Myles, J. P. (2003). Bayesian approaches to clinical trials and health-care evaluation. Wiley.
+  doi: 10.1002/0470092602
+  supports: Bayesian methods for trials, including clinically important thresholds, predictive probabilities and interim monitoring.
+  checked: 2026-09-30, Crossref
+```
+
 ##### What is Bayesian decision theory?
 
 Bayesian decision theory combines:
@@ -137,6 +175,17 @@ Bayesian decision theory combines:
 The optimal decision minimises expected loss or maximises expected utility.
 
 A posterior probability alone does not determine a decision unless the consequences of different actions are also specified.
+
+```references
+- cite: Berger, J. O. (1985). Statistical decision theory and Bayesian analysis (2nd ed.). Springer.
+  doi: 10.1007/978-1-4757-4286-2
+  supports: Formal Bayesian decision theory: losses, utilities, and choosing an action by expected loss.
+  checked: 2026-09-30, Crossref
+- cite: Gelman, A., Carlin, J. B., Stern, H. S., Dunson, D. B., Vehtari, A., & Rubin, D. B. (2013). Bayesian data analysis (3rd ed.). Chapman and Hall/CRC.
+  doi: 10.1201/b16018
+  supports: Standard reference for posterior summaries, posterior intervals and Bayesian decision analysis.
+  checked: 2026-09-30, Crossref
+```
 
 #### Common misconceptions
 
@@ -205,6 +254,33 @@ When an analysis is intended to support an action, the rule linking posterior ev
 □ Probability or utility thresholds are prespecified where formal decisions are made.
 
 □ Conclusions distinguish posterior evidence from the decision rule applied to that evidence.
+
+#### References
+
+Checked sources for this topic. A section with its own list shows that list instead. Each entry says what it supports; a source is listed for that purpose only, not as support for every sentence in the note.
+
+```references
+- cite: Kruschke, J. K. (2021). Bayesian analysis reporting guidelines. Nature Human Behaviour, 5(10), 1282–1291.
+  doi: 10.1038/s41562-021-01177-7
+  supports: Reporting guidelines for Bayesian analyses, including posterior summaries, credible intervals and decision criteria.
+  checked: 2026-09-30, Crossref
+- cite: Kruschke, J. K., & Liddell, T. M. (2018). The Bayesian New Statistics: Hypothesis testing, estimation, meta-analysis, and power analysis from a Bayesian perspective. Psychonomic Bulletin & Review, 25(1), 178–206.
+  doi: 10.3758/s13423-016-1221-4
+  supports: Bayesian estimation compared with hypothesis testing, including credible intervals, ROPE-based decisions and Bayesian power analysis.
+  checked: 2026-09-30, Crossref
+- cite: Gelman, A., Carlin, J. B., Stern, H. S., Dunson, D. B., Vehtari, A., & Rubin, D. B. (2013). Bayesian data analysis (3rd ed.). Chapman and Hall/CRC.
+  doi: 10.1201/b16018
+  supports: Standard reference for posterior summaries, posterior intervals and Bayesian decision analysis.
+  checked: 2026-09-30, Crossref
+- cite: Berger, J. O. (1985). Statistical decision theory and Bayesian analysis (2nd ed.). Springer.
+  doi: 10.1007/978-1-4757-4286-2
+  supports: Formal Bayesian decision theory: losses, utilities, and choosing an action by expected loss.
+  checked: 2026-09-30, Crossref
+- cite: Spiegelhalter, D. J., Abrams, K. R., & Myles, J. P. (2003). Bayesian approaches to clinical trials and health-care evaluation. Wiley.
+  doi: 10.1002/0470092602
+  supports: Bayesian methods for trials, including clinically important thresholds, predictive probabilities and interim monitoring.
+  checked: 2026-09-30, Crossref
+```
 
 ---
 

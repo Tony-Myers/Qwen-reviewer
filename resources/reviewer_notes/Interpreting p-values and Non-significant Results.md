@@ -82,6 +82,17 @@ These phrases are not equivalent.
 
 A non-significant *p*-value usually provides **absence of evidence**, **not evidence of absence**. Demonstrating evidence of absence generally requires methods specifically designed for that purpose, such as equivalence testing, the Two One-Sided Tests (TOST) procedure, non-inferiority testing, or Bayesian methods that directly quantify evidence for negligible effects. A non-significant superiority test (p > 0.05) is not evidence of equivalence.
 
+```references
+- cite: Altman, D. G., & Bland, J. M. (1995). Statistics notes: Absence of evidence is not evidence of absence. BMJ, 311(7003), 485.
+  doi: 10.1136/bmj.311.7003.485
+  supports: Why a non-significant result is not evidence that there is no effect.
+  checked: 2026-09-30, Crossref
+- cite: Lakens, D., Scheel, A. M., & Isager, P. M. (2018). Equivalence testing for psychological research: A tutorial. Advances in Methods and Practices in Psychological Science, 1(2), 259–269.
+  doi: 10.1177/2515245918770963
+  supports: Equivalence testing (TOST) to show that an effect is smaller than a prespecified bound.
+  checked: 2026-09-30, Crossref
+```
+
 ##### Can I conclude "there is no difference"?
 
 Usually **no**.
@@ -98,6 +109,17 @@ A statement such as:
 
 is usually **not** justified unless the study was specifically designed to demonstrate equivalence or the confidence interval excludes clinically important differences.  
 
+```references
+- cite: Altman, D. G., & Bland, J. M. (1995). Statistics notes: Absence of evidence is not evidence of absence. BMJ, 311(7003), 485.
+  doi: 10.1136/bmj.311.7003.485
+  supports: Why a non-significant result is not evidence that there is no effect.
+  checked: 2026-09-30, Crossref
+- cite: Lakens, D., Scheel, A. M., & Isager, P. M. (2018). Equivalence testing for psychological research: A tutorial. Advances in Methods and Practices in Psychological Science, 1(2), 259–269.
+  doi: 10.1177/2515245918770963
+  supports: Equivalence testing (TOST) to show that an effect is smaller than a prespecified bound.
+  checked: 2026-09-30, Crossref
+```
+
 ##### Should the significance threshold be justified?
 
 Yes, and it almost never is.
@@ -109,6 +131,13 @@ Reviewers should not expect authors to depart from 0.05. What is reasonable to e
 Where several tests are reported, the threshold and the treatment of multiplicity belong together. A paper that applies 0.05 to twenty comparisons and corrects for none of them has made a decision about error rates whether or not it says so.
 
 The same question arises in Bayesian work without the error-rate meaning; see the note on Bayesian decision rules.
+
+```references
+- cite: Lakens, D., Adolfi, F. G., Albers, C. J., et al. (2018). Justify your alpha. Nature Human Behaviour, 2(3), 168–171.
+  doi: 10.1038/s41562-018-0311-x
+  supports: The case for justifying the significance threshold rather than defaulting to 0.05.
+  checked: 2026-09-30, Crossref
+```
 
 ##### What does a 95% confidence interval mean, and how should it be interpreted?
 
@@ -129,11 +158,29 @@ Wide confidence intervals usually indicate considerable uncertainty, even when *
 
 The choice of 95% is **conventional rather than uniquely correct**, much like the conventional use of *p* < 0.05. Other confidence levels, such as 90% or 99%, can be used depending on the purpose and consequences of the analysis. Increasing the confidence level produces a wider interval, all else being equal. The confidence level should therefore be stated and interpreted as a choice rather than as a natural boundary between convincing and unconvincing evidence.
 
+```references
+- cite: Greenland, S., Senn, S. J., Rothman, K. J., Carlin, J. B., Poole, C., Goodman, S. N., & Altman, D. G. (2016). Statistical tests, P values, confidence intervals, and power: A guide to misinterpretations. European Journal of Epidemiology, 31(4), 337–350.
+  doi: 10.1007/s10654-016-0149-3
+  supports: Catalogue of common misinterpretations of p-values, confidence intervals and power.
+  checked: 2026-09-30, Crossref
+- cite: Morey, R. D., Hoekstra, R., Rouder, J. N., Lee, M. D., & Wagenmakers, E.-J. (2016). The fallacy of placing confidence in confidence intervals. Psychonomic Bulletin & Review, 23(1), 103–123.
+  doi: 10.3758/s13423-015-0947-8
+  supports: Common fallacies in interpreting a single observed confidence interval.
+  checked: 2026-09-30, Crossref
+```
+
 ##### What role does statistical power play?
 
 Low statistical power increases the chance of obtaining a non-significant result even when a meaningful effect exists.
 
 However, reviewers should avoid interpreting non-significant findings using post hoc or observed power calculations, which are generally discouraged. Instead, examine the estimated effect and its confidence interval.  
+
+```references
+- cite: Hoenig, J. M., & Heisey, D. M. (2001). The abuse of power: The pervasive fallacy of power calculations for data analysis. The American Statistician, 55(1), 19–24.
+  doi: 10.1198/000313001300339897
+  supports: Why post hoc (observed) power does not help interpret a non-significant result.
+  checked: 2026-09-30, Crossref
+```
 
 #### Common misconceptions
 
@@ -221,6 +268,25 @@ Confidence intervals should be interpreted for **all** estimated effects because
 □ Claims of equivalence or "no difference" are supported by appropriate methodology rather than by a non-significant superiority test.
 
 □ The estimated effect size, confidence interval and scientific context are given greater emphasis than whether *p* is above or below 0.05.
+
+#### References
+
+Checked sources for this topic. A section with its own list shows that list instead. Each entry says what it supports; a source is listed for that purpose only, not as support for every sentence in the note.
+
+```references
+- cite: Wasserstein, R. L., & Lazar, N. A. (2016). The ASA statement on p-values: Context, process, and purpose. The American Statistician, 70(2), 129–133.
+  doi: 10.1080/00031305.2016.1154108
+  supports: The American Statistical Association's statement of what a p-value does and does not measure.
+  checked: 2026-09-30, Crossref
+- cite: Greenland, S., Senn, S. J., Rothman, K. J., Carlin, J. B., Poole, C., Goodman, S. N., & Altman, D. G. (2016). Statistical tests, P values, confidence intervals, and power: A guide to misinterpretations. European Journal of Epidemiology, 31(4), 337–350.
+  doi: 10.1007/s10654-016-0149-3
+  supports: Catalogue of common misinterpretations of p-values, confidence intervals and power.
+  checked: 2026-09-30, Crossref
+- cite: Amrhein, V., Greenland, S., & McShane, B. (2019). Scientists rise up against statistical significance. Nature, 567(7748), 305–307.
+  doi: 10.1038/d41586-019-00857-9
+  supports: The case against dichotomising results as significant or non-significant.
+  checked: 2026-09-30, Crossref
+```
 
 ---
 
