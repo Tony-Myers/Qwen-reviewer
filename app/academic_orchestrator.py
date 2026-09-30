@@ -373,6 +373,9 @@ class AcademicReleaseAssessment:
 def assess_academic_release(
     technical_claims: list[TechnicalClaimResult],
     source_claims: list[SourceClaimResult] | None = None,
+    discovered_claim_assessments: (
+        list[DiscoveredClaimAssessment] | None
+    ) = None,
 ) -> AcademicReleaseAssessment:
     """Assess whether a checked academic draft may be presented.
 
@@ -390,6 +393,11 @@ def assess_academic_release(
         claim.methodological_consistency.status
         for claim in technical_claims
         if claim.methodological_consistency is not None
+    ]
+    contextual_methodological_statuses = [
+        assessment.contextual_methodological_consistency.status
+        for assessment in (discovered_claim_assessments or [])
+        if assessment.contextual_methodological_consistency is not None
     ]
     source_statuses = [
         claim.claim_assessment.status
@@ -412,7 +420,10 @@ def assess_academic_release(
 
     if (
         academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
-        in methodological_statuses
+        in (
+            methodological_statuses
+            + contextual_methodological_statuses
+        )
     ):
         return AcademicReleaseAssessment(
             status="blocked_methodological_conflict",
@@ -851,6 +862,7 @@ def assess_academic_draft(
     release = assess_academic_release(
         technical_claims,
         source_claims,
+        discovered_claim_assessments,
     )
 
     return AcademicFirstStageResult(

@@ -3393,7 +3393,63 @@ assert contextual_occurrence_result.release.safe_to_present is True
 print("PASS: omitted restriction triggers occurrence-specific retrieval")
 print("PASS: contextual methodology receives verified occurrence context")
 print("PASS: contextual and standalone methodology remain distinct")
-print("PASS: contextual methodology does not alter release behaviour")
+print("PASS: contextual methodological consistency does not block release")
+
+
+print(
+    "\n[claim coverage] contextual methodological conflict blocks release"
+)
+
+
+def fake_contextual_conflict_assessor(*, prompt, schema):
+    if "BOUNDED ANSWER CONTEXT" in prompt:
+        return {
+            "status": "methodological_conflict",
+            "reason": (
+                "The occurrence-specific proposition materially conflicts "
+                "with the supplied methodological guidance."
+            ),
+        }
+
+    return {
+        "status": "methodological_consistency_not_established",
+        "reason": (
+            "The standalone proposition is not established by the supplied "
+            "guidance."
+        ),
+    }
+
+
+contextual_conflict_result = academic_orchestrator.assess_academic_draft(
+    duplicate_occurrence_draft,
+    local_guidance=coverage_method_guidance,
+    technical_verifier=fake_technical_verifier,
+    coverage_assessor=fake_duplicate_coverage,
+    material_restriction_assessor=fake_omitted_restriction_assessor,
+    claim_methodological_retriever=(
+        fake_contextual_methodological_retriever
+    ),
+    methodological_assessor=fake_contextual_conflict_assessor,
+)
+
+contextual_conflict_occurrence = (
+    contextual_conflict_result.discovered_claim_assessments[0]
+)
+
+assert (
+    contextual_conflict_occurrence
+    .contextual_methodological_consistency
+    .status
+    == academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
+)
+
+assert contextual_conflict_result.release.status == (
+    "blocked_methodological_conflict"
+)
+assert contextual_conflict_result.release.safe_to_present is False
+
+print("PASS: contextual methodological conflict remains occurrence-specific")
+print("PASS: contextual methodological conflict blocks unchanged draft release")
 
 
 print(

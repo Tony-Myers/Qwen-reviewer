@@ -232,6 +232,61 @@ check(
     "combined technical and source conflicts remain blocked",
 )
 
+
+def contextual_claim_assessment(status):
+    methodology = type(
+        "SyntheticContextualMethodology",
+        (),
+        {"status": status},
+    )()
+
+    return type(
+        "SyntheticDiscoveredClaimAssessment",
+        (),
+        {"contextual_methodological_consistency": methodology},
+    )()
+
+
+print("\n[10] contextual methodological conflict blocks release")
+
+release = academic_orchestrator.assess_academic_release(
+    [],
+    [],
+    [contextual_claim_assessment("methodological_conflict")],
+)
+
+check(
+    release.status == "blocked_methodological_conflict",
+    "contextual methodological conflict uses methodological block status",
+)
+check(
+    release.safe_to_present is False,
+    "contextual methodological conflict blocks unchanged draft",
+)
+
+
+print("\n[11] contextual non-conflict does not block release")
+
+for methodology_status in (
+    "methodologically_consistent",
+    "methodological_consistency_not_established",
+):
+    release = academic_orchestrator.assess_academic_release(
+        [],
+        [],
+        [contextual_claim_assessment(methodology_status)],
+    )
+
+    check(
+        release.status == "release_allowed",
+        f"contextual {methodology_status!r} permits release",
+    )
+    check(
+        release.safe_to_present is True,
+        f"contextual {methodology_status!r} is non-blocking",
+    )
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
