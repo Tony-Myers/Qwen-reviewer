@@ -81,6 +81,27 @@ def retrieve_methodological_context(
     return LocalGuidanceResult(passages=passages)
 
 
+def _technical_claim_proposition_key(
+    claim: academic_chat.TechnicalClaim,
+) -> tuple[str, str | None]:
+    """Return substantive identity for proposition-level technical checking.
+
+    Generated type and concept labels are descriptive metadata rather than
+    part of the proposition assessed by deterministic or methodological
+    checking. Exact statement and parameterisation identity is deliberately
+    required here; semantic equivalence remains the responsibility of the
+    bounded representation assessment.
+    """
+    return (
+        claim.statement.strip(),
+        (
+            claim.parameterisation.strip()
+            if isinstance(claim.parameterisation, str)
+            else claim.parameterisation
+        ),
+    )
+
+
 def _technical_claim_methodological_query(
     claim: academic_chat.TechnicalClaim,
 ) -> str:
@@ -831,31 +852,13 @@ def assess_academic_draft(
             )
 
         assessed_keys = {
-            (
-                claim.type.strip(),
-                claim.concept.strip(),
-                claim.statement.strip(),
-                (
-                    claim.parameterisation.strip()
-                    if isinstance(claim.parameterisation, str)
-                    else claim.parameterisation
-                ),
-            )
+            _technical_claim_proposition_key(claim)
             for claim in claims_for_assessment
         }
 
         for discovered in claim_coverage.result.discovered_claims:
             claim = discovered.claim
-            key = (
-                claim.type.strip(),
-                claim.concept.strip(),
-                claim.statement.strip(),
-                (
-                    claim.parameterisation.strip()
-                    if isinstance(claim.parameterisation, str)
-                    else claim.parameterisation
-                ),
-            )
+            key = _technical_claim_proposition_key(claim)
 
             if key in assessed_keys:
                 continue
@@ -866,16 +869,7 @@ def assess_academic_draft(
         # Compatibility for application-owned coverage results produced by
         # callers that supply missing claims without a discovery set.
         for claim in claim_coverage.result.missing_claims:
-            key = (
-                claim.type.strip(),
-                claim.concept.strip(),
-                claim.statement.strip(),
-                (
-                    claim.parameterisation.strip()
-                    if isinstance(claim.parameterisation, str)
-                    else claim.parameterisation
-                ),
-            )
+            key = _technical_claim_proposition_key(claim)
 
             if key in assessed_keys:
                 continue

@@ -3775,6 +3775,83 @@ print("PASS: proposition-level technical assessment remains deduplicated")
 
 
 print(
+    "\n[claim coverage] generated metadata does not duplicate proposition checking"
+)
+
+metadata_variant_claim = academic_chat.TechnicalClaim(
+    type="GENERATED-TYPE-DIFFERENT",
+    concept="GENERATED-CONCEPT-DIFFERENT",
+    statement=first_discovered.claim.statement,
+    parameterisation=first_discovered.claim.parameterisation,
+)
+
+assert metadata_variant_claim.type != first_discovered.claim.type
+assert metadata_variant_claim.concept != first_discovered.claim.concept
+assert metadata_variant_claim.statement == first_discovered.claim.statement
+assert (
+    metadata_variant_claim.parameterisation
+    == first_discovered.claim.parameterisation
+)
+
+metadata_variant_discovered = academic_claim_coverage.DiscoveredClaim(
+    claim=metadata_variant_claim,
+    source_anchor=first_discovered.source_anchor,
+    source_start=first_discovered.source_start,
+    source_end=first_discovered.source_end,
+)
+
+
+def fake_metadata_variant_coverage(*, answer_draft, existing_claims):
+    assert answer_draft == multi_occurrence_draft.answer_draft
+    assert existing_claims == multi_occurrence_draft.technical_claims
+    return academic_claim_coverage.ClaimCoverageAssessment.from_result(
+        academic_claim_coverage.ClaimCoverageResult(
+            missing_claims=[],
+            discovered_claims=[metadata_variant_discovered],
+        )
+    )
+
+
+metadata_variant_technical_calls = []
+
+
+def fake_metadata_variant_verifier(claim):
+    metadata_variant_technical_calls.append(claim)
+    return fake_technical_verifier(claim)
+
+
+metadata_variant_result = academic_orchestrator.assess_academic_draft(
+    multi_occurrence_draft,
+    local_guidance=coverage_guidance,
+    technical_verifier=fake_metadata_variant_verifier,
+    coverage_assessor=fake_metadata_variant_coverage,
+)
+
+assert len(metadata_variant_result.discovered_claim_assessments) == 1
+assert (
+    metadata_variant_result.discovered_claim_assessments[0]
+    .discovered_claim.claim
+    is metadata_variant_claim
+)
+
+assert len(metadata_variant_technical_calls) == 1
+assert len(metadata_variant_result.technical_claims) == 1
+
+assert (
+    metadata_variant_result.technical_claims[0].claim
+    is multi_occurrence_draft.technical_claims[0]
+)
+assert (
+    metadata_variant_result.technical_claims[0].claim
+    is not metadata_variant_claim
+)
+
+print("PASS: metadata-variant occurrence remains separately auditable")
+print("PASS: type/concept variation does not duplicate proposition checking")
+print("PASS: first structured proposition remains the checked representation")
+
+
+print(
     "\n[claim coverage] first-stage runner propagates restriction assessor"
 )
 
