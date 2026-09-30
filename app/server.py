@@ -649,6 +649,7 @@ def assess_academic_material_restriction(*, prompt, schema):
 
 
 ACADEMIC_COVERAGE_DISCOVERY_MAX_TOKENS = 2000
+ACADEMIC_COVERAGE_DECOMPOSITION_MAX_TOKENS = 1000
 ACADEMIC_COVERAGE_REPRESENTATION_MAX_TOKENS = 256
 
 
@@ -657,11 +658,16 @@ def assess_academic_claim_coverage(
     answer_draft: str,
     existing_claims: list[academic_chat.TechnicalClaim],
 ) -> academic_claim_coverage.ClaimCoverageAssessment:
-    """Discover omitted technical claims using two bounded local stages."""
+    """Discover omitted technical claims using a bounded local pipeline."""
 
     def assessor(*, prompt, schema):
         if schema == academic_claim_coverage.claim_discovery_output_schema():
             max_tokens = ACADEMIC_COVERAGE_DISCOVERY_MAX_TOKENS
+        elif (
+            schema
+            == academic_claim_coverage.claim_decomposition_output_schema()
+        ):
+            max_tokens = ACADEMIC_COVERAGE_DECOMPOSITION_MAX_TOKENS
         elif (
             schema
             == academic_claim_coverage.claim_representation_output_schema()
@@ -669,7 +675,7 @@ def assess_academic_claim_coverage(
             max_tokens = ACADEMIC_COVERAGE_REPRESENTATION_MAX_TOKENS
         else:
             raise TypeError(
-                "Unexpected schema supplied to two-stage claim coverage."
+                "Unexpected schema supplied to claim-coverage pipeline."
             )
 
         try:
@@ -684,18 +690,13 @@ def assess_academic_claim_coverage(
             BackendError,
             academic_claim_assessor.ClaimAssessorOutputError,
         ) as exc:
-            if (
-                schema
-                == academic_claim_coverage.claim_representation_output_schema()
-            ):
-                # Representation only earns permission to suppress a
-                # discovered proposition. Failure to establish representation
-                # must therefore retain the proposition for downstream
-                # checking rather than erase it.
-                raise academic_claim_coverage.ClaimCoverageOutputError(
-                    "Claim representation could not be established."
-                ) from exc
-            raise
+            # The application layer owns stage-specific failure semantics:
+            # global discovery lets this translated inference failure escape,
+            # while additive audit, decomposition, and representation fail
+            # open without erasing already established claims.
+            raise academic_claim_coverage.ClaimCoverageOutputError(
+                "Claim-coverage inference could not be established."
+            ) from exc
 
     try:
         result = academic_claim_coverage.assess_claim_coverage_two_stage(

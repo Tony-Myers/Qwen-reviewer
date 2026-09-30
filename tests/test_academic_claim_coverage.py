@@ -992,7 +992,10 @@ representation_candidates = []
 
 
 def two_stage_assessor(*, prompt, schema):
-    if schema == coverage.claim_discovery_output_schema():
+    if (
+        schema == coverage.claim_discovery_output_schema()
+        and "ANSWER DRAFT" in prompt
+    ):
         discovery_prompts.append(prompt)
         return {
             "discovered_claims": [
@@ -1026,6 +1029,18 @@ def two_stage_assessor(*, prompt, schema):
                     "source_anchor": "automatically preferable",
                 },
             ]
+        }
+
+    if (
+        schema == coverage.claim_discovery_output_schema()
+        and "SOURCE SENTENCE" in prompt
+    ):
+        return {"discovered_claims": []}
+
+    if schema == coverage.claim_decomposition_output_schema():
+        return {
+            "requires_decomposition": False,
+            "atomic_claims": [],
         }
 
     if schema == coverage.claim_representation_output_schema():
@@ -1128,7 +1143,10 @@ malformed_candidate_statement = (
 
 
 def malformed_two_stage_assessor(*, prompt, schema):
-    if schema == coverage.claim_discovery_output_schema():
+    if (
+        schema == coverage.claim_discovery_output_schema()
+        and "ANSWER DRAFT" in prompt
+    ):
         return {
             "discovered_claims": [
                 {
@@ -1139,6 +1157,18 @@ def malformed_two_stage_assessor(*, prompt, schema):
                     "source_anchor": malformed_candidate_statement,
                 }
             ]
+        }
+
+    if (
+        schema == coverage.claim_discovery_output_schema()
+        and "SOURCE SENTENCE" in prompt
+    ):
+        return {"discovered_claims": []}
+
+    if schema == coverage.claim_decomposition_output_schema():
+        return {
+            "requires_decomposition": False,
+            "atomic_claims": [],
         }
 
     if schema == coverage.claim_representation_output_schema():
@@ -1211,6 +1241,12 @@ def broken_two_stage_assessor(*, prompt, schema):
                     "source_anchor": malformed_candidate_statement,
                 }
             ]
+        }
+
+    if schema == coverage.claim_decomposition_output_schema():
+        return {
+            "requires_decomposition": False,
+            "atomic_claims": [],
         }
 
     if schema == coverage.claim_representation_output_schema():
@@ -1653,3 +1689,800 @@ assert (
 )
 
 print("PASS: injected restriction assessor remains proposition-and-source bounded")
+
+
+print("\n[39] sentence spans are application-owned and reusable")
+
+sentence_answer = (
+    "First statistical proposition. "
+    "Second methodological proposition! "
+    "Third proposition without terminal punctuation"
+)
+sentence_spans = coverage.answer_sentence_spans(sentence_answer)
+sentence_texts = [
+    sentence_answer[start:end]
+    for start, end in sentence_spans
+]
+
+assert sentence_texts == [
+    "First statistical proposition.",
+    "Second methodological proposition!",
+    "Third proposition without terminal punctuation",
+]
+
+second_start, second_end = sentence_spans[1]
+second_context = coverage.resolve_claim_source_context(
+    answer_draft=sentence_answer,
+    source_start=second_start,
+    source_end=second_end,
+)
+assert second_context.source_sentence == (
+    "Second methodological proposition!"
+)
+assert second_context.context_excerpt == (
+    "First statistical proposition. "
+    "Second methodological proposition!"
+)
+
+print("PASS: source context and sentence audit can share sentence spans")
+
+
+print("\n[40] sentence audit is bounded to recovery of omitted propositions")
+
+audit_sentence = (
+    "Under condition X, measure A generally increases, "
+    "while measure B is typically lower."
+)
+already_extracted = [
+    academic_chat.TechnicalClaim(
+        type="comparison",
+        concept="measure B",
+        statement="Under condition X, measure B is typically lower.",
+        parameterisation="condition X",
+    )
+]
+
+audit_prompt = coverage.build_claim_sentence_audit_prompt(
+    source_sentence=audit_sentence,
+    discovered_claims=already_extracted,
+)
+audit_normalized = " ".join(audit_prompt.lower().split())
+
+assert audit_sentence in audit_prompt
+assert already_extracted[0].statement in audit_prompt
+assert "additional material propositions" in audit_normalized
+assert "not already represented" in audit_normalized
+assert "do not judge whether" in audit_normalized
+assert "true" in audit_normalized
+assert "false" in audit_normalized
+assert "qualifiers" in audit_normalized
+assert "generally" in audit_normalized
+assert "typically" in audit_normalized
+assert "primarily" in audit_normalized
+assert "keep independently checkable propositions separate" in audit_normalized
+assert "source_anchor" in audit_prompt
+
+print("PASS: sentence audit has a bounded omission-recovery contract")
+
+print("\n[41] sentence audit recovers an omitted qualified proposition")
+
+audit_answer = (
+    "Under condition X, measure A generally increases, "
+    "while measure B is typically lower."
+)
+audit_anchor_b = "measure B is typically lower"
+audit_existing = [
+    coverage.DiscoveredClaim(
+        claim=academic_chat.TechnicalClaim(
+            type="comparison",
+            concept="measure B",
+            statement="Under condition X, measure B is typically lower.",
+            parameterisation="condition X",
+        ),
+        source_anchor=audit_anchor_b,
+        source_start=audit_answer.index(audit_anchor_b),
+        source_end=(
+            audit_answer.index(audit_anchor_b) + len(audit_anchor_b)
+        ),
+    )
+]
+audit_calls = []
+
+
+def recover_first_proposition(*, prompt, schema):
+    audit_calls.append((prompt, schema))
+    return {
+        "discovered_claims": [
+            {
+                "type": "conditional",
+                "concept": "measure A",
+                "statement": (
+                    "Under condition X, measure A generally increases."
+                ),
+                "parameterisation": "condition X",
+                "source_anchor": "measure A generally increases",
+            }
+        ]
+    }
+
+
+audited = coverage.audit_discovered_claims_by_sentence(
+    answer_draft=audit_answer,
+    discovered_claims=audit_existing,
+    assessor=recover_first_proposition,
+)
+
+assert len(audited) == 2
+assert audited[0] is audit_existing[0]
+assert audited[1].claim.statement == (
+    "Under condition X, measure A generally increases."
+)
+assert audited[1].source_anchor == "measure A generally increases"
+assert audited[1].source_start == audit_answer.index(
+    "measure A generally increases"
+)
+assert audited[1].source_end == (
+    audited[1].source_start + len("measure A generally increases")
+)
+assert audit_existing[0].claim.statement in audit_calls[0][0]
+
+print("PASS: sentence audit recovers a proposition omitted by global discovery")
+
+
+print("\n[42] sentence audit can recover a wholly missed sentence")
+
+wholly_missed_answer = (
+    "Introductory prose. "
+    "Under condition Y, measure C usually decreases."
+)
+wholly_missed_calls = []
+
+
+def recover_wholly_missed(*, prompt, schema):
+    wholly_missed_calls.append(prompt)
+
+    if "measure C usually decreases" in prompt:
+        return {
+            "discovered_claims": [
+                {
+                    "type": "conditional",
+                    "concept": "measure C",
+                    "statement": (
+                        "Under condition Y, measure C usually decreases."
+                    ),
+                    "parameterisation": "condition Y",
+                    "source_anchor": "measure C usually decreases",
+                }
+            ]
+        }
+
+    return {"discovered_claims": []}
+
+
+wholly_recovered = coverage.audit_discovered_claims_by_sentence(
+    answer_draft=wholly_missed_answer,
+    discovered_claims=[],
+    assessor=recover_wholly_missed,
+)
+
+assert len(wholly_missed_calls) == 2
+assert len(wholly_recovered) == 1
+assert wholly_recovered[0].claim.statement == (
+    "Under condition Y, measure C usually decreases."
+)
+assert wholly_recovered[0].source_start == wholly_missed_answer.index(
+    "measure C usually decreases"
+)
+
+print("PASS: every sentence is auditable even after total global omission")
+
+
+print("\n[43] sentence audit exact-deduplicates recovered propositions")
+
+dedup_answer = "Measure D is generally higher."
+dedup_anchor = "Measure D is generally higher"
+dedup_claim = academic_chat.TechnicalClaim(
+    type="comparison",
+    concept="measure D",
+    statement="Measure D is generally higher.",
+    parameterisation=None,
+)
+dedup_discovered = coverage.DiscoveredClaim(
+    claim=dedup_claim,
+    source_anchor=dedup_anchor,
+    source_start=dedup_answer.index(dedup_anchor),
+    source_end=dedup_answer.index(dedup_anchor) + len(dedup_anchor),
+)
+
+
+def recover_duplicate(*, prompt, schema):
+    return {
+        "discovered_claims": [
+            {
+                "type": "comparison",
+                "concept": "measure D",
+                "statement": "Measure D is generally higher.",
+                "parameterisation": None,
+                "source_anchor": dedup_anchor,
+            }
+        ]
+    }
+
+
+deduplicated = coverage.audit_discovered_claims_by_sentence(
+    answer_draft=dedup_answer,
+    discovered_claims=[dedup_discovered],
+    assessor=recover_duplicate,
+)
+
+assert deduplicated == [dedup_discovered]
+
+print("PASS: sentence audit does not duplicate an exact discovered claim")
+
+
+print("\n[44] malformed sentence-audit provenance is locally rejected")
+
+
+def invalid_audit_anchor(*, prompt, schema):
+    return {
+        "discovered_claims": [
+            {
+                "type": "comparison",
+                "concept": "measure E",
+                "statement": "Measure E is higher.",
+                "parameterisation": None,
+                "source_anchor": "text not present in the sentence",
+            }
+        ]
+    }
+
+
+invalid_recovery = coverage.audit_discovered_claims_by_sentence(
+    answer_draft="Measure E is higher.",
+    discovered_claims=[],
+    assessor=invalid_audit_anchor,
+)
+
+assert invalid_recovery == []
+
+print("PASS: malformed recovery cannot acquire application provenance")
+
+
+print("\n[44b] malformed recovery does not discard valid audit candidates")
+
+mixed_answer = "Measure E is higher, while measure F is generally lower."
+
+
+def mixed_audit_output(*, prompt, schema):
+    return {
+        "discovered_claims": [
+            {
+                "type": "comparison",
+                "concept": "measure E",
+                "statement": "Measure E is higher.",
+                "parameterisation": None,
+                "source_anchor": "anchor absent from sentence",
+            },
+            {
+                "type": "comparison",
+                "concept": "measure F",
+                "statement": "Measure F is generally lower.",
+                "parameterisation": None,
+                "source_anchor": "measure F is generally lower",
+            },
+        ]
+    }
+
+
+mixed_recovery = coverage.audit_discovered_claims_by_sentence(
+    answer_draft=mixed_answer,
+    discovered_claims=[],
+    assessor=mixed_audit_output,
+)
+
+assert len(mixed_recovery) == 1
+assert mixed_recovery[0].claim.statement == "Measure F is generally lower."
+assert mixed_recovery[0].source_anchor == "measure F is generally lower"
+
+print("PASS: malformed recovery is isolated without losing valid recovery")
+
+
+print("\n[44c] sentence-audit inference failure preserves global discovery")
+
+
+def failing_sentence_audit(*, prompt, schema):
+    raise coverage.ClaimCoverageOutputError(
+        "Synthetic sentence-audit inference failure."
+    )
+
+
+audit_failure_result = coverage.audit_discovered_claims_by_sentence(
+    answer_draft=dedup_answer,
+    discovered_claims=[dedup_discovered],
+    assessor=failing_sentence_audit,
+)
+
+assert audit_failure_result == [dedup_discovered]
+
+print("PASS: sentence-audit inference failure cannot erase global discovery")
+
+
+print("\n[44d] malformed sentence-audit envelope preserves global discovery")
+
+
+def malformed_sentence_audit_envelope(*, prompt, schema):
+    return {"discovered_claims": "not-an-array"}
+
+
+malformed_audit_result = coverage.audit_discovered_claims_by_sentence(
+    answer_draft=dedup_answer,
+    discovered_claims=[dedup_discovered],
+    assessor=malformed_sentence_audit_envelope,
+)
+
+assert malformed_audit_result == [dedup_discovered]
+
+print("PASS: malformed sentence-audit envelope cannot erase global discovery")
+
+
+print("\n[45] two-stage coverage includes sentence-audit recovery before representation")
+
+integrated_answer = (
+    "Under condition X, measure A generally increases, "
+    "while measure B is typically lower."
+)
+integrated_calls = []
+
+
+def integrated_assessor(*, prompt, schema):
+    integrated_calls.append(prompt)
+
+    if "ANSWER DRAFT" in prompt:
+        return {
+            "discovered_claims": [
+                {
+                    "type": "comparison",
+                    "concept": "measure B",
+                    "statement": (
+                        "Under condition X, measure B is typically lower."
+                    ),
+                    "parameterisation": "condition X",
+                    "source_anchor": "measure B is typically lower",
+                }
+            ]
+        }
+
+    if "SOURCE SENTENCE" in prompt:
+        return {
+            "discovered_claims": [
+                {
+                    "type": "conditional",
+                    "concept": "measure A",
+                    "statement": (
+                        "Under condition X, measure A generally increases."
+                    ),
+                    "parameterisation": "condition X",
+                    "source_anchor": "measure A generally increases",
+                }
+            ]
+        }
+
+    if schema == coverage.claim_decomposition_output_schema():
+        return {
+            "requires_decomposition": False,
+            "atomic_claims": [],
+        }
+
+    if "CANDIDATE PROPOSITION" in prompt:
+        return {
+            "represented": False,
+            "represented_by": None,
+        }
+
+    raise AssertionError(f"Unexpected integrated prompt: {prompt}")
+
+
+integrated_result = coverage.assess_claim_coverage_two_stage(
+    answer_draft=integrated_answer,
+    existing_claims=[],
+    assessor=integrated_assessor,
+)
+
+assert len(integrated_result.discovered_claims) == 2
+assert {
+    item.claim.statement
+    for item in integrated_result.discovered_claims
+} == {
+    "Under condition X, measure A generally increases.",
+    "Under condition X, measure B is typically lower.",
+}
+assert {
+    claim.statement
+    for claim in integrated_result.missing_claims
+} == {
+    "Under condition X, measure A generally increases.",
+    "Under condition X, measure B is typically lower.",
+}
+assert any("ANSWER DRAFT" in prompt for prompt in integrated_calls)
+assert any("SOURCE SENTENCE" in prompt for prompt in integrated_calls)
+
+print("PASS: two-stage coverage audits discovery before representation filtering")
+
+print("\n[46] decomposition schema exposes only decision and atomic replacements")
+
+decomposition_schema = coverage.claim_decomposition_output_schema()
+
+assert decomposition_schema["type"] == "object"
+assert set(decomposition_schema["properties"]) == {
+    "requires_decomposition",
+    "atomic_claims",
+}
+assert set(decomposition_schema["required"]) == {
+    "requires_decomposition",
+    "atomic_claims",
+}
+assert decomposition_schema["additionalProperties"] is False
+
+atomic_item = decomposition_schema["properties"]["atomic_claims"]["items"]
+assert set(atomic_item["properties"]) == {
+    "type",
+    "concept",
+    "statement",
+    "parameterisation",
+    "source_anchor",
+}
+assert atomic_item["additionalProperties"] is False
+
+print("PASS: decomposition schema grants only bounded replacement authority")
+
+
+print("\n[47] decomposition prompt has a narrow atomicity role")
+
+compound_claim = academic_chat.TechnicalClaim(
+    type="comparative",
+    concept="posterior interval behaviour",
+    statement=(
+        "For skewed unimodal posteriors, the endpoints generally differ, "
+        "and the minimum-width HDI is typically narrower than the ETI."
+    ),
+    parameterisation=None,
+)
+compound_sentence = (
+    "However, for skewed unimodal posteriors, the endpoints generally differ, "
+    "and the minimum-width HDI is typically narrower than the ETI."
+)
+
+decomposition_prompt = coverage.build_claim_decomposition_prompt(
+    claim=compound_claim,
+    source_sentence=compound_sentence,
+)
+decomposition_normalized = " ".join(decomposition_prompt.lower().split())
+
+assert compound_sentence in decomposition_prompt
+assert compound_claim.statement in decomposition_prompt
+assert "independently checkable" in decomposition_normalized
+assert "could differ in support or correctness" in decomposition_normalized
+assert "do not use outside knowledge" in decomposition_normalized
+assert "do not judge whether" in decomposition_normalized
+assert "true or false" in decomposition_normalized
+assert "do not verify" in decomposition_normalized
+assert "do not recover propositions" in decomposition_normalized
+assert "omission recovery is handled separately" in decomposition_normalized
+assert "condition and the proposition it qualifies" in decomposition_normalized
+assert "comparison should remain intact" in decomposition_normalized
+assert "generally" in decomposition_normalized
+assert "typically" in decomposition_normalized
+assert "do not strengthen or weaken" in decomposition_normalized
+assert "source_anchor" in decomposition_prompt
+assert "do not retain the original compound claim" in decomposition_normalized
+
+print("PASS: decomposition is bounded to atomic replacement, not assessment")
+
+print("\n[48] valid compound claim is replaced by atomic children")
+
+decomposition_answer = (
+    "For skewed unimodal posteriors, the endpoints generally differ, "
+    "and the minimum-width HDI is typically narrower than the ETI."
+)
+compound_anchor = decomposition_answer
+compound_discovered = coverage.DiscoveredClaim(
+    claim=compound_claim,
+    source_anchor=compound_anchor,
+    source_start=0,
+    source_end=len(compound_anchor),
+)
+
+
+def valid_decomposer(*, prompt, schema):
+    assert schema == coverage.claim_decomposition_output_schema()
+    assert compound_claim.statement in prompt
+    assert decomposition_answer in prompt
+    return {
+        "requires_decomposition": True,
+        "atomic_claims": [
+            {
+                "type": "comparison",
+                "concept": "ETI and HDI endpoints",
+                "statement": (
+                    "For skewed unimodal posteriors, "
+                    "the endpoints generally differ."
+                ),
+                "parameterisation": "skewed unimodal posterior",
+                "source_anchor": "the endpoints generally differ",
+            },
+            {
+                "type": "comparison",
+                "concept": "ETI and HDI width",
+                "statement": (
+                    "For skewed unimodal posteriors, the minimum-width "
+                    "HDI is typically narrower than the ETI."
+                ),
+                "parameterisation": "skewed unimodal posterior",
+                "source_anchor": (
+                    "the minimum-width HDI is typically narrower than the ETI"
+                ),
+            },
+        ],
+    }
+
+
+atomic_result = coverage.decompose_discovered_claims(
+    answer_draft=decomposition_answer,
+    discovered_claims=[compound_discovered],
+    assessor=valid_decomposer,
+)
+
+assert len(atomic_result) == 2
+assert {
+    item.claim.statement
+    for item in atomic_result
+} == {
+    (
+        "For skewed unimodal posteriors, "
+        "the endpoints generally differ."
+    ),
+    (
+        "For skewed unimodal posteriors, the minimum-width "
+        "HDI is typically narrower than the ETI."
+    ),
+}
+assert all(
+    decomposition_answer[
+        item.source_start:item.source_end
+    ] == item.source_anchor
+    for item in atomic_result
+)
+
+print("PASS: valid compound claim is replaced by atomic propositions")
+
+
+print("\n[49] already atomic claim is preserved unchanged")
+
+
+def atomic_decomposer(*, prompt, schema):
+    return {
+        "requires_decomposition": False,
+        "atomic_claims": [],
+    }
+
+
+atomic_input = coverage.DiscoveredClaim(
+    claim=academic_chat.TechnicalClaim(
+        type="comparison",
+        concept="interval width",
+        statement="The HDI may be narrower than the ETI.",
+        parameterisation=None,
+    ),
+    source_anchor="The HDI may be narrower than the ETI",
+    source_start=0,
+    source_end=len("The HDI may be narrower than the ETI"),
+)
+
+atomic_preserved = coverage.decompose_discovered_claims(
+    answer_draft="The HDI may be narrower than the ETI.",
+    discovered_claims=[atomic_input],
+    assessor=atomic_decomposer,
+)
+
+assert atomic_preserved == [atomic_input]
+
+print("PASS: decomposition does not rewrite an already atomic claim")
+
+
+print("\n[50] incomplete decomposition cannot replace original claim")
+
+
+def incomplete_decomposer(*, prompt, schema):
+    return {
+        "requires_decomposition": True,
+        "atomic_claims": [
+            {
+                "type": "comparison",
+                "concept": "ETI and HDI endpoints",
+                "statement": (
+                    "For skewed unimodal posteriors, "
+                    "the endpoints generally differ."
+                ),
+                "parameterisation": "skewed unimodal posterior",
+                "source_anchor": "the endpoints generally differ",
+            }
+        ],
+    }
+
+
+incomplete_result = coverage.decompose_discovered_claims(
+    answer_draft=decomposition_answer,
+    discovered_claims=[compound_discovered],
+    assessor=incomplete_decomposer,
+)
+
+assert incomplete_result == [compound_discovered]
+
+print("PASS: fewer than two valid children cannot erase compound coverage")
+
+
+print("\n[51] malformed atomic child cannot create false provenance")
+
+
+def malformed_child_decomposer(*, prompt, schema):
+    return {
+        "requires_decomposition": True,
+        "atomic_claims": [
+            {
+                "type": "comparison",
+                "concept": "ETI and HDI endpoints",
+                "statement": (
+                    "For skewed unimodal posteriors, "
+                    "the endpoints generally differ."
+                ),
+                "parameterisation": "skewed unimodal posterior",
+                "source_anchor": "anchor absent from source sentence",
+            },
+            {
+                "type": "comparison",
+                "concept": "ETI and HDI width",
+                "statement": (
+                    "For skewed unimodal posteriors, the minimum-width "
+                    "HDI is typically narrower than the ETI."
+                ),
+                "parameterisation": "skewed unimodal posterior",
+                "source_anchor": (
+                    "the minimum-width HDI is typically narrower than the ETI"
+                ),
+            },
+        ],
+    }
+
+
+malformed_child_result = coverage.decompose_discovered_claims(
+    answer_draft=decomposition_answer,
+    discovered_claims=[compound_discovered],
+    assessor=malformed_child_decomposer,
+)
+
+assert malformed_child_result == [compound_discovered]
+
+print("PASS: malformed child prevents unsafe compound replacement")
+
+
+print("\n[51b] decomposition inference failure preserves original claim")
+
+
+def failing_decomposer(*, prompt, schema):
+    raise coverage.ClaimCoverageOutputError(
+        "Synthetic decomposition inference failure."
+    )
+
+
+failed_decomposition_result = coverage.decompose_discovered_claims(
+    answer_draft=decomposition_answer,
+    discovered_claims=[compound_discovered],
+    assessor=failing_decomposer,
+)
+
+assert failed_decomposition_result == [compound_discovered]
+
+print("PASS: decomposition inference failure cannot erase original claim")
+
+
+print("\n[52] two-stage coverage decomposes compound claims before representation")
+
+compound_answer = (
+    "For skewed unimodal posteriors, the endpoints generally differ, "
+    "and the minimum-width HDI is typically narrower than the ETI."
+)
+compound_representation_candidates = []
+
+
+def compound_integrated_assessor(*, prompt, schema):
+    if "ANSWER DRAFT" in prompt:
+        return {
+            "discovered_claims": [
+                {
+                    "type": "comparison",
+                    "concept": "ETI and HDI behaviour",
+                    "statement": compound_answer,
+                    "parameterisation": None,
+                    "source_anchor": compound_answer,
+                }
+            ]
+        }
+
+    if "SOURCE SENTENCE" in prompt and "already extracted" in prompt:
+        return {
+            "discovered_claims": []
+        }
+
+    if "requires_decomposition" in str(schema):
+        return {
+            "requires_decomposition": True,
+            "atomic_claims": [
+                {
+                    "type": "statistical",
+                    "concept": "endpoint difference",
+                    "statement": (
+                        "For skewed unimodal posteriors, "
+                        "the endpoints generally differ."
+                    ),
+                    "parameterisation": None,
+                    "source_anchor": "the endpoints generally differ",
+                },
+                {
+                    "type": "statistical",
+                    "concept": "interval width comparison",
+                    "statement": (
+                        "For skewed unimodal posteriors, the minimum-width "
+                        "HDI is typically narrower than the ETI."
+                    ),
+                    "parameterisation": None,
+                    "source_anchor": (
+                        "the minimum-width HDI is typically narrower than the ETI"
+                    ),
+                },
+            ],
+        }
+
+    if "CANDIDATE PROPOSITION" in prompt:
+        compound_representation_candidates.append(prompt)
+        return {
+            "represented": False,
+            "represented_by": None,
+        }
+
+    raise AssertionError(f"Unexpected compound integration prompt: {prompt}")
+
+
+compound_integrated_result = coverage.assess_claim_coverage_two_stage(
+    answer_draft=compound_answer,
+    existing_claims=[],
+    assessor=compound_integrated_assessor,
+)
+
+compound_statements = {
+    item.claim.statement
+    for item in compound_integrated_result.discovered_claims
+}
+
+assert compound_statements == {
+    (
+        "For skewed unimodal posteriors, "
+        "the endpoints generally differ."
+    ),
+    (
+        "For skewed unimodal posteriors, the minimum-width "
+        "HDI is typically narrower than the ETI."
+    ),
+}
+
+assert len(compound_representation_candidates) == 2
+assert all(
+    compound_answer not in prompt
+    for prompt in compound_representation_candidates
+)
+
+assert {
+    claim.statement
+    for claim in compound_integrated_result.missing_claims
+} == compound_statements
+
+print("PASS: representation receives atomic children rather than compound parent")

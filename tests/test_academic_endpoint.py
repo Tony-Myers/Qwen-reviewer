@@ -1071,7 +1071,7 @@ try:
         )
 
 
-    print("\n[10] production coverage uses two bounded local stages")
+    print("\n[10] production coverage uses the bounded local pipeline")
 
     coverage_calls = []
     existing_claim = academic_chat.TechnicalClaim(
@@ -1099,7 +1099,10 @@ try:
             }
         )
 
-        if schema == academic_claim_coverage.claim_discovery_output_schema():
+        if (
+            schema == academic_claim_coverage.claim_discovery_output_schema()
+            and "ANSWER DRAFT" in prompt
+        ):
             return {
                 "discovered_claims": [
                     {
@@ -1127,6 +1130,18 @@ try:
                         ),
                     },
                 ]
+            }
+
+        if (
+            schema == academic_claim_coverage.claim_discovery_output_schema()
+            and "SOURCE SENTENCE" in prompt
+        ):
+            return {"discovered_claims": []}
+
+        if schema == academic_claim_coverage.claim_decomposition_output_schema():
+            return {
+                "requires_decomposition": False,
+                "atomic_claims": [],
             }
 
         if schema == academic_claim_coverage.claim_representation_output_schema():
@@ -1158,8 +1173,11 @@ try:
         )
 
         check(
-            len(coverage_calls) == 2,
-            "production coverage performs discovery then representation",
+            len(coverage_calls) == 6,
+            (
+                "production coverage performs global discovery, two sentence "
+                "audits, two decomposition checks, and representation"
+            ),
         )
         check(
             all(
@@ -1167,7 +1185,7 @@ try:
                 and call["tokenizer"] == "LOCAL-TOKENIZER"
                 for call in coverage_calls
             ),
-            "both coverage stages use the configured local model",
+            "all coverage stages use the configured local model",
         )
         check(
             coverage_calls[0]["schema"]
@@ -1190,19 +1208,61 @@ try:
             and "EXISTING TECHNICAL CLAIMS" not in coverage_calls[0]["prompt"],
             "discovery sees the answer but not existing claims",
         )
+        audit_calls = [
+            call
+            for call in coverage_calls
+            if (
+                call["schema"]
+                == academic_claim_coverage.claim_discovery_output_schema()
+                and "SOURCE SENTENCE" in call["prompt"]
+            )
+        ]
+        decomposition_calls = [
+            call
+            for call in coverage_calls
+            if (
+                call["schema"]
+                == academic_claim_coverage.claim_decomposition_output_schema()
+            )
+        ]
+        representation_calls = [
+            call
+            for call in coverage_calls
+            if (
+                call["schema"]
+                == academic_claim_coverage.claim_representation_output_schema()
+            )
+        ]
+
         check(
-            coverage_calls[1]["schema"]
-            == academic_claim_coverage.claim_representation_output_schema(),
-            "second coverage call is bounded representation assessment",
+            len(audit_calls) == 2
+            and all(
+                call["max_tokens"]
+                == server.ACADEMIC_COVERAGE_DISCOVERY_MAX_TOKENS
+                == 2000
+                for call in audit_calls
+            ),
+            "each sentence receives the discovery-budget audit pass",
         )
         check(
-            coverage_calls[1]["max_tokens"]
+            len(decomposition_calls) == 2
+            and all(
+                call["max_tokens"]
+                == server.ACADEMIC_COVERAGE_DECOMPOSITION_MAX_TOKENS
+                == 1000
+                for call in decomposition_calls
+            ),
+            "each discovered proposition receives bounded decomposition",
+        )
+        check(
+            len(representation_calls) == 1
+            and representation_calls[0]["max_tokens"]
             == server.ACADEMIC_COVERAGE_REPRESENTATION_MAX_TOKENS
             == 256,
-            "representation has its own small token budget",
+            "novel proposition receives bounded representation assessment",
         )
         check(
-            existing_claim.statement in coverage_calls[1]["prompt"],
+            existing_claim.statement in representation_calls[0]["prompt"],
             "representation sees existing structured claims",
         )
         check(
@@ -1307,7 +1367,10 @@ try:
             max_tokens=512,
             _factory=failure_factory,
         ):
-            if schema == academic_claim_coverage.claim_discovery_output_schema():
+            if (
+                schema == academic_claim_coverage.claim_discovery_output_schema()
+                and "ANSWER DRAFT" in prompt
+            ):
                 return {
                     "discovered_claims": [
                         {
@@ -1324,6 +1387,18 @@ try:
                             ),
                         }
                     ]
+                }
+
+            if (
+                schema == academic_claim_coverage.claim_discovery_output_schema()
+                and "SOURCE SENTENCE" in prompt
+            ):
+                return {"discovered_claims": []}
+
+            if schema == academic_claim_coverage.claim_decomposition_output_schema():
+                return {
+                    "requires_decomposition": False,
+                    "atomic_claims": [],
                 }
 
             if schema == academic_claim_coverage.claim_representation_output_schema():

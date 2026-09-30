@@ -360,6 +360,130 @@ additional fields.
 """
 
 
+def claim_decomposition_output_schema() -> dict[str, Any]:
+    """Return the bounded schema for atomic claim decomposition."""
+
+    return {
+        "type": "object",
+        "properties": {
+            "requires_decomposition": {
+                "type": "boolean",
+            },
+            "atomic_claims": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string"},
+                        "concept": {"type": "string"},
+                        "statement": {"type": "string"},
+                        "parameterisation": {
+                            "type": ["string", "null"],
+                        },
+                        "source_anchor": {"type": "string"},
+                    },
+                    "required": [
+                        "type",
+                        "concept",
+                        "statement",
+                        "parameterisation",
+                        "source_anchor",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": [
+            "requires_decomposition",
+            "atomic_claims",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def build_claim_decomposition_prompt(
+    *,
+    claim: academic_chat.TechnicalClaim,
+    source_sentence: str,
+) -> str:
+    """Build a bounded prompt for decomposing a compound proposition."""
+
+    if not isinstance(source_sentence, str) or not source_sentence.strip():
+        raise ValueError(
+            "Claim decomposition requires a non-empty source sentence."
+        )
+
+    parameterisation = (
+        claim.parameterisation
+        if claim.parameterisation is not None
+        else "(none)"
+    )
+
+    return f"""Decide whether one extracted technical claim combines multiple
+independently checkable statistical, mathematical, or methodological
+propositions from its source sentence.
+
+SOURCE SENTENCE
+{source_sentence.strip()}
+
+EXTRACTED CLAIM
+statement: {claim.statement}
+parameterisation: {parameterisation}
+
+RULES
+Use only the source sentence and extracted claim supplied above.
+Do not use outside knowledge.
+Do not judge whether any proposition is true or false.
+Do not verify, correct, support, contradict, or assess methodological
+consistency.
+Do not add propositions that are absent from the extracted claim.
+Do not recover propositions that the extracted claim omitted; omission
+recovery is handled separately.
+
+Set requires_decomposition=true only when the extracted claim itself combines
+two or more independently checkable propositions that could differ in support
+or correctness.
+A claim is not compound merely because it contains multiple phrases,
+qualifiers, conditions, definitions, or parameterisation needed to express one
+material proposition.
+A condition and the proposition it qualifies should remain together when the
+condition defines the scope of that proposition.
+A comparison should remain intact when its compared quantities together form
+one proposition.
+If separate assertions are joined by words such as and, but, while, whereas,
+because, therefore, or consequently, consider whether each assertion could be
+assessed independently.
+
+When requires_decomposition=false, return an empty atomic_claims array.
+
+When requires_decomposition=true:
+- return every material atomic proposition contained in the extracted claim;
+- preserve important qualifiers, frequency, direction, conditions,
+  populations, comparisons, and parameterisation;
+- do not strengthen or weaken modal or frequency language such as may, can,
+  often, generally, typically, usually, necessarily, always, primarily, or
+  rarely;
+- each atomic claim must be self-contained;
+- do not retain the original compound claim as an additional atomic claim.
+
+For each atomic claim return exactly:
+- type
+- concept
+- statement
+- parameterisation
+- source_anchor
+
+Use null when parameterisation is not specified.
+source_anchor must be a short verbatim contiguous span from the SOURCE SENTENCE
+that identifies where that atomic proposition is stated. Do not paraphrase,
+insert ellipses, or combine non-contiguous text in source_anchor.
+
+Return only requires_decomposition and atomic_claims. Do not return reasoning,
+confidence, verification, methodological assessment, provenance commentary, or
+a rewritten answer.
+"""
+
+
 def claim_discovery_output_schema() -> dict[str, Any]:
     """Return the strict structured-output schema for proposition discovery."""
     return {
@@ -470,6 +594,80 @@ discovered_claims array.
 Return only the required discovered_claims object. source_anchor is the only
 permitted model-proposed provenance. Do not return verification status,
 coverage status, confidence, reasoning, commentary, or the answer draft.
+"""
+
+
+def build_claim_sentence_audit_prompt(
+    *,
+    source_sentence: str,
+    discovered_claims: list[academic_chat.TechnicalClaim],
+) -> str:
+    """Build a bounded prompt for recovering propositions missed in one sentence."""
+
+    if not isinstance(source_sentence, str) or not source_sentence.strip():
+        raise ValueError("Claim sentence audit requires a non-empty sentence.")
+
+    represented = "\n".join(
+        f"{index}. {claim.statement}"
+        + (
+            f" [parameterisation: {claim.parameterisation}]"
+            if claim.parameterisation is not None
+            else ""
+        )
+        for index, claim in enumerate(discovered_claims, start=1)
+    )
+    if not represented:
+        represented = "(none)"
+
+    return f"""Inspect one answer sentence for material, independently checkable
+statistical, mathematical, or methodological propositions that were not
+already extracted.
+
+SOURCE SENTENCE
+{source_sentence.strip()}
+
+ALREADY EXTRACTED FROM THIS SENTENCE
+{represented}
+
+RULES
+Use only the source sentence supplied above.
+Do not use outside knowledge.
+Do not judge whether any proposition is true or false.
+Do not verify, correct, support, contradict, or assess methodological
+consistency.
+Return only additional material propositions that are not already represented
+by the extracted propositions above.
+A proposition is already represented only when the same material assertion,
+including important qualifiers, direction, conditions, populations,
+comparisons, and parameterisation, has been preserved.
+Do not return a proposition merely because it can be phrased differently.
+Inspect explicitly for independently checkable propositions joined by words
+such as and, but, while, whereas, because, therefore, or consequently.
+Preserve frequency and strength qualifiers such as may, can, often, generally,
+typically, usually, necessarily, always, primarily, or rarely.
+Keep independently checkable propositions separate when they could differ in
+support or correctness.
+Do not combine separate propositions merely because they occur in the same
+sentence.
+Do not promote rhetorical, stylistic, or non-checkable wording into technical
+claims.
+
+For each additional proposition return exactly:
+- type
+- concept
+- statement
+- parameterisation
+- source_anchor
+
+Use null when parameterisation is not specified.
+source_anchor must be a short verbatim contiguous span from the SOURCE SENTENCE
+that identifies where the additional proposition is stated. Do not paraphrase,
+insert ellipses, or combine non-contiguous text in source_anchor.
+
+If no additional material proposition is present, return an empty
+discovered_claims array.
+
+Return only the required discovered_claims object.
 """
 
 
@@ -622,20 +820,13 @@ answer draft, or the existing claims.
 """
 
 
-def resolve_claim_source_context(
-    *,
+def answer_sentence_spans(
     answer_draft: str,
-    source_start: int,
-    source_end: int,
-) -> ClaimSourceContext:
-    """Resolve the containing sentence and one preceding sentence."""
+) -> list[tuple[int, int]]:
+    """Return application-owned sentence spans for an answer draft."""
 
-    if (
-        source_start < 0
-        or source_end <= source_start
-        or source_end > len(answer_draft)
-    ):
-        raise ValueError("Source span is outside the answer draft.")
+    if not isinstance(answer_draft, str):
+        raise TypeError("Answer draft must be text.")
 
     sentence_spans: list[tuple[int, int]] = []
     sentence_start = 0
@@ -663,6 +854,25 @@ def resolve_claim_source_context(
     if sentence_start < len(answer_draft):
         sentence_spans.append((sentence_start, len(answer_draft)))
 
+    return sentence_spans
+
+
+def resolve_claim_source_context(
+    *,
+    answer_draft: str,
+    source_start: int,
+    source_end: int,
+) -> ClaimSourceContext:
+    """Resolve the containing sentence and one preceding sentence."""
+
+    if (
+        source_start < 0
+        or source_end <= source_start
+        or source_end > len(answer_draft)
+    ):
+        raise ValueError("Source span is outside the answer draft.")
+
+    sentence_spans = answer_sentence_spans(answer_draft)
     source_index = None
 
     for index, (start, end) in enumerate(sentence_spans):
@@ -1105,6 +1315,194 @@ def discover_answer_claims(
     return discovered
 
 
+def audit_discovered_claims_by_sentence(
+    *,
+    answer_draft: str,
+    discovered_claims: list[DiscoveredClaim],
+    assessor: Callable[..., Any],
+) -> list[DiscoveredClaim]:
+    """Recover material propositions omitted by the global discovery pass."""
+
+    recovered: list[DiscoveredClaim] = []
+    known_keys = {
+        _claim_key(discovered.claim)
+        for discovered in discovered_claims
+    }
+
+    for sentence_start, sentence_end in answer_sentence_spans(answer_draft):
+        source_sentence = answer_draft[sentence_start:sentence_end]
+
+        claims_in_sentence = []
+        for discovered in discovered_claims:
+            if (
+                sentence_start <= discovered.source_start
+                and discovered.source_end <= sentence_end
+            ):
+                claims_in_sentence.append(discovered.claim)
+
+        prompt = build_claim_sentence_audit_prompt(
+            source_sentence=source_sentence,
+            discovered_claims=claims_in_sentence,
+        )
+        schema = claim_discovery_output_schema()
+
+        try:
+            assessor_output = assessor(
+                prompt=prompt,
+                schema=schema,
+            )
+
+            if not isinstance(assessor_output, dict):
+                raise ClaimCoverageOutputError(
+                    "Claim sentence-audit assessor output must be an object."
+                )
+
+            if set(assessor_output) != {"discovered_claims"}:
+                raise ClaimCoverageOutputError(
+                    "Claim sentence-audit assessor output must contain exactly "
+                    "'discovered_claims'."
+                )
+
+            raw_recovered = assessor_output["discovered_claims"]
+
+            if not isinstance(raw_recovered, list):
+                raise ClaimCoverageOutputError(
+                    "Claim sentence-audit discovered_claims must be an array."
+                )
+
+        except ClaimCoverageOutputError:
+            # Sentence audit is additive. Failure to establish additional
+            # propositions for one sentence must not erase valid global
+            # discovery or prevent other sentences from being audited.
+            continue
+
+        for index, value in enumerate(raw_recovered):
+            try:
+                local = _parse_discovered_claim(
+                    value,
+                    index,
+                    answer_draft=source_sentence,
+                )
+            except ClaimCoverageOutputError:
+                continue
+
+            claim = local.claim
+            key = _claim_key(claim)
+
+            if key in known_keys:
+                continue
+
+            recovered.append(
+                DiscoveredClaim(
+                    claim=claim,
+                    source_anchor=local.source_anchor,
+                    source_start=sentence_start + local.source_start,
+                    source_end=sentence_start + local.source_end,
+                )
+            )
+            known_keys.add(key)
+
+    return [*discovered_claims, *recovered]
+
+
+def decompose_discovered_claims(
+    *,
+    answer_draft: str,
+    discovered_claims: list[DiscoveredClaim],
+    assessor: Callable[..., Any],
+) -> list[DiscoveredClaim]:
+    """Replace valid compound claims with application-validated atomic claims."""
+
+    decomposed: list[DiscoveredClaim] = []
+    known_keys: set[tuple[str, str | None]] = set()
+
+    for discovered in discovered_claims:
+        source_context = resolve_claim_source_context(
+            answer_draft=answer_draft,
+            source_start=discovered.source_start,
+            source_end=discovered.source_end,
+        )
+        source_sentence = source_context.source_sentence
+        sentence_start = source_context.source_sentence_start
+
+        prompt = build_claim_decomposition_prompt(
+            claim=discovered.claim,
+            source_sentence=source_sentence,
+        )
+        schema = claim_decomposition_output_schema()
+
+        try:
+            assessor_output = assessor(
+                prompt=prompt,
+                schema=schema,
+            )
+        except ClaimCoverageOutputError:
+            assessor_output = None
+
+        replacements: list[DiscoveredClaim] = []
+
+        if isinstance(assessor_output, dict):
+            if set(assessor_output) == {
+                "requires_decomposition",
+                "atomic_claims",
+            }:
+                requires_decomposition = assessor_output[
+                    "requires_decomposition"
+                ]
+                raw_atomic_claims = assessor_output["atomic_claims"]
+
+                if (
+                    requires_decomposition is True
+                    and isinstance(raw_atomic_claims, list)
+                ):
+                    replacement_keys: set[
+                        tuple[str, str | None]
+                    ] = set()
+
+                    for index, value in enumerate(raw_atomic_claims):
+                        try:
+                            local = _parse_discovered_claim(
+                                value,
+                                index,
+                                answer_draft=source_sentence,
+                            )
+                        except ClaimCoverageOutputError:
+                            continue
+
+                        key = _claim_key(local.claim)
+                        if key in replacement_keys:
+                            continue
+
+                        replacements.append(
+                            DiscoveredClaim(
+                                claim=local.claim,
+                                source_anchor=local.source_anchor,
+                                source_start=(
+                                    sentence_start + local.source_start
+                                ),
+                                source_end=(
+                                    sentence_start + local.source_end
+                                ),
+                            )
+                        )
+                        replacement_keys.add(key)
+
+        candidates = (
+            replacements
+            if len(replacements) >= 2
+            else [discovered]
+        )
+
+        for candidate in candidates:
+            key = _claim_key(candidate.claim)
+            if key in known_keys:
+                continue
+            decomposed.append(candidate)
+            known_keys.add(key)
+
+    return decomposed
+
+
 def assess_claim_representation(
     *,
     candidate_claim: academic_chat.TechnicalClaim,
@@ -1214,6 +1612,16 @@ def assess_claim_coverage_two_stage(
     """Discover answer propositions, then remove established representations."""
     discovered_claims = discover_answer_claims(
         answer_draft=answer_draft,
+        assessor=assessor,
+    )
+    discovered_claims = audit_discovered_claims_by_sentence(
+        answer_draft=answer_draft,
+        discovered_claims=discovered_claims,
+        assessor=assessor,
+    )
+    discovered_claims = decompose_discovered_claims(
+        answer_draft=answer_draft,
+        discovered_claims=discovered_claims,
         assessor=assessor,
     )
 
