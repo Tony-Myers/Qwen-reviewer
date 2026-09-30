@@ -98,8 +98,32 @@ assert (
     in normalised_prompt
 )
 
+assert (
+    "Distinguish a warning about inference from a contrary substantive "
+    "proposition" in normalised_prompt
+)
+assert (
+    '"should not be assumed", "cannot be inferred"' in normalised_prompt
+)
+assert (
+    "typically occur unless the guidance separately establishes an "
+    "incompatible proposition" in normalised_prompt
+)
+
 print("PASS: prompt prevents caution from becoming contradiction")
 print("PASS: prompt treats frequency, modality, and quantifiers as material")
+assert (
+    "Additional compatible detail in the guidance does not prevent "
+    "consistency" in normalised_prompt
+)
+assert (
+    "an added mechanism, explanation, example, or compatible detail as "
+    "material only when it restricts, qualifies, or changes the proposition"
+    in normalised_prompt
+)
+
+print("PASS: inferential warnings are distinguished from contrary propositions")
+print("PASS: compatible explanatory detail does not defeat consistency")
 
 
 print("\n[2c] prompt distinguishes non-establishment from contradiction")

@@ -179,6 +179,22 @@ under some conditions be true. Conversely, guidance that something may or
 sometimes occurs does not establish that it generally, necessarily, or always
 occurs. Treat differences in frequency, modality, and quantifiers as material.
 
+Distinguish a warning about inference from a contrary substantive proposition.
+Guidance saying that something "should not be assumed", "cannot be inferred",
+"does not necessarily follow", or is "not established" does not by itself
+establish that the proposition is false or generally false. Such guidance does
+not conflict with a claim that the proposition may, sometimes, often, or
+typically occur unless the guidance separately establishes an incompatible
+proposition at that frequency or strength.
+
+Additional compatible detail in the guidance does not prevent consistency when
+the guidance still directly establishes the claim's complete material
+proposition. For example, guidance that establishes that X can improve Y and
+also explains how or why it can do so directly supports the claim that X can
+improve Y. Treat an added mechanism, explanation, example, or compatible
+detail as material only when it restricts, qualifies, or changes the
+proposition asserted by the claim.
+
 A stronger claim is not established merely because the guidance supports a
 weaker version; unsupported strengthening is not by itself a methodological
 conflict. In that situation use methodological_consistency_not_established
