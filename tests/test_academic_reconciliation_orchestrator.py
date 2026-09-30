@@ -431,6 +431,88 @@ if callable(run_lifecycle):
 
 
 
+    # ---------------------------------------------------------------
+    # 4b. Incomplete checking after revision cannot become release.
+    # ---------------------------------------------------------------
+    incomplete_reassessment = FakeStage(
+        answer_draft="Revised answer with incomplete fresh checking.",
+        release=FakeRelease(False, "checking_incomplete"),
+    )
+    incomplete_calls = []
+
+    def incomplete_first_stage(*args, **kwargs):
+        return blocked_initial
+
+    def incomplete_extract(
+        *,
+        technical_claims,
+        source_claims,
+        discovered_claim_assessments,
+    ):
+        incomplete_calls.append(
+            (
+                "extract",
+                technical_claims,
+                source_claims,
+                discovered_claim_assessments,
+            )
+        )
+        return bounded_corrections
+
+    def incomplete_revision(*args, **kwargs):
+        incomplete_calls.append(("revise", args, kwargs))
+        return revised_draft
+
+    def incomplete_reassessor(draft, **kwargs):
+        incomplete_calls.append(("assess", draft, kwargs))
+        return incomplete_reassessment
+
+    incomplete_result = run_lifecycle(
+        model,
+        tokenizer,
+        question,
+        first_stage_runner=incomplete_first_stage,
+        correction_extractor=incomplete_extract,
+        revision_generator=incomplete_revision,
+        draft_assessor=incomplete_reassessor,
+    )
+
+    check(
+        incomplete_result.initial is blocked_initial,
+        "initial blocked assessment remains retained after incomplete reassessment",
+    )
+    check(
+        incomplete_result.revision_attempted is True,
+        "incomplete fresh checking still records the bounded revision attempt",
+    )
+    check(
+        incomplete_result.revised is incomplete_reassessment,
+        "incomplete fresh reassessment is retained separately",
+    )
+    check(
+        incomplete_result.final is incomplete_reassessment,
+        "latest reassessment remains final without reverting to stale evidence",
+    )
+    check(
+        incomplete_result.final.release.status == "checking_incomplete",
+        "failed fresh coverage cannot masquerade as successful resolution",
+    )
+    check(
+        incomplete_result.final.release.safe_to_present is False,
+        "incomplete post-revision checking remains non-releasable",
+    )
+    check(
+        len([c for c in incomplete_calls if c[0] == "revise"]) == 1,
+        "incomplete post-revision checking triggers no second revision",
+        incomplete_calls,
+    )
+    check(
+        len([c for c in incomplete_calls if c[0] == "assess"]) == 1,
+        "revised draft receives exactly one fresh incomplete assessment",
+        incomplete_calls,
+    )
+
+
 print("\n[real reassessment composition]")
 
 if callable(run_lifecycle):

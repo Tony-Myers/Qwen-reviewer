@@ -7,6 +7,7 @@ APP = ROOT / "app"
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
+import academic_claim_coverage
 import academic_orchestrator
 import academic_technical
 
@@ -285,6 +286,70 @@ for methodology_status in (
         release.safe_to_present is True,
         f"contextual {methodology_status!r} is non-blocking",
     )
+
+
+
+print("\n[12] unavailable claim coverage makes checking incomplete")
+
+unavailable_coverage = academic_claim_coverage.ClaimCoverageAssessment.unavailable(
+    "Synthetic claim-coverage failure."
+)
+
+release = academic_orchestrator.assess_academic_release(
+    [],
+    [],
+    [],
+    unavailable_coverage,
+)
+
+check(
+    release.status == "checking_incomplete",
+    "unavailable coverage produces explicit incomplete-check status",
+)
+check(
+    release.safe_to_present is False,
+    "incomplete claim checking is not automatically releasable",
+)
+check(
+    any(
+        "could not be completed" in reason.lower()
+        for reason in release.reasons
+    ),
+    "incomplete release explains that checking could not be completed",
+)
+
+
+print("\n[13] established conflict retains precedence over unavailable coverage")
+
+release = academic_orchestrator.assess_academic_release(
+    [claim_result(academic_technical.TECHNICAL_STATUS_CONFLICT)],
+    [],
+    [],
+    unavailable_coverage,
+)
+
+check(
+    release.status == "blocked_technical_conflict",
+    "established technical conflict retains precedence",
+)
+check(
+    release.safe_to_present is False,
+    "conflict plus incomplete coverage remains non-releasable",
+)
+
+
+print("\n[14] omitted coverage argument preserves legacy release contract")
+
+release = academic_orchestrator.assess_academic_release([])
+
+check(
+    release.status == "release_allowed",
+    "release callers that do not adjudicate coverage remain compatible",
+)
+check(
+    release.safe_to_present is True,
+    "omitted coverage state does not become an invented failure",
+)
 
 
 if fails:

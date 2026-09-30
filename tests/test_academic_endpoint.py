@@ -369,6 +369,105 @@ try:
         )
 
 
+
+    print("\n[1c] unavailable coverage remains incomplete through HTTP boundary")
+
+    # Exercise the real reconciliation coordinator and real draft assessment,
+    # while controlling only first-stage generation and coverage availability.
+    saved_endpoint_orchestrator = (
+        server.academic_reconciliation_orchestrator.run_academic_reconciliation
+    )
+    saved_first_stage = server.academic_orchestrator.run_academic_first_stage
+    saved_coverage_assessor = server.assess_academic_claim_coverage
+
+    incomplete_lifecycle = []
+
+    def controlled_first_stage(
+        model,
+        tokenizer,
+        question,
+        **kwargs,
+    ):
+        draft = academic_chat.AcademicDraft(
+            answer_draft=(
+                "A substantive synthetic answer whose independent claim "
+                "coverage cannot be completed."
+            ),
+            references=[],
+            source_claims=[],
+            technical_claims=[],
+        )
+
+        result = server.academic_orchestrator.assess_academic_draft(
+            draft,
+            local_guidance=server.academic_orchestrator.LocalGuidanceResult(
+                passages=[]
+            ),
+            coverage_assessor=kwargs["coverage_assessor"],
+        )
+        incomplete_lifecycle.append(result)
+        return result
+
+    def unavailable_endpoint_coverage(*, answer_draft, existing_claims):
+        check(
+            existing_claims == [],
+            "endpoint regression begins with no declared technical claims",
+        )
+        return academic_claim_coverage.ClaimCoverageAssessment.unavailable(
+            "Synthetic endpoint claim-coverage failure."
+        )
+
+    try:
+        server.academic_reconciliation_orchestrator.run_academic_reconciliation = (
+            original_orchestrator
+        )
+        server.academic_orchestrator.run_academic_first_stage = (
+            controlled_first_stage
+        )
+        server.assess_academic_claim_coverage = unavailable_endpoint_coverage
+
+        response = asyncio.run(
+            server.academic_chat_first_stage(
+                {"question": "Synthetic incomplete-coverage question"}
+            )
+        )
+        payload = response_payload(response)
+
+        check(
+            payload["claim_coverage"]["status"]
+            == academic_claim_coverage.COVERAGE_STATUS_UNAVAILABLE,
+            "coverage failure survives the HTTP boundary",
+        )
+        check(
+            payload["claim_coverage"]["missing_claims"] is None,
+            "unavailable coverage does not serialize invented missing claims",
+        )
+        check(
+            payload["release"]["status"] == "checking_incomplete",
+            "HTTP response distinguishes incomplete checking from release",
+        )
+        check(
+            payload["release"]["safe_to_present"] is False,
+            "incomplete checking is not automatically presentable through HTTP",
+        )
+        check(
+            len(incomplete_lifecycle) == 1,
+            "incomplete checking does not trigger an invented revision",
+        )
+        check(
+            payload["answer_draft"].startswith(
+                "A substantive synthetic answer"
+            ),
+            "unchecked draft remains available for audit rather than disappearing",
+        )
+    finally:
+        server.academic_reconciliation_orchestrator.run_academic_reconciliation = (
+            saved_endpoint_orchestrator
+        )
+        server.academic_orchestrator.run_academic_first_stage = saved_first_stage
+        server.assess_academic_claim_coverage = saved_coverage_assessor
+
+
     print("\n[2] unexpected fields are rejected before model use")
 
     ensure_before = len(ensure_calls)

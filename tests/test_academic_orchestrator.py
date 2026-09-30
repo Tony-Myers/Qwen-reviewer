@@ -3892,19 +3892,39 @@ assert (
 print("PASS: unavailable coverage cannot masquerade as successful empty coverage")
 print("PASS: unavailable coverage invents no technical claims")
 
+assert unavailable_result.release.status == "checking_incomplete"
+assert unavailable_result.release.safe_to_present is False
 
-# Coverage state remains internal. Only the deliberately bounded
-# occurrence-context assessment crosses the public Academic Chat boundary.
+unavailable_payload = unavailable_result.to_dict()
+
+assert unavailable_payload["claim_coverage"]["status"] == (
+    academic_claim_coverage.COVERAGE_STATUS_UNAVAILABLE
+)
+assert unavailable_payload["claim_coverage"]["missing_claims"] is None
+assert unavailable_payload["claim_coverage"]["reasons"] == [
+    "Synthetic local coverage assessment unavailable."
+]
+assert unavailable_payload["release"]["status"] == "checking_incomplete"
+assert unavailable_payload["release"]["safe_to_present"] is False
+
+print("PASS: unavailable coverage makes incomplete checking public")
+print("PASS: unavailable coverage prevents ordinary automatic release")
+
+
+# Successful coverage state also crosses the public Academic Chat boundary.
 assert coverage_result.claim_coverage.status == (
     academic_claim_coverage.COVERAGE_STATUS_MISSING_FOUND
 )
 
 coverage_payload = coverage_result.to_dict()
 
-assert "claim_coverage" not in coverage_payload
+assert coverage_payload["claim_coverage"] == (
+    coverage_result.claim_coverage.to_dict()
+)
 assert set(coverage_payload) == {
     "answer_draft",
     "local_guidance",
+    "claim_coverage",
     "references",
     "source_claims",
     "technical_claims",
@@ -3912,7 +3932,7 @@ assert set(coverage_payload) == {
     "release",
 }
 
-print("PASS: coverage state remains internal while bounded context is public")
+print("PASS: successful coverage state is explicit at the public boundary")
 
 
 # Absence of a restriction assessor remains distinct from an assessed

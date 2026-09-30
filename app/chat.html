@@ -692,7 +692,12 @@ function academicStatusLabel(status) {
     not_verified: 'Not verified',
     methodologically_consistent: 'Methodologically consistent',
     methodological_conflict: 'Methodological conflict',
-    methodological_consistency_not_established: 'Methodological consistency not established'
+    methodological_consistency_not_established: 'Methodological consistency not established',
+    coverage_assessment_unavailable: 'Coverage assessment unavailable',
+    coverage_not_attempted: 'Coverage assessment not attempted',
+    missing_claims_found: 'Additional claims found for checking',
+    no_missing_claims_proposed: 'No additional claims proposed',
+    checking_incomplete: 'Checking incomplete'
   };
   return labels[status] || String(status || 'unknown').replace(/_/g, ' ');
 }
@@ -1121,11 +1126,20 @@ function renderAcademicAudit(data) {
   const claimContexts = Array.isArray(data.claim_context_assessments)
     ? data.claim_context_assessments
     : [];
+  const claimCoverage = data.claim_coverage || null;
   const release = data.release || null;
 
   let h = '';
 
   h += renderAcademicLocalGuidance(data.local_guidance);
+
+  if (claimCoverage) {
+    h += '<div class="academic-audit-card">';
+    h += '<div><strong>Claim coverage:</strong> ' +
+      esc(academicStatusLabel(claimCoverage.status)) + '</div>';
+    h += academicReasons(claimCoverage.reasons);
+    h += '</div>';
+  }
 
   if (release) {
     h += '<div class="academic-audit-card">';
@@ -1194,6 +1208,7 @@ function renderAcademicEvidence(data) {
     sourceClaims.length ||
     technicalClaims.length ||
     claimContexts.length ||
+    data.claim_coverage ||
     data.release
   ) {
     h += '<section class="academic-verification-summary">';
@@ -1244,7 +1259,16 @@ async function sendAcademicMessage() {
       throw new Error((data.error || ('Server error ' + r.status)) + detail);
     }
 
-    if (data.release?.safe_to_present === false) {
+    if (data.release?.status === "checking_incomplete") {
+      answer.innerHTML =
+        '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
+        '<div style="margin-top:10px; color:var(--text-muted);">' +
+        '<strong>Checking incomplete.</strong> ' +
+        'Independent technical-claim coverage checking could not be completed. ' +
+        'This does not establish that the answer is wrong. ' +
+        'See the verification details below.' +
+        '</div>';
+    } else if (data.release?.safe_to_present === false) {
       answer.innerHTML =
         '<div style="color:var(--error);">' +
         '<strong>Answer withheld after checking.</strong> ' +

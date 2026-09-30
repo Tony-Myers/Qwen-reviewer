@@ -376,6 +376,9 @@ def assess_academic_release(
     discovered_claim_assessments: (
         list[DiscoveredClaimAssessment] | None
     ) = None,
+    claim_coverage: (
+        academic_claim_coverage.ClaimCoverageAssessment | None
+    ) = None,
 ) -> AcademicReleaseAssessment:
     """Assess whether a checked academic draft may be presented.
 
@@ -445,6 +448,20 @@ def assess_academic_release(
         )
 
     if (
+        claim_coverage is not None
+        and claim_coverage.status
+        == academic_claim_coverage.COVERAGE_STATUS_UNAVAILABLE
+    ):
+        return AcademicReleaseAssessment(
+            status="checking_incomplete",
+            safe_to_present=False,
+            reasons=[
+                "Independent technical-claim coverage checking could not be "
+                "completed; this does not establish that the answer is wrong."
+            ],
+        )
+
+    if (
         academic_technical.TECHNICAL_STATUS_NOT_VERIFIED
         in technical_statuses
     ):
@@ -488,6 +505,7 @@ class AcademicFirstStageResult:
         return {
             "answer_draft": self.answer_draft,
             "local_guidance": self.local_guidance.to_dict(),
+            "claim_coverage": self.claim_coverage.to_dict(),
             "references": [
                 reference.to_dict()
                 for reference in self.references
@@ -863,6 +881,7 @@ def assess_academic_draft(
         technical_claims,
         source_claims,
         discovered_claim_assessments,
+        claim_coverage,
     )
 
     return AcademicFirstStageResult(
