@@ -115,6 +115,20 @@
   .academic-result { display: none; margin-top: 20px; }
   .academic-answer { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; line-height: 1.6; font-size: 0.9rem; box-shadow: var(--shadow); }
   .academic-evidence { margin-top: 18px; }
+  .check-further { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius); background: var(--surface); font-size: 0.84rem; line-height: 1.5; }
+  .check-further.level-check_advised { border-left-color: #b7791f; }
+  .check-further.level-check_needed { border-left-color: var(--error); background: var(--error-bg); }
+  .check-further-headline { font-weight: 600; margin-bottom: 6px; }
+  .check-further ul { margin: 4px 0 8px 18px; }
+  .check-further li { margin: 2px 0; }
+  .check-further-group { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--border); }
+  .check-further-group-title { font-weight: 600; }
+  .check-further-claims { color: var(--text-muted); }
+  .check-further-ref { margin: 4px 0 4px 2px; }
+  .check-further-ref .supports { display: block; color: var(--text-muted); font-size: 0.78rem; }
+  .check-further-note { margin-top: 8px; font-size: 0.76rem; color: var(--text-muted); }
+  .check-further details { margin-top: 8px; }
+  .check-further summary { cursor: pointer; font-size: 0.78rem; color: var(--text-muted); }
   .academic-evidence h3 { font-family: Georgia, 'Times New Roman', serif; font-size: 1rem; margin-bottom: 10px; }
 
   .academic-reference-section {
@@ -1175,6 +1189,109 @@ function renderAcademicAudit(data) {
   return h;
 }
 
+// Where to check this answer, and against what. Rendered above the detailed
+// verification panel because it is the part a reader acts on; the panel stays
+// as the audit trail behind it. Everything here comes from the server's
+// check_further assessment, which applies fixed rules to verdicts already
+// reached and makes no judgement of its own.
+function checkFurtherAttr(value) {
+  return esc(String(value == null ? '' : value)).replace(/"/g, '&quot;');
+}
+
+function checkFurtherReference(ref) {
+  if (!ref) return '';
+  const link = String(ref.link || '');
+  const safe = /^https?:\/\//i.test(link);
+  let h = '<div class="check-further-ref">';
+  h += esc(String(ref.cite || ''));
+  if (safe) {
+    h += ' <a href="' + checkFurtherAttr(link) + '" target="_blank" rel="noopener noreferrer">' +
+      esc(ref.doi ? 'doi:' + String(ref.doi) : 'link') + '</a>';
+  } else if (ref.isbn) {
+    h += ' ISBN ' + esc(String(ref.isbn));
+  }
+  if (ref.supports) {
+    h += '<span class="supports">Listed for: ' + esc(String(ref.supports)) + '</span>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderAcademicCheckFurther(cf) {
+  if (!cf || !cf.level) return '';
+  const level = String(cf.level).replace(/[^a-z_]/g, '');
+  let h = '<section class="check-further level-' + level + '">';
+  h += '<div class="check-further-headline">' + esc(String(cf.headline || '')) + '</div>';
+
+  if (cf.error) {
+    h += '<div class="check-further-note">' + esc(String(cf.error)) + '</div>';
+  }
+
+  const triggers = Array.isArray(cf.triggers) ? cf.triggers : [];
+  if (triggers.length) {
+    h += '<ul>';
+    for (const t of triggers) {
+      h += '<li>' + esc(String(t.message || ''));
+      const items = Array.isArray(t.items) ? t.items : [];
+      if (items.length && t.rule !== 'not_settled_by_notes' && t.rule !== 'no_curated_references') {
+        h += '<ul>';
+        for (const item of items) h += '<li>' + esc(String(item)) + '</li>';
+        h += '</ul>';
+      }
+      h += '</li>';
+    }
+    h += '</ul>';
+  }
+
+  const groups = Array.isArray(cf.groups) ? cf.groups : [];
+  for (const g of groups) {
+    h += '<div class="check-further-group">';
+    h += '<div class="check-further-group-title">' +
+      esc(g.note ? String(g.note) + ' — ' + String(g.heading || '') : 'Not close to any section of your notes') +
+      '</div>';
+    const claims = Array.isArray(g.claims) ? g.claims : [];
+    h += '<div class="check-further-claims">' + claims.length +
+      (claims.length === 1 ? ' claim' : ' claims') + ' not settled by this section.</div>';
+    const refs = Array.isArray(g.references) ? g.references : [];
+    if (refs.length) {
+      h += '<div>Check against:</div>';
+      for (const r of refs) h += checkFurtherReference(r);
+    } else {
+      h += '<div class="check-further-note">This section lists no sources yet.</div>';
+    }
+    if (claims.length) {
+      h += '<details><summary>Show the claims</summary><ul>';
+      for (const c of claims) h += '<li>' + esc(String(c)) + '</li>';
+      h += '</ul></details>';
+    }
+    h += '</div>';
+  }
+
+  const reading = Array.isArray(cf.further_reading) ? cf.further_reading : [];
+  if (reading.length && !groups.length) {
+    h += '<div class="check-further-group"><div class="check-further-group-title">Sources for the notes consulted</div>';
+    for (const r of reading) h += checkFurtherReference(r);
+    h += '</div>';
+  }
+
+  const rules = Array.isArray(cf.rules) ? cf.rules : [];
+  if (rules.length) {
+    h += '<details><summary>How this is decided</summary><ul>';
+    for (const r of rules) {
+      h += '<li><strong>' + esc(String(r.level || '').replace(/_/g, ' ')) + ':</strong> ' +
+        esc(String(r.when || '')) + '</li>';
+    }
+    h += '<li><strong>consistent with notes:</strong> none of the above applies. ' +
+      'That means agreement with your notes, not independent verification.</li>';
+    h += '</ul></details>';
+  }
+
+  h += '<div class="check-further-note">Sources are curated in your reviewer notes and were checked ' +
+    'before being added. Each is listed for the purpose stated, not as support for every sentence.</div>';
+  h += '</section>';
+  return h;
+}
+
 function renderAcademicEvidence(data) {
   const references = Array.isArray(data.references) ? data.references : [];
   const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
@@ -1187,6 +1304,8 @@ function renderAcademicEvidence(data) {
     : [];
 
   let h = '';
+
+  h += renderAcademicCheckFurther(data.check_further);
 
   if (references.length) {
     h += '<section class="academic-reference-section">';

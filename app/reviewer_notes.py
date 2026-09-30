@@ -142,6 +142,196 @@ class Passage:
 
 
 # ---------------------------------------------------------------------------
+# Curated references
+# ---------------------------------------------------------------------------
+# A note can carry checked references in fenced blocks:
+#
+#     ```references
+#     - cite: Author, A. (2020). Title. Journal, 1(2), 3-4.
+#       doi: 10.xxxx/yyyy
+#       supports: What this source is listed for, in one sentence.
+#       checked: 2026-09-30, Crossref
+#     ```
+#
+# A block under a "References" heading is the note's list. A block anywhere
+# else belongs to the section heading above it and replaces the note's list
+# for that section, so a question about HDIs is not shown the note's sources
+# on decision theory. Blocks are removed from the text before indexing: a
+# reference list would otherwise add bibliographic words to the retrieval
+# vectors and hand the judge a list of citations as though it were guidance.
+#
+# These are curated by hand and checked before they go in. The model never
+# proposes them, which is the point: a reference the model supplies can be a
+# real record attached to the wrong claim, or no record at all.
+
+REFERENCE_KEYS = ("cite", "doi", "url", "isbn", "supports", "checked")
+REFERENCES_HEADING = "references"
+
+_REFERENCE_BLOCK = re.compile(
+    r"(?ms)^```references[ \t]*\n(?P<body>.*?)^```[ \t]*$\n?")
+
+
+class ReferenceFormatError(ValueError):
+    """A references block that does not follow the curated format."""
+
+
+@dataclass
+class Reference:
+    cite: str
+    supports: str
+    doi: str = ""
+    url: str = ""
+    isbn: str = ""
+    checked: str = ""
+
+    def link(self) -> str:
+        """Where the reader can check the source: the DOI first, then a URL."""
+        if self.doi:
+            return "https://doi.org/" + self.doi
+        return self.url
+
+    def to_dict(self) -> Dict[str, str]:
+        return {
+            "cite": self.cite,
+            "supports": self.supports,
+            "doi": self.doi,
+            "url": self.url,
+            "isbn": self.isbn,
+            "checked": self.checked,
+            "link": self.link(),
+        }
+
+
+def parse_references_block(body: str, where: str = "") -> List[Reference]:
+    """Parse the body of one references block, strictly.
+
+    Strict because a typo in a key -- "suports:" -- would otherwise drop the
+    scope statement silently, and the scope statement is what stops a real
+    source being read as support for a claim it does not make.
+    """
+    records: List[Dict[str, str]] = []
+    for number, line in enumerate(body.splitlines(), start=1):
+        if not line.strip():
+            continue
+        if line.startswith("- "):
+            records.append({})
+            line = line[2:]
+        elif line.startswith("  ") and records:
+            line = line.strip()
+        else:
+            raise ReferenceFormatError(
+                f"{where}: line {number} of a references block is neither a "
+                f"new entry ('- cite: ...') nor an indented field: {line!r}")
+        key, sep, value = line.partition(":")
+        key = key.strip().lower()
+        if not sep or key not in REFERENCE_KEYS:
+            raise ReferenceFormatError(
+                f"{where}: unknown field {key!r} in a references block; "
+                f"allowed fields are {', '.join(REFERENCE_KEYS)}")
+        if key in records[-1]:
+            raise ReferenceFormatError(
+                f"{where}: field {key!r} appears twice in one entry")
+        records[-1][key] = value.strip()
+
+    out: List[Reference] = []
+    for record in records:
+        cite = record.get("cite", "")
+        if not cite:
+            raise ReferenceFormatError(f"{where}: an entry has no cite field")
+        if not record.get("supports"):
+            raise ReferenceFormatError(
+                f"{where}: {cite[:60]!r} has no supports field; say what the "
+                f"source is listed for")
+        if not (record.get("doi") or record.get("url") or record.get("isbn")):
+            raise ReferenceFormatError(
+                f"{where}: {cite[:60]!r} has no doi, url or isbn; a reader "
+                f"must be able to find it")
+        doi = record.get("doi", "")
+        for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
+            if doi.lower().startswith(prefix):
+                doi = doi[len(prefix):]
+        out.append(Reference(
+            cite=cite,
+            supports=record["supports"],
+            doi=doi.strip(),
+            url=record.get("url", ""),
+            isbn=record.get("isbn", ""),
+            checked=record.get("checked", ""),
+        ))
+    return out
+
+
+def extract_references(
+    text: str,
+    where: str = "",
+) -> Tuple[str, List[Reference], Dict[str, List[Reference]], List[str]]:
+    """Split a note into indexable text and its curated references.
+
+    Returns (text without reference blocks, note-level references,
+    section-level references keyed by cleaned heading, format errors). A
+    malformed block is reported and skipped rather than raised, so one bad
+    entry cannot take Academic Chat down; tests/test_reviewer_note_references.py
+    fails on any error, so it cannot go unnoticed either.
+    """
+    headings = [
+        (m.start(), m.group(2).strip(" #*"))
+        for m in _HEADING.finditer(text)
+    ]
+    note_refs: List[Reference] = []
+    section_refs: Dict[str, List[Reference]] = {}
+    errors: List[str] = []
+    spans: List[Tuple[int, int]] = []
+    references_section_end: Dict[int, int] = {}
+
+    for block in _REFERENCE_BLOCK.finditer(text):
+        owner_start, owner = -1, ""
+        for start, heading in headings:
+            if start < block.start():
+                owner_start, owner = start, heading
+        spans.append((block.start(), block.end()))
+        label = f"{where} [{owner or 'top of note'}]"
+        try:
+            refs = parse_references_block(block.group("body"), label)
+        except ReferenceFormatError as exc:
+            errors.append(str(exc))
+            continue
+        if not owner or owner.strip().lower() == REFERENCES_HEADING:
+            note_refs.extend(refs)
+            if owner_start >= 0:
+                references_section_end[owner_start] = block.end()
+        else:
+            section_refs.setdefault(owner, []).extend(refs)
+
+    # A "References" section is a list, not guidance: drop its heading and
+    # introduction along with the blocks, but leave whatever follows the last
+    # block (the note's "Based on" line) attached to the section before it,
+    # exactly as it was before references existed.
+    for start, end in references_section_end.items():
+        spans.append((start, end))
+
+    if not spans:
+        return text, note_refs, section_refs, errors
+
+    spans.sort()
+    merged: List[Tuple[int, int]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    pieces, cursor = [], 0
+    for start, end in merged:
+        pieces.append(text[cursor:start])
+        # A block sits between blank lines; take one of them with it, so the
+        # note reads exactly as it did before the block was added.
+        if text[:start].endswith("\n\n") and text[end:end + 1] == "\n":
+            end += 1
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces), note_refs, section_refs, errors
+
+
+# ---------------------------------------------------------------------------
 # Chunking
 # ---------------------------------------------------------------------------
 
@@ -229,6 +419,11 @@ class NotesIndex:
         self.passages: List[Passage] = []
         self._vectors: List[Dict[str, float]] = []
         self._idf: Dict[str, float] = {}
+        # Curated references, keyed by the same note title and cleaned
+        # heading that passages carry, so a retrieved passage finds its list.
+        self.note_references: Dict[str, List[Reference]] = {}
+        self.section_references: Dict[Tuple[str, str], List[Reference]] = {}
+        self.reference_errors: List[str] = []
         self._build()
 
     def _build(self) -> None:
@@ -242,6 +437,13 @@ class NotesIndex:
             title = re.sub(r"[*_`]", "", title).strip()
             if len(title) > 60:
                 title = title[:57].rstrip() + "..."
+            text, note_refs, section_refs, errors = extract_references(
+                text, where=path.name)
+            self.reference_errors.extend(errors)
+            if note_refs:
+                self.note_references[title] = note_refs
+            for heading, refs in section_refs.items():
+                self.section_references[(title, heading)] = refs
             for heading, body in _sections(text):
                 raw.append((title, heading, body, _tokenise(body)))
 
@@ -260,6 +462,18 @@ class NotesIndex:
             norm = math.sqrt(sum(w * w for w in vec.values())) or 1.0
             self._vectors.append({t: w / norm for t, w in vec.items()})
             self.passages.append(Passage(title, heading, body, 0.0))
+
+    def references_for(self, note: str, heading: str = "") -> List[Reference]:
+        """The curated references for a passage's section, else its note's.
+
+        Empty when neither has any, which most notes will until they are
+        curated. A short section merged into the one above it during chunking
+        carries that section's heading, and so that section's references.
+        """
+        section = self.section_references.get((note, heading))
+        if section:
+            return list(section)
+        return list(self.note_references.get(note, []))
 
     def search(self, query: str, k: int = 3, use_aliases: bool = True) -> List[Passage]:
         q = expand(query) if use_aliases else query

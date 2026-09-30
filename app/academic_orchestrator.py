@@ -60,17 +60,27 @@ class LocalGuidanceResult:
         }
 
 
-def retrieve_methodological_context(
-    question: str,
-    k: int = 3,
-) -> LocalGuidanceResult:
-    """Retrieve curated local methodological guidance for Academic Chat."""
+def methodological_notes_index() -> reviewer_notes.NotesIndex:
+    """The shared reviewer-notes index, built once on first use.
+
+    Exposed so that the check-further layer reads curated references from the
+    same index that supplied the guidance, rather than building a second one
+    that could disagree with it.
+    """
     global _methodological_notes_index
 
     with _methodological_notes_index_lock:
         if _methodological_notes_index is None:
             _methodological_notes_index = reviewer_notes.NotesIndex()
-        index = _methodological_notes_index
+        return _methodological_notes_index
+
+
+def retrieve_methodological_context(
+    question: str,
+    k: int = 3,
+) -> LocalGuidanceResult:
+    """Retrieve curated local methodological guidance for Academic Chat."""
+    index = methodological_notes_index()
 
     anchors = index.search(question, k=k)
     passages = reviewer_notes.expand_section_siblings(

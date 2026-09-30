@@ -46,6 +46,7 @@ import design_expectations as de  # noqa: E402
 import reviewer_notes as notes  # noqa: E402  standard library only, no model
 import llm_backend  # noqa: E402
 import academic_chat  # noqa: E402
+import academic_check_further  # noqa: E402
 import academic_claim_coverage  # noqa: E402
 import academic_claims  # noqa: E402
 import academic_claim_assessor  # noqa: E402
@@ -842,7 +843,36 @@ async def academic_chat_first_stage(request: dict):
             status_code=502,
         )
 
-    return result.to_dict()
+    payload = result.to_dict()
+
+    # Where the reader should check this answer, and against what. A layer
+    # over the verdicts already reached: it changes none of them and adds no
+    # model call. Built from the same notes index that supplied the guidance,
+    # so the references belong to the sections that were actually retrieved.
+    # A failure here must not cost the reader the answer, so it is reported
+    # in place of the assessment rather than raised.
+    try:
+        payload["check_further"] = academic_check_further.assess_check_further(
+            result.final,
+            academic_orchestrator.methodological_notes_index(),
+        ).to_dict()
+    except Exception as exc:                                    # noqa: BLE001
+        traceback.print_exc()
+        payload["check_further"] = {
+            "level": academic_check_further.LEVEL_NEEDED,
+            "headline": (
+                "The check-further assessment could not be completed, so "
+                "treat this answer as unchecked."
+            ),
+            "error": f"{type(exc).__name__}: {exc}",
+            "triggers": [],
+            "groups": [],
+            "further_reading": [],
+            "notes_consulted": [],
+            "rules": [],
+        }
+
+    return payload
 
 
 # ---------------------------------------------------------------------------
