@@ -228,6 +228,13 @@ referent, modality, direction, parameterisation, causal status, or another
 qualification that changes what is asserted.
 Do not treat information as a restriction merely because it appears in the
 preceding context. It must govern or supply meaning to the source proposition.
+Resolving a pronoun, shorthand, or implicit referent from the source sentence
+into its explicit antecedent in the standalone claim is not an omitted
+restriction when the same material proposition, including its qualifications,
+is preserved.
+A difference in wording or referential explicitness is not itself an omission.
+Return true only when the standalone claim actually loses a material
+qualification that changes what the source proposition asserts.
 Use only the technical claim, source sentence, and local answer context supplied
 above.
 Do not use outside knowledge.

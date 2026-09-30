@@ -1544,6 +1544,10 @@ assert "direction" in restriction_prompt.lower()
 assert "parameterisation" in restriction_prompt.lower()
 assert "govern" in restriction_prompt.lower()
 assert "merely because" in restriction_prompt.lower()
+assert "pronoun" in restriction_prompt.lower()
+assert "explicit antecedent" in restriction_prompt.lower()
+assert "referential explicitness" in restriction_prompt.lower()
+assert "actually loses a material" in restriction_prompt.lower()
 
 print("PASS: restriction prompt asks only about material omission")
 
