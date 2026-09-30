@@ -68,6 +68,9 @@ def run_academic_reconciliation(
     corrections = correction_extractor(
         technical_claims=initial.technical_claims,
         source_claims=initial.source_claims,
+        discovered_claim_assessments=(
+            initial.discovered_claim_assessments
+        ),
     )
 
     if corrections.is_empty():

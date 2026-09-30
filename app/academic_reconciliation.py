@@ -10,12 +10,13 @@ bounded by the extracted correction material and returns the same AcademicDraft
 contract used by first-pass generation.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from typing import Any
 
 import academic_chat
 import academic_claims
+import academic_claim_coverage
 import academic_methodology
 import academic_orchestrator
 import academic_technical
@@ -56,6 +57,29 @@ class MethodologicalCorrection:
 
 
 @dataclass
+class ContextualMethodologicalCorrection:
+    claim: academic_chat.TechnicalClaim
+    source_context: academic_claim_coverage.ClaimSourceContext
+    passages: list[reviewer_notes.Passage]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "claim": self.claim.to_dict(),
+            "source_sentence": self.source_context.source_sentence,
+            "context_excerpt": self.source_context.context_excerpt,
+            "passages": [
+                {
+                    "note": passage.note,
+                    "heading": passage.heading,
+                    "text": passage.text,
+                    "score": passage.score,
+                }
+                for passage in self.passages
+            ],
+        }
+
+
+@dataclass
 class SourceCorrection:
     claim: str
     evidence: list[academic_claims.ClaimEvidence]
@@ -72,15 +96,19 @@ class SourceCorrection:
 
 @dataclass
 class AcademicCorrectionSet:
-    technical: list[TechnicalCorrection]
-    methodological: list[MethodologicalCorrection]
-    source: list[SourceCorrection]
+    technical: list[TechnicalCorrection] = field(default_factory=list)
+    methodological: list[MethodologicalCorrection] = field(default_factory=list)
+    contextual_methodological: list[
+        ContextualMethodologicalCorrection
+    ] = field(default_factory=list)
+    source: list[SourceCorrection] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         """Return whether independent checking established no corrections."""
         return not (
             self.technical
             or self.methodological
+            or self.contextual_methodological
             or self.source
         )
 
@@ -94,6 +122,10 @@ class AcademicCorrectionSet:
                 correction.to_dict()
                 for correction in self.methodological
             ],
+            "contextual_methodological": [
+                correction.to_dict()
+                for correction in self.contextual_methodological
+            ],
             "source": [
                 correction.to_dict()
                 for correction in self.source
@@ -105,11 +137,17 @@ def extract_academic_corrections(
     *,
     technical_claims: list[academic_orchestrator.TechnicalClaimResult],
     source_claims: list[academic_orchestrator.SourceClaimResult],
+    discovered_claim_assessments: (
+        list[academic_orchestrator.DiscoveredClaimAssessment] | None
+    ) = None,
 ) -> AcademicCorrectionSet:
     """Extract all independently established blockers from a checked draft."""
 
     technical: list[TechnicalCorrection] = []
     methodological: list[MethodologicalCorrection] = []
+    contextual_methodological: list[
+        ContextualMethodologicalCorrection
+    ] = []
     source: list[SourceCorrection] = []
 
     for result in technical_claims:
@@ -146,6 +184,22 @@ def extract_academic_corrections(
                 )
             )
 
+    for assessment in (discovered_claim_assessments or []):
+        consistency = assessment.contextual_methodological_consistency
+
+        if (
+            consistency is not None
+            and consistency.status
+            == academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
+        ):
+            contextual_methodological.append(
+                ContextualMethodologicalCorrection(
+                    claim=consistency.claim,
+                    source_context=assessment.source_context,
+                    passages=list(consistency.passages),
+                )
+            )
+
     for result in source_claims:
         assessment = result.claim_assessment
 
@@ -163,6 +217,7 @@ def extract_academic_corrections(
     return AcademicCorrectionSet(
         technical=technical,
         methodological=methodological,
+        contextual_methodological=contextual_methodological,
         source=source,
     )
 

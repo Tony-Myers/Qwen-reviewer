@@ -2,9 +2,12 @@ from dataclasses import dataclass
 import inspect
 
 import academic_chat
+import academic_claim_coverage
+import academic_methodology
 import academic_orchestrator
 import academic_reconciliation
 import academic_technical
+import reviewer_notes
 
 try:
     import academic_reconciliation_orchestrator as reconciliation_orchestrator
@@ -88,6 +91,7 @@ if callable(run_lifecycle):
         local_guidance: object = None
         technical_claims: object = None
         source_claims: object = None
+        discovered_claim_assessments: object = None
 
     @dataclass
     class FakeCorrections:
@@ -157,6 +161,7 @@ if callable(run_lifecycle):
     original_guidance = object()
     checked_technical_claims = object()
     checked_source_claims = object()
+    checked_discovered_claim_assessments = object()
 
     blocked_initial = FakeStage(
         answer_draft="Blocked initial answer.",
@@ -165,6 +170,9 @@ if callable(run_lifecycle):
         local_guidance=original_guidance,
         technical_claims=checked_technical_claims,
         source_claims=checked_source_claims,
+        discovered_claim_assessments=(
+            checked_discovered_claim_assessments
+        ),
     )
 
     empty_corrections = FakeCorrections(empty=True)
@@ -174,9 +182,19 @@ if callable(run_lifecycle):
         empty_calls.append(("first_stage", args, kwargs))
         return blocked_initial
 
-    def extract_empty(*, technical_claims, source_claims):
+    def extract_empty(
+        *,
+        technical_claims,
+        source_claims,
+        discovered_claim_assessments,
+    ):
         empty_calls.append(
-            ("extract", technical_claims, source_claims)
+            (
+                "extract",
+                technical_claims,
+                source_claims,
+                discovered_claim_assessments,
+            )
         )
         return empty_corrections
 
@@ -234,9 +252,19 @@ if callable(run_lifecycle):
         lifecycle_calls.append(("first_stage", args, kwargs))
         return blocked_initial
 
-    def extract_bounded(*, technical_claims, source_claims):
+    def extract_bounded(
+        *,
+        technical_claims,
+        source_claims,
+        discovered_claim_assessments,
+    ):
         lifecycle_calls.append(
-            ("extract", technical_claims, source_claims)
+            (
+                "extract",
+                technical_claims,
+                source_claims,
+                discovered_claim_assessments,
+            )
         )
         return bounded_corrections
 
@@ -308,9 +336,13 @@ if callable(run_lifecycle):
             call[0] == "extract"
             and call[1] is checked_technical_claims
             and call[2] is checked_source_claims
+            and call[3] is checked_discovered_claim_assessments
             for call in lifecycle_calls
         ),
-        "correction extraction receives only checked claim structures",
+        (
+            "correction extraction receives proposition-level and "
+            "occurrence-level checked structures"
+        ),
         lifecycle_calls,
     )
     check(
@@ -348,9 +380,19 @@ if callable(run_lifecycle):
     def still_blocked_first_stage(*args, **kwargs):
         return blocked_initial
 
-    def repeated_extract(*, technical_claims, source_claims):
+    def repeated_extract(
+        *,
+        technical_claims,
+        source_claims,
+        discovered_claim_assessments,
+    ):
         repeated_calls.append(
-            ("extract", technical_claims, source_claims)
+            (
+                "extract",
+                technical_claims,
+                source_claims,
+                discovered_claim_assessments,
+            )
         )
         return bounded_corrections
 
@@ -591,6 +633,233 @@ if callable(run_lifecycle):
             ]
         ) == 1,
         "real composition performs exactly one fresh reassessment",
+    )
+
+
+
+print("\n[contextual conflict reconciliation composition]")
+
+if callable(run_lifecycle):
+    contextual_only_claim = academic_chat.TechnicalClaim(
+        type="interpretation",
+        concept="covariate adjustment",
+        statement="Covariate adjustment improves precision.",
+        parameterisation=None,
+    )
+
+    contextual_only_source = academic_claim_coverage.ClaimSourceContext(
+        source_sentence="Covariate adjustment improves precision.",
+        source_sentence_start=0,
+        source_sentence_end=40,
+        context_excerpt=(
+            "Even when the baseline covariate does not predict the outcome, "
+            "covariate adjustment improves precision."
+        ),
+        context_start=0,
+        context_end=99,
+    )
+
+    contextual_only_discovered = academic_claim_coverage.DiscoveredClaim(
+        claim=contextual_only_claim,
+        source_anchor="Covariate adjustment improves precision.",
+        source_start=0,
+        source_end=40,
+    )
+
+    contextual_only_passage = reviewer_notes.Passage(
+        note="RCT guidance",
+        heading="Covariate adjustment",
+        text=(
+            "Adjustment can improve precision when a baseline covariate "
+            "strongly predicts the outcome; when it does not predict the "
+            "outcome, there is no precision gain."
+        ),
+        score=0.73,
+    )
+
+    contextual_only_methodology = (
+        academic_methodology.ContextualMethodologicalConsistencyResult(
+            status=academic_methodology.METHODOLOGICAL_STATUS_CONFLICT,
+            claim=contextual_only_claim,
+            source_context=contextual_only_source,
+            passages=[contextual_only_passage],
+            reasons=["Synthetic contextual conflict reason."],
+        )
+    )
+
+    contextual_only_assessment = (
+        academic_orchestrator.DiscoveredClaimAssessment(
+            discovered_claim=contextual_only_discovered,
+            source_context=contextual_only_source,
+            material_restriction=(
+                academic_claim_coverage.MaterialRestrictionAssessment(
+                    material_restriction_omitted=True,
+                )
+            ),
+            contextual_methodological_consistency=(
+                contextual_only_methodology
+            ),
+        )
+    )
+
+    contextual_initial_draft = academic_chat.AcademicDraft(
+        answer_draft=(
+            "Even when the baseline covariate does not predict the outcome, "
+            "covariate adjustment improves precision."
+        ),
+        references=[],
+        source_claims=[],
+        technical_claims=[],
+    )
+
+    contextual_retained_guidance = academic_orchestrator.LocalGuidanceResult(
+        passages=[]
+    )
+
+    contextual_initial_checked = academic_orchestrator.assess_academic_draft(
+        contextual_initial_draft,
+        local_guidance=contextual_retained_guidance,
+    )
+
+    contextual_initial_checked.discovered_claim_assessments = [
+        contextual_only_assessment
+    ]
+    contextual_initial_checked.release = (
+        academic_orchestrator.assess_academic_release(
+            contextual_initial_checked.technical_claims,
+            contextual_initial_checked.source_claims,
+            contextual_initial_checked.discovered_claim_assessments,
+        )
+    )
+
+    check(
+        contextual_initial_checked.release.status
+        == "blocked_methodological_conflict",
+        "contextual conflict alone blocks the initial draft",
+    )
+    check(
+        not contextual_initial_checked.technical_claims
+        and not contextual_initial_checked.source_claims,
+        "contextual blocker requires no proposition-level correction source",
+    )
+
+    contextual_corrected_draft = academic_chat.AcademicDraft(
+        answer_draft=(
+            "Covariate adjustment can improve precision when the baseline "
+            "covariate strongly predicts the outcome."
+        ),
+        references=[],
+        source_claims=[],
+        technical_claims=[],
+    )
+
+    contextual_composition_calls = []
+
+    def contextual_first_stage(
+        supplied_model,
+        supplied_tokenizer,
+        supplied_question,
+    ):
+        contextual_composition_calls.append(
+            (
+                "first_stage",
+                supplied_model,
+                supplied_tokenizer,
+                supplied_question,
+            )
+        )
+        return contextual_initial_checked
+
+    def contextual_revision(
+        supplied_model,
+        supplied_tokenizer,
+        supplied_draft,
+        supplied_corrections,
+    ):
+        contextual_composition_calls.append(
+            (
+                "revision",
+                supplied_model,
+                supplied_tokenizer,
+                supplied_draft,
+                supplied_corrections,
+            )
+        )
+
+        check(
+            not supplied_corrections.technical
+            and not supplied_corrections.methodological
+            and not supplied_corrections.source,
+            "contextual conflict triggers revision without other corrections",
+        )
+        check(
+            len(supplied_corrections.contextual_methodological) == 1,
+            "revision receives the sole contextual methodological correction",
+        )
+
+        return contextual_corrected_draft
+
+    def contextual_reassessor(draft, *, local_guidance):
+        contextual_composition_calls.append(
+            ("reassessment", draft, local_guidance)
+        )
+        return academic_orchestrator.assess_academic_draft(
+            draft,
+            local_guidance=local_guidance,
+        )
+
+    contextual_composition_result = run_lifecycle(
+        model,
+        tokenizer,
+        "CONFIDENTIAL CONTEXTUAL QUESTION",
+        first_stage_runner=contextual_first_stage,
+        correction_extractor=(
+            academic_reconciliation.extract_academic_corrections
+        ),
+        revision_generator=contextual_revision,
+        draft_assessor=contextual_reassessor,
+    )
+
+    check(
+        contextual_composition_result.revision_attempted is True,
+        "sole contextual conflict triggers one bounded revision",
+    )
+    check(
+        contextual_composition_result.initial is contextual_initial_checked,
+        "contextual blocked result remains separately auditable",
+    )
+    check(
+        contextual_composition_result.revised is not None,
+        "contextual correction receives a fresh reassessment",
+    )
+    check(
+        contextual_composition_result.final.release.safe_to_present is True,
+        "fresh reassessment independently releases contextual correction",
+    )
+    check(
+        contextual_composition_result.final.local_guidance
+        is contextual_retained_guidance,
+        "contextual reassessment reuses exact retained local guidance",
+    )
+    check(
+        len(
+            [
+                call
+                for call in contextual_composition_calls
+                if call[0] == "revision"
+            ]
+        ) == 1,
+        "contextual composition performs exactly one revision",
+    )
+    check(
+        len(
+            [
+                call
+                for call in contextual_composition_calls
+                if call[0] == "reassessment"
+            ]
+        ) == 1,
+        "contextual composition performs exactly one fresh reassessment",
     )
 
 

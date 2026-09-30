@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 import academic_chat
 import academic_claims
+import academic_claim_coverage
 import academic_methodology
 import academic_orchestrator
 import academic_technical
@@ -240,6 +241,159 @@ if academic_reconciliation is not None:
     )
 
 
+print("\n[contextual methodology correction extraction]")
+
+contextual_claim = academic_chat.TechnicalClaim(
+    type="interpretation",
+    concept="covariate adjustment",
+    statement="Covariate adjustment improves precision.",
+    parameterisation=None,
+)
+
+contextual_discovered = academic_claim_coverage.DiscoveredClaim(
+    claim=contextual_claim,
+    source_anchor="Covariate adjustment improves precision.",
+    source_start=42,
+    source_end=82,
+)
+
+contextual_source = academic_claim_coverage.ClaimSourceContext(
+    source_sentence="Covariate adjustment improves precision.",
+    source_sentence_start=42,
+    source_sentence_end=82,
+    context_excerpt=(
+        "Even when the baseline covariate does not predict the outcome, "
+        "covariate adjustment improves precision."
+    ),
+    context_start=0,
+    context_end=82,
+)
+
+contextual_passage = reviewer_notes.Passage(
+    note="RCT guidance",
+    heading="Covariate adjustment",
+    text=(
+        "Adjustment can improve precision when a baseline covariate strongly "
+        "predicts the outcome; when it does not predict the outcome, there is "
+        "no precision gain."
+    ),
+    score=0.73,
+)
+
+contextual_conflict_result = (
+    academic_methodology.ContextualMethodologicalConsistencyResult(
+        status=academic_methodology.METHODOLOGICAL_STATUS_CONFLICT,
+        claim=contextual_claim,
+        source_context=contextual_source,
+        passages=[contextual_passage],
+        reasons=[
+            "MODEL MUST NOT RECEIVE THIS CONTEXTUAL ASSESSOR REASON"
+        ],
+    )
+)
+
+contextual_assessment = academic_orchestrator.DiscoveredClaimAssessment(
+    discovered_claim=contextual_discovered,
+    source_context=contextual_source,
+    material_restriction=(
+        academic_claim_coverage.MaterialRestrictionAssessment(
+            material_restriction_omitted=True,
+        )
+    ),
+    contextual_methodological_consistency=contextual_conflict_result,
+)
+
+contextual_corrections = (
+    academic_reconciliation.extract_academic_corrections(
+        technical_claims=[],
+        source_claims=[],
+        discovered_claim_assessments=[contextual_assessment],
+    )
+)
+
+check(
+    hasattr(contextual_corrections, "contextual_methodological"),
+    "correction set exposes contextual methodological corrections",
+)
+
+if hasattr(contextual_corrections, "contextual_methodological"):
+    check(
+        len(contextual_corrections.contextual_methodological) == 1,
+        "contextual methodological conflict becomes one correction",
+    )
+
+    if contextual_corrections.contextual_methodological:
+        contextual_correction = (
+            contextual_corrections.contextual_methodological[0]
+        )
+
+        check(
+            contextual_correction.claim is contextual_claim,
+            "contextual correction retains structured claim",
+        )
+        check(
+            contextual_correction.source_context is contextual_source,
+            "contextual correction retains occurrence source context",
+        )
+        check(
+            contextual_correction.passages == [contextual_passage],
+            "contextual correction retains application-owned guidance",
+        )
+
+        contextual_payload = repr(contextual_correction.to_dict())
+
+        check(
+            contextual_source.source_sentence in contextual_payload,
+            "contextual correction exposes verified source sentence",
+        )
+        check(
+            contextual_source.context_excerpt in contextual_payload,
+            "contextual correction exposes bounded context excerpt",
+        )
+        check(
+            contextual_passage.text in contextual_payload,
+            "contextual correction exposes methodological guidance text",
+        )
+        check(
+            "MODEL MUST NOT RECEIVE THIS CONTEXTUAL ASSESSOR REASON"
+            not in contextual_payload,
+            "contextual assessor reason is excluded from correction payload",
+        )
+
+contextual_consistent = academic_orchestrator.DiscoveredClaimAssessment(
+    discovered_claim=contextual_discovered,
+    source_context=contextual_source,
+    material_restriction=(
+        academic_claim_coverage.MaterialRestrictionAssessment(
+            material_restriction_omitted=True,
+        )
+    ),
+    contextual_methodological_consistency=(
+        academic_methodology.ContextualMethodologicalConsistencyResult(
+            status=academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT,
+            claim=contextual_claim,
+            source_context=contextual_source,
+            passages=[contextual_passage],
+            reasons=["Compatible."],
+        )
+    ),
+)
+
+nonblocking_contextual = (
+    academic_reconciliation.extract_academic_corrections(
+        technical_claims=[],
+        source_claims=[],
+        discovered_claim_assessments=[contextual_consistent],
+    )
+)
+
+if hasattr(nonblocking_contextual, "contextual_methodological"):
+    check(
+        not nonblocking_contextual.contextual_methodological,
+        "contextual methodological consistency creates no correction",
+    )
+
+
 print("\n[academic reconciliation extraction boundaries]")
 
 empty_input = academic_reconciliation.extract_academic_corrections(
@@ -367,6 +521,13 @@ revision_corrections = academic_reconciliation.AcademicCorrectionSet(
             passages=[passage],
         )
     ],
+    contextual_methodological=[
+        academic_reconciliation.ContextualMethodologicalCorrection(
+            claim=contextual_claim,
+            source_context=contextual_source,
+            passages=[contextual_passage],
+        )
+    ],
     source=[
         academic_reconciliation.SourceCorrection(
             claim=source_claim.claim,
@@ -437,6 +598,27 @@ if callable(build_revision_prompt):
     check(
         passage.text in revision_prompt,
         "revision prompt contains methodological correction guidance",
+    )
+    check(
+        contextual_claim.statement in revision_prompt,
+        "revision prompt contains contextual methodological claim",
+    )
+    check(
+        contextual_source.source_sentence in revision_prompt,
+        "revision prompt contains contextual verified source sentence",
+    )
+    check(
+        contextual_source.context_excerpt in revision_prompt,
+        "revision prompt contains contextual bounded answer context",
+    )
+    check(
+        contextual_passage.text in revision_prompt,
+        "revision prompt contains contextual methodological guidance",
+    )
+    check(
+        "MODEL MUST NOT RECEIVE THIS CONTEXTUAL ASSESSOR REASON"
+        not in revision_prompt,
+        "revision prompt excludes contextual methodology assessor reason",
     )
     check(
         evidence.text in revision_prompt,
