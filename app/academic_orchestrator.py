@@ -356,6 +356,38 @@ class DiscoveredClaimAssessment:
         }
 
 
+def standalone_methodology_is_contextually_superseded(
+    claim: academic_chat.TechnicalClaim,
+    discovered_claim_assessments: (
+        list[DiscoveredClaimAssessment] | None
+    ),
+) -> bool:
+    """Return whether contextual checking supersedes standalone methodology.
+
+    Supersession is deliberately narrow. At least one occurrence of the same
+    structured claim must be known to omit a material restriction, and every
+    such occurrence must have completed contextual methodological assessment.
+
+    This prevents one assessed occurrence of a deduplicated proposition from
+    neutralising a standalone conflict while another materially restricted
+    occurrence remains contextually unassessed.
+    """
+    restricted_occurrences = [
+        assessment
+        for assessment in (discovered_claim_assessments or [])
+        if (
+            assessment.discovered_claim.claim == claim
+            and assessment.material_restriction is not None
+            and assessment.material_restriction.material_restriction_omitted
+        )
+    ]
+
+    return bool(restricted_occurrences) and all(
+        assessment.contextual_methodological_consistency is not None
+        for assessment in restricted_occurrences
+    )
+
+
 @dataclass
 class AcademicReleaseAssessment:
     status: str
@@ -395,7 +427,13 @@ def assess_academic_release(
     methodological_statuses = [
         claim.methodological_consistency.status
         for claim in technical_claims
-        if claim.methodological_consistency is not None
+        if (
+            claim.methodological_consistency is not None
+            and not standalone_methodology_is_contextually_superseded(
+                claim.claim,
+                discovered_claim_assessments,
+            )
+        )
     ]
     contextual_methodological_statuses = [
         assessment.contextual_methodological_consistency.status

@@ -235,17 +235,48 @@ check(
 
 
 def contextual_claim_assessment(status):
-    methodology = type(
-        "SyntheticContextualMethodology",
-        (),
-        {"status": status},
-    )()
+    academic_chat = __import__("academic_chat")
+    academic_methodology = __import__("academic_methodology")
 
-    return type(
-        "SyntheticDiscoveredClaimAssessment",
-        (),
-        {"contextual_methodological_consistency": methodology},
-    )()
+    claim = academic_chat.TechnicalClaim(
+        type="interpretation",
+        concept="Synthetic contextual concept",
+        statement="Synthetic contextual claim.",
+        parameterisation=None,
+    )
+    source_context = academic_claim_coverage.ClaimSourceContext(
+        source_sentence="Synthetic contextual claim.",
+        source_sentence_start=0,
+        source_sentence_end=27,
+        context_excerpt="Synthetic contextual claim.",
+        context_start=0,
+        context_end=27,
+    )
+    methodology = (
+        academic_methodology.ContextualMethodologicalConsistencyResult(
+            status=status,
+            claim=claim,
+            source_context=source_context,
+            passages=[],
+            reasons=["Synthetic contextual methodology result."],
+        )
+    )
+
+    return academic_orchestrator.DiscoveredClaimAssessment(
+        discovered_claim=academic_claim_coverage.DiscoveredClaim(
+            claim=claim,
+            source_anchor=claim.statement,
+            source_start=0,
+            source_end=len(claim.statement),
+        ),
+        source_context=source_context,
+        material_restriction=(
+            academic_claim_coverage.MaterialRestrictionAssessment(
+                material_restriction_omitted=True,
+            )
+        ),
+        contextual_methodological_consistency=methodology,
+    )
 
 
 print("\n[10] contextual methodological conflict blocks release")
@@ -352,8 +383,215 @@ check(
 )
 
 
+print(
+    "\n[15] contextual assessment supersedes context-poor standalone methodology"
+)
+
+academic_chat = __import__("academic_chat")
+academic_methodology = __import__("academic_methodology")
+
+qualified_claim = academic_chat.TechnicalClaim(
+    type="interpretation",
+    concept="covariate adjustment in randomised trials",
+    statement=(
+        "Covariates should be adjusted for regardless of their baseline "
+        "p-values."
+    ),
+    parameterisation=None,
+)
+
+standalone_conflict = academic_orchestrator.TechnicalClaimResult(
+    claim=qualified_claim,
+    verification=verification(
+        academic_technical.TECHNICAL_STATUS_NOT_VERIFIED
+    ),
+    methodological_consistency=(
+        academic_methodology.MethodologicalConsistencyResult(
+            status=academic_methodology.METHODOLOGICAL_STATUS_CONFLICT,
+            claim=qualified_claim,
+            passages=[],
+            reasons=["Synthetic context-poor conflict."],
+        )
+    ),
+)
+
+
+def paired_contextual_assessment(status):
+    discovered = academic_claim_coverage.DiscoveredClaim(
+        claim=qualified_claim,
+        source_anchor=qualified_claim.statement,
+        source_start=0,
+        source_end=len(qualified_claim.statement),
+    )
+    source_context = academic_claim_coverage.ClaimSourceContext(
+        source_sentence=(
+            "The primary analysis should typically adjust for covariates "
+            "used to stratify randomisation or known to be strongly "
+            "prognostic, regardless of their baseline p-values."
+        ),
+        source_sentence_start=0,
+        source_sentence_end=170,
+        context_excerpt=(
+            "Adjustment should be based on design or prognostic value, "
+            "not selected according to baseline significance tests."
+        ),
+        context_start=0,
+        context_end=140,
+    )
+    methodology = (
+        academic_methodology.ContextualMethodologicalConsistencyResult(
+            status=status,
+            claim=qualified_claim,
+            source_context=source_context,
+            passages=[],
+            reasons=["Synthetic occurrence-aware assessment."],
+        )
+    )
+
+    return academic_orchestrator.DiscoveredClaimAssessment(
+        discovered_claim=discovered,
+        source_context=source_context,
+        material_restriction=(
+            academic_claim_coverage.MaterialRestrictionAssessment(
+                material_restriction_omitted=True,
+            )
+        ),
+        contextual_methodological_consistency=methodology,
+    )
+
+
+for contextual_status in (
+    academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT,
+    academic_methodology.METHODOLOGICAL_STATUS_NOT_ESTABLISHED,
+):
+    release = academic_orchestrator.assess_academic_release(
+        [standalone_conflict],
+        [],
+        [paired_contextual_assessment(contextual_status)],
+    )
+
+    check(
+        release.safe_to_present is True,
+        (
+            "paired occurrence-aware "
+            f"{contextual_status!r} supersedes context-poor standalone conflict"
+        ),
+    )
+    check(
+        release.status == "release_allowed_with_unverified_claims",
+        "superseded standalone conflict no longer blocks release",
+    )
+
+
+print("\n[16] contextual conflict still blocks superseded standalone claim")
+
+release = academic_orchestrator.assess_academic_release(
+    [standalone_conflict],
+    [],
+    [
+        paired_contextual_assessment(
+            academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
+        )
+    ],
+)
+
+check(
+    release.status == "blocked_methodological_conflict",
+    "occurrence-aware methodological conflict still blocks release",
+)
+check(
+    release.safe_to_present is False,
+    "contextual conflict remains unsafe to present",
+)
+
+
+print("\n[17] standalone conflict remains blocking without contextual assessment")
+
+unassessed_occurrence = paired_contextual_assessment(
+    academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT
+)
+unassessed_occurrence.contextual_methodological_consistency = None
+
+release = academic_orchestrator.assess_academic_release(
+    [standalone_conflict],
+    [],
+    [unassessed_occurrence],
+)
+
+check(
+    release.status == "blocked_methodological_conflict",
+    "standalone conflict remains blocking when contextual checking is absent",
+)
+check(
+    release.safe_to_present is False,
+    "missing contextual assessment cannot neutralise a standalone conflict",
+)
+
+
+
+print(
+    "\n[18] one assessed occurrence cannot supersede another unassessed occurrence"
+)
+
+assessed_occurrence = paired_contextual_assessment(
+    academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT
+)
+
+second_discovered = academic_claim_coverage.DiscoveredClaim(
+    claim=qualified_claim,
+    source_anchor=qualified_claim.statement,
+    source_start=200,
+    source_end=200 + len(qualified_claim.statement),
+)
+
+second_source_context = academic_claim_coverage.ClaimSourceContext(
+    source_sentence=(
+        "Eligible covariates should be selected for adjustment regardless "
+        "of baseline significance testing."
+    ),
+    source_sentence_start=200,
+    source_sentence_end=298,
+    context_excerpt=(
+        "A second occurrence of the same proposition requires its own "
+        "occurrence-aware assessment."
+    ),
+    context_start=180,
+    context_end=310,
+)
+
+unassessed_second_occurrence = academic_orchestrator.DiscoveredClaimAssessment(
+    discovered_claim=second_discovered,
+    source_context=second_source_context,
+    material_restriction=(
+        academic_claim_coverage.MaterialRestrictionAssessment(
+            material_restriction_omitted=True,
+        )
+    ),
+    contextual_methodological_consistency=None,
+)
+
+release = academic_orchestrator.assess_academic_release(
+    [standalone_conflict],
+    [],
+    [
+        assessed_occurrence,
+        unassessed_second_occurrence,
+    ],
+)
+
+check(
+    release.status == "blocked_methodological_conflict",
+    "one assessed occurrence does not suppress standalone conflict while "
+    "another restricted occurrence remains unassessed",
+)
+check(
+    release.safe_to_present is False,
+    "partially completed occurrence-aware checking remains conservative",
+)
+
+
 if fails:
-    print(f"\n{len(fails)} test(s) failed.")
+    print(f"\n{len(fails)} release test(s) failed.")
     raise SystemExit(1)
 
-print("\nAll Academic Chat release-assessment checks passed.")
+print("\nAll academic release tests passed.")

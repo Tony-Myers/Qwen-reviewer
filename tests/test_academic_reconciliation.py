@@ -394,6 +394,91 @@ if hasattr(nonblocking_contextual, "contextual_methodological"):
     )
 
 
+
+print(
+    "\n[academic reconciliation contextual supersession of standalone conflict]"
+)
+
+standalone_context_conflict = academic_orchestrator.TechnicalClaimResult(
+    claim=contextual_claim,
+    verification=academic_technical.TechnicalVerification(
+        status=academic_technical.TECHNICAL_STATUS_NOT_VERIFIED,
+        verifier=None,
+        canonical_claim=None,
+        reasons=["Not deterministically checked."],
+    ),
+    methodological_consistency=(
+        academic_methodology.MethodologicalConsistencyResult(
+            status=academic_methodology.METHODOLOGICAL_STATUS_CONFLICT,
+            claim=contextual_claim,
+            passages=[contextual_passage],
+            reasons=["Synthetic context-poor standalone conflict."],
+        )
+    ),
+)
+
+superseded_corrections = academic_reconciliation.extract_academic_corrections(
+    technical_claims=[standalone_context_conflict],
+    source_claims=[],
+    discovered_claim_assessments=[contextual_consistent],
+)
+
+check(
+    not superseded_corrections.methodological,
+    "completed occurrence-aware assessment suppresses context-poor "
+    "standalone methodological correction",
+)
+check(
+    not superseded_corrections.contextual_methodological,
+    "contextual consistency creates no replacement correction",
+)
+
+paired_contextual_conflict_corrections = (
+    academic_reconciliation.extract_academic_corrections(
+        technical_claims=[standalone_context_conflict],
+        source_claims=[],
+        discovered_claim_assessments=[contextual_assessment],
+    )
+)
+
+check(
+    not paired_contextual_conflict_corrections.methodological,
+    "contextual assessment supersedes duplicate standalone correction",
+)
+check(
+    len(
+        paired_contextual_conflict_corrections.contextual_methodological
+    ) == 1,
+    "occurrence-aware conflict remains one blocking contextual correction",
+)
+
+unassessed_context = academic_orchestrator.DiscoveredClaimAssessment(
+    discovered_claim=contextual_discovered,
+    source_context=contextual_source,
+    material_restriction=(
+        academic_claim_coverage.MaterialRestrictionAssessment(
+            material_restriction_omitted=True,
+        )
+    ),
+    contextual_methodological_consistency=None,
+)
+
+unsuperseded_corrections = academic_reconciliation.extract_academic_corrections(
+    technical_claims=[standalone_context_conflict],
+    source_claims=[],
+    discovered_claim_assessments=[unassessed_context],
+)
+
+check(
+    len(unsuperseded_corrections.methodological) == 1,
+    "absent contextual assessment preserves standalone methodological correction",
+)
+check(
+    not unsuperseded_corrections.contextual_methodological,
+    "unassessed occurrence invents no contextual correction",
+)
+
+
 print("\n[academic reconciliation extraction boundaries]")
 
 empty_input = academic_reconciliation.extract_academic_corrections(

@@ -176,6 +176,13 @@ def extract_academic_corrections(
             consistency is not None
             and consistency.status
             == academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
+            and not (
+                academic_orchestrator
+                .standalone_methodology_is_contextually_superseded(
+                    result.claim,
+                    discovered_claim_assessments,
+                )
+            )
         ):
             methodological.append(
                 MethodologicalCorrection(
