@@ -841,7 +841,7 @@ async def academic_chat_first_stage(request: dict):
             status_code=502,
         )
 
-    return result.final.to_dict()
+    return result.to_dict()
 
 
 # ---------------------------------------------------------------------------

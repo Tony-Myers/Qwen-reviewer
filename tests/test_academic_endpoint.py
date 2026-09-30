@@ -85,10 +85,14 @@ def fake_orchestrator(
         }
     )
 
-    class FakeLifecycleResult:
-        final = FakeResult()
+    initial = FakeResult()
+    revised = FakeResult()
 
-    return FakeLifecycleResult()
+    return server.academic_reconciliation_orchestrator.AcademicReconciliationResult(
+        initial=initial,
+        revised=revised,
+        revision_attempted=True,
+    )
 
 
 try:
@@ -170,6 +174,26 @@ try:
     check(
         response["answer_draft"] == "Synthetic provisional answer.",
         "blocked draft remains available through endpoint for auditability",
+    )
+
+
+    check(
+        response.get("reconciliation", {}).get("revision_attempted") is True,
+        "HTTP response exposes whether reconciliation attempted a revision",
+    )
+
+    check(
+        response.get("reconciliation", {}).get("initial", {}).get(
+            "answer_draft"
+        ) == "Synthetic provisional answer.",
+        "HTTP response preserves the initial checked result for audit",
+    )
+
+    check(
+        response.get("reconciliation", {}).get("revised", {}).get(
+            "answer_draft"
+        ) == "Synthetic provisional answer.",
+        "HTTP response preserves the revised checked result separately",
     )
 
 
@@ -455,6 +479,19 @@ try:
         check(
             len(incomplete_lifecycle) == 1,
             "incomplete checking does not trigger an invented revision",
+        )
+        check(
+            payload["reconciliation"]["revision_attempted"] is False,
+            "HTTP audit records that incomplete checking triggered no revision",
+        )
+        check(
+            payload["reconciliation"]["revised"] is None,
+            "HTTP audit represents absent revised assessment explicitly",
+        )
+        check(
+            payload["reconciliation"]["initial"]["release"]["status"]
+            == "checking_incomplete",
+            "HTTP audit preserves the incomplete initial assessment",
         )
         check(
             payload["answer_draft"].startswith(

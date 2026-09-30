@@ -32,6 +32,20 @@ class AcademicReconciliationResult:
             return self.revised
         return self.initial
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the final result plus the retained reconciliation audit."""
+        result = self.final.to_dict()
+        result["reconciliation"] = {
+            "revision_attempted": self.revision_attempted,
+            "initial": self.initial.to_dict(),
+            "revised": (
+                self.revised.to_dict()
+                if self.revised is not None
+                else None
+            ),
+        }
+        return result
+
 
 def run_academic_reconciliation(
     model: Any,

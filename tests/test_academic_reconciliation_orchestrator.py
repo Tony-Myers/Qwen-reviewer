@@ -945,6 +945,85 @@ if callable(run_lifecycle):
     )
 
 
+print("\n[reconciliation audit serialization]")
+
+
+class SerializableStage:
+    def __init__(self, label):
+        self.label = label
+
+    def to_dict(self):
+        return {
+            "answer_draft": f"{self.label} answer",
+            "release": {
+                "status": f"{self.label}_status",
+                "safe_to_present": self.label == "revised",
+            },
+        }
+
+
+serial_initial = SerializableStage("initial")
+serial_revised = SerializableStage("revised")
+
+serial_result = reconciliation_orchestrator.AcademicReconciliationResult(
+    initial=serial_initial,
+    revised=serial_revised,
+    revision_attempted=True,
+)
+
+serialized = serial_result.to_dict()
+
+check(
+    serialized["answer_draft"] == "revised answer",
+    "top-level serialization remains the final independently checked result",
+)
+
+check(
+    serialized["release"]["status"] == "revised_status",
+    "top-level release remains the fresh final release decision",
+)
+
+check(
+    serialized["reconciliation"]["revision_attempted"] is True,
+    "audit records that one bounded revision was attempted",
+)
+
+check(
+    serialized["reconciliation"]["initial"]["answer_draft"]
+    == "initial answer",
+    "audit preserves the complete initial checked result",
+)
+
+check(
+    serialized["reconciliation"]["revised"]["answer_draft"]
+    == "revised answer",
+    "audit preserves the complete revised checked result separately",
+)
+
+no_revision_result = reconciliation_orchestrator.AcademicReconciliationResult(
+    initial=serial_initial,
+    revised=None,
+    revision_attempted=False,
+)
+
+no_revision_serialized = no_revision_result.to_dict()
+
+check(
+    no_revision_serialized["answer_draft"] == "initial answer",
+    "without revision the initial result remains the top-level final result",
+)
+
+check(
+    no_revision_serialized["reconciliation"]["revision_attempted"] is False,
+    "audit records that no revision was attempted",
+)
+
+check(
+    no_revision_serialized["reconciliation"]["revised"] is None,
+    "audit represents absence of a revised assessment explicitly",
+)
+
+
 if fails:
     print(f"\n{len(fails)} test(s) failed.")
     raise SystemExit(1)
