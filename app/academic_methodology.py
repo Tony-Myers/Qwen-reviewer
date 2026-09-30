@@ -136,8 +136,6 @@ def _format_methodological_guidance(
             "\n".join(
                 [
                     f"GUIDANCE {index}",
-                    f"note: {passage.note}",
-                    f"heading: {passage.heading}",
                     "text:",
                     passage.text,
                 ]

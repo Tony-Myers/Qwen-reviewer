@@ -145,6 +145,17 @@ assert metadata_variant_prompt == prompt
 print("PASS: type and concept do not alter methodology assessment prompt")
 
 
+print("\n[2e] methodology prompt excludes guidance retrieval metadata")
+
+assert passages[0].text in prompt
+assert passages[0].note not in prompt
+assert passages[0].heading not in prompt
+assert f"score: {passages[0].score}" not in prompt
+
+print("PASS: methodological assessment receives guidance text")
+print("PASS: note, heading, and retrieval score remain outside semantic assessment")
+
+
 print("\n[3] structurally valid conflict is representable")
 
 result = am.build_methodological_consistency(
