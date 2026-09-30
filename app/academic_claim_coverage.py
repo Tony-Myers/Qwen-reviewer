@@ -291,8 +291,6 @@ def build_claim_representation_prompt(
 
     candidate_text = "\n".join(
         [
-            f"type: {candidate_claim.type}",
-            f"concept: {candidate_claim.concept}",
             f"statement: {candidate_claim.statement}",
             f"parameterisation: {candidate_parameterisation}",
         ]
@@ -311,8 +309,6 @@ def build_claim_representation_prompt(
                 "\n".join(
                     [
                         f"EXISTING CLAIM {index}",
-                        f"type: {claim.type}",
-                        f"concept: {claim.concept}",
                         f"statement: {claim.statement}",
                         f"parameterisation: {parameterisation}",
                     ]

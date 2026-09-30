@@ -711,6 +711,10 @@ representation_normalized = " ".join(
 
 assert candidate.statement in representation_prompt
 assert EXISTING[0].statement in representation_prompt
+assert f"type: {candidate.type}" not in representation_prompt
+assert f"concept: {candidate.concept}" not in representation_prompt
+assert f"type: {EXISTING[0].type}" not in representation_prompt
+assert f"concept: {EXISTING[0].concept}" not in representation_prompt
 assert "answer draft" not in representation_normalized
 assert "same material proposition" in representation_normalized
 assert "sharing the same topic" in representation_normalized
