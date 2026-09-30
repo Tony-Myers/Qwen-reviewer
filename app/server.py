@@ -49,6 +49,7 @@ import academic_chat  # noqa: E402
 import academic_claim_coverage  # noqa: E402
 import academic_claims  # noqa: E402
 import academic_claim_assessor  # noqa: E402
+import academic_methodology  # noqa: E402
 import academic_orchestrator  # noqa: E402
 import academic_reconciliation  # noqa: E402
 import academic_reconciliation_orchestrator  # noqa: E402
@@ -809,6 +810,16 @@ async def academic_chat_first_stage(request: dict):
         return JSONResponse(
             {
                 "error": "Academic Chat model returned invalid structured output.",
+                "detail": str(exc),
+            },
+            status_code=502,
+        )
+    except academic_methodology.MethodologicalAssessmentOutputError as exc:
+        return JSONResponse(
+            {
+                "error": (
+                    "Academic methodological checking could not be completed."
+                ),
                 "detail": str(exc),
             },
             status_code=502,

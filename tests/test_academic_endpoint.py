@@ -10,7 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 import academic_chat
 import academic_claim_coverage
 import academic_claims
+import academic_methodology
 import llm_backend
+import reviewer_notes
 import server
 
 
@@ -466,6 +468,159 @@ try:
         )
         server.academic_orchestrator.run_academic_first_stage = saved_first_stage
         server.assess_academic_claim_coverage = saved_coverage_assessor
+
+
+
+    print("\n[1d] malformed methodology output is a controlled endpoint failure")
+
+    saved_methodology_orchestrator = (
+        server.academic_reconciliation_orchestrator.run_academic_reconciliation
+    )
+    saved_methodology_first_stage = (
+        server.academic_orchestrator.run_academic_first_stage
+    )
+    saved_methodology_output = (
+        server.academic_claim_assessor.generate_claim_assessor_output
+    )
+
+    methodology_claim = academic_chat.TechnicalClaim(
+        type="methodological",
+        concept="synthetic methodology claim",
+        statement="Synthetic methodological proposition.",
+        parameterisation=None,
+    )
+
+    methodology_guidance = server.academic_orchestrator.LocalGuidanceResult(
+        passages=[
+            reviewer_notes.Passage(
+                note="Synthetic reviewer note",
+                heading="Synthetic methodological guidance",
+                text="Synthetic guidance addressing the methodological proposition.",
+                score=0.5,
+            )
+        ]
+    )
+
+    def controlled_methodology_first_stage(
+        model,
+        tokenizer,
+        question,
+        **kwargs,
+    ):
+        draft = academic_chat.AcademicDraft(
+            answer_draft="Synthetic answer containing a methodological claim.",
+            references=[],
+            source_claims=[],
+            technical_claims=[methodology_claim],
+        )
+        return server.academic_orchestrator.assess_academic_draft(
+            draft,
+            local_guidance=methodology_guidance,
+            methodological_assessor=kwargs["methodological_assessor"],
+        )
+
+    malformed_methodology_cases = [
+        (
+            "31-word reason",
+            {
+                "status": academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT,
+                "reason": " ".join(["word"] * 31),
+            },
+        ),
+        (
+            "invalid status",
+            {
+                "status": "verified",
+                "reason": "Synthetic otherwise valid reason.",
+            },
+        ),
+    ]
+
+    try:
+        server.academic_reconciliation_orchestrator.run_academic_reconciliation = (
+            original_orchestrator
+        )
+        server.academic_orchestrator.run_academic_first_stage = (
+            controlled_methodology_first_stage
+        )
+
+        for case_name, malformed_output in malformed_methodology_cases:
+            def malformed_methodology_output(
+                model,
+                tokenizer,
+                prompt,
+                schema,
+                *,
+                _output=malformed_output,
+                **kwargs,
+            ):
+                return _output
+
+            server.academic_claim_assessor.generate_claim_assessor_output = (
+                malformed_methodology_output
+            )
+
+            response = asyncio.run(
+                server.academic_chat_first_stage(
+                    {"question": f"Synthetic methodology case: {case_name}"}
+                )
+            )
+            payload = response_payload(response)
+
+            check(
+                response.status_code == 502,
+                f"{case_name} becomes controlled HTTP 502",
+            )
+            check(
+                payload["error"]
+                == "Academic methodological checking could not be completed.",
+                f"{case_name} receives stable methodology-checking error",
+            )
+
+        print(
+            "\n[1e] unrelated methodology programming errors are not swallowed"
+        )
+
+        def methodology_programming_error(
+            model,
+            tokenizer,
+            prompt,
+            schema,
+            **kwargs,
+        ):
+            raise TypeError("synthetic methodology programming error")
+
+        server.academic_claim_assessor.generate_claim_assessor_output = (
+            methodology_programming_error
+        )
+
+        try:
+            asyncio.run(
+                server.academic_chat_first_stage(
+                    {"question": "Synthetic methodology programming error"}
+                )
+            )
+        except TypeError as exc:
+            check(
+                str(exc) == "synthetic methodology programming error",
+                "unrelated TypeError propagates unchanged",
+            )
+        else:
+            check(
+                False,
+                "unrelated TypeError propagates unchanged",
+            )
+
+    finally:
+        server.academic_reconciliation_orchestrator.run_academic_reconciliation = (
+            saved_methodology_orchestrator
+        )
+        server.academic_orchestrator.run_academic_first_stage = (
+            saved_methodology_first_stage
+        )
+        server.academic_claim_assessor.generate_claim_assessor_output = (
+            saved_methodology_output
+        )
 
 
     print("\n[2] unexpected fields are rejected before model use")

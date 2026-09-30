@@ -1255,8 +1255,10 @@ async function sendAcademicMessage() {
     const data = await r.json().catch(() => ({}));
 
     if (!r.ok) {
-      const detail = data.detail ? ' ' + data.detail : '';
-      throw new Error((data.error || ('Server error ' + r.status)) + detail);
+      if (data.detail) {
+        console.error('Academic Chat diagnostic:', data.detail);
+      }
+      throw new Error(data.error || ('Server error ' + r.status));
     }
 
     if (data.release?.status === "checking_incomplete") {

@@ -96,6 +96,30 @@ check(
 )
 
 
+print("\n[Academic Chat failures separate user messages from diagnostics]")
+
+check(
+    "data.error || ('Server error ' + r.status)" in send_function,
+    "structured server error remains the user-facing failure message",
+)
+
+check(
+    "data.detail ? ' ' + data.detail : ''" not in send_function,
+    "internal diagnostic detail is not appended to the user-facing error",
+)
+
+check(
+    "console.error" in send_function
+    and "data.detail" in send_function,
+    "internal diagnostic detail remains available to developers",
+)
+
+check(
+    "'Server error ' + r.status" in send_function,
+    "HTTP status remains a fallback when no structured server error is available",
+)
+
+
 print("\n[claim coverage is visible in verification details]")
 
 audit_start = html.find("function renderAcademicAudit")

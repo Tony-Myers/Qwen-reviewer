@@ -322,14 +322,38 @@ for output in bad_outputs:
             passages,
             output,
         )
-    except (TypeError, ValueError):
+    except am.MethodologicalAssessmentOutputError:
         pass
     else:
         raise AssertionError(
-            f"Malformed assessor output was accepted: {output!r}"
+            "Malformed assessor output did not raise "
+            f"MethodologicalAssessmentOutputError: {output!r}"
         )
 
-print("PASS: malformed assessor outputs are rejected")
+print("PASS: malformed assessor outputs raise the dedicated output error")
+
+
+print("\n[7b] application-owned input failures remain distinct")
+
+try:
+    am.build_methodological_consistency(
+        hdi_claim,
+        [],
+        {
+            "status": am.METHODOLOGICAL_STATUS_CONSISTENT,
+            "reason": "Synthetic valid assessor judgement.",
+        },
+    )
+except am.MethodologicalAssessmentOutputError:
+    raise AssertionError(
+        "Invalid application-owned passages were misclassified as model output."
+    )
+except ValueError:
+    pass
+else:
+    raise AssertionError("Invalid application-owned passages were accepted.")
+
+print("PASS: application-owned validation is not reclassified as model output")
 
 
 print("\n[8] contextual methodology keeps answer context distinct from guidance")

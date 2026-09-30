@@ -34,6 +34,10 @@ METHODOLOGICAL_STATUSES = (
 )
 
 
+class MethodologicalAssessmentOutputError(ValueError):
+    """Raised when methodology-assessor output violates its contract."""
+
+
 @dataclass
 class MethodologicalConsistencyResult:
     """Auditable assessment of one claim against retrieved local guidance."""
@@ -266,13 +270,13 @@ def build_methodological_consistency(
         )
 
     if not isinstance(assessor_output, dict):
-        raise ValueError(
+        raise MethodologicalAssessmentOutputError(
             "Methodological consistency assessor output must be an object."
         )
 
     expected_fields = {"status", "reason"}
     if set(assessor_output) != expected_fields:
-        raise ValueError(
+        raise MethodologicalAssessmentOutputError(
             "Methodological consistency assessor output must contain exactly "
             "'status' and 'reason'."
         )
@@ -284,18 +288,18 @@ def build_methodological_consistency(
         not isinstance(status, str)
         or status not in METHODOLOGICAL_STATUSES
     ):
-        raise ValueError(
+        raise MethodologicalAssessmentOutputError(
             "Methodological consistency assessor output contains an invalid "
             "status."
         )
 
     if not isinstance(reason, str) or not reason.strip():
-        raise ValueError(
+        raise MethodologicalAssessmentOutputError(
             "Methodological consistency reason must be non-empty text."
         )
 
     if len(reason.split()) > 30:
-        raise ValueError(
+        raise MethodologicalAssessmentOutputError(
             "Methodological consistency reason must contain no more than "
             "30 words."
         )
