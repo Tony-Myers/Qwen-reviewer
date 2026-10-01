@@ -12,7 +12,7 @@ This guide helps reviewers interpret measures of model fit, explained variation 
 
 ✓ Information criteria (e.g., AIC, BIC, DIC, WAIC or LOOIC) are used for comparing models fitted to the same data and response variable.
 
-✓ The manuscript interprets the direction of each statistic correctly (e.g., higher Bayesian R² is better, lower AIC is better, higher ELPD is better).
+✓ The manuscript interprets the direction of each statistic correctly (e.g., higher R² or Bayesian R² means more explained variation, lower AIC is preferred, higher ELPD is better).
 
 ✓ Differences between competing models are interpreted cautiously rather than relying solely on the smallest information criterion.
 
@@ -37,11 +37,11 @@ R² does **not** measure:
 
 Unlike ordinary R², adjusted R² can decrease when additional variables contribute little explanatory value.
 
-Adjusted R² is often preferred when comparing multiple linear regression models containing different numbers of predictors.
+Adjusted R² is often used when comparing linear regression models with different numbers of predictors, but its penalty is weak: adding a predictor increases adjusted R² whenever that predictor's *t* statistic exceeds 1 in absolute value. Information criteria or cross-validation are usually better for choosing between models.
 
 ##### What is Bayesian R²?
 
-**Bayesian R²** estimates the proportion of outcome variation explained by the posterior predictive distribution rather than by a single fitted model.
+**Bayesian R²** estimates the proportion of outcome variation explained by a Bayesian model. It is calculated for each posterior draw as the variance of the fitted values divided by that variance plus the expected residual variance, so it always lies between 0 and 1. It is an in-sample measure; a leave-one-out version estimates explained variation for new data.
 
 Bayesian R² is reported as a posterior distribution, allowing posterior means, medians and credible intervals to be presented.
 
@@ -89,13 +89,13 @@ As with AIC, **smaller values indicate better expected predictive performance**.
 
 ##### What is BIC?
 
-**Bayesian Information Criterion (BIC)** also balances model fit and complexity but applies a stronger penalty for additional parameters than AIC.
+**Bayesian Information Criterion (BIC)** also balances model fit and complexity but, in all but very small samples, applies a stronger penalty for additional parameters than AIC.
 
 Lower BIC values indicate a preferred model.
 
 Compared with AIC, BIC tends to favour simpler models, particularly in larger samples.
 
-Despite its name, BIC is derived from frequentist likelihood theory and should not be confused with Bayesian model comparison.
+BIC is a large-sample approximation to the Bayesian marginal likelihood, so differences in BIC approximate Bayes factors under an implicit prior. It is calculated from the maximum likelihood without an explicit prior, however, and is not a full Bayesian analysis.
 
 ##### What is DIC?
 
@@ -180,7 +180,9 @@ Usually **no**.
 
 Information criteria are intended to compare competing models fitted to the **same outcome and the same observations**.
 
-Comparing information criteria across different datasets, different response variables or different likelihoods is generally inappropriate.
+Comparing information criteria across different datasets or different response variables is generally inappropriate.
+
+Models with different likelihoods, such as a Poisson and a negative binomial model for the same counts, can be compared, provided that both are fitted to the same observations, the response is on the same scale (a model for log(*y*) and a model for *y* cannot be compared without a Jacobian adjustment), and the full likelihoods, including constants, are calculated in the same way.
 
 ##### Does the lowest information criterion prove a model is correct?
 
@@ -212,9 +214,9 @@ Information criteria compare competing models; they do not identify a true model
 
 ##### "BIC is a Bayesian method."
 
-Incorrect.
+Partly.
 
-Despite its name, BIC is derived from an approximation to the Bayesian marginal likelihood but is not itself a Bayesian posterior analysis.
+BIC is derived as an approximation to the Bayesian marginal likelihood, but it is calculated from the maximum likelihood without an explicit prior and is not a full Bayesian analysis.
 
 ##### "Information criteria can compare any models."
 
@@ -268,7 +270,7 @@ Models should generally be fitted to the same response variable and data before 
 
 □ Information criteria are compared only across models fitted to the same data.
 
-□ The direction of each information criterion is interpreted correctly (higher R² and ELPD are better; lower AIC, AICc, BIC, DIC, WAIC and LOOIC are better).
+□ The direction of each statistic is interpreted correctly (higher R² means more explained variation; higher ELPD is better; lower AIC, AICc, BIC, DIC, WAIC and LOOIC are preferred).
 
 □ Conclusions are based on the overall evidence rather than a single model fit statistic.
 
