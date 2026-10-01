@@ -31,6 +31,17 @@ R² does **not** measure:
 - whether predictions will generalise to new data;
 - whether the model is clinically or scientifically useful.
 
+```references
+- cite: Kvålseth, T. O. (1985). Cautionary note about R². The American Statistician, 39(4), 279–285.
+  doi: 10.1080/00031305.1985.10479448
+  supports: Cautions on defining and interpreting R², whose alternative formulas agree only in linear models with an intercept.
+  short: cautions on R²
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, Crossref
+```
+
 ##### What is adjusted R²?
 
 **Adjusted R²** modifies R² by accounting for the number of predictors in the model.
@@ -47,6 +58,18 @@ Bayesian R² is reported as a posterior distribution, allowing posterior means, 
 
 Higher Bayesian R² indicates greater explained variation, but should not be interpreted as evidence that a Bayesian model is "better" than another model without considering predictive performance.
 
+```references
+- cite: Gelman, A., Goodrich, B., Gabry, J., & Vehtari, A. (2019). R-squared for Bayesian regression models. The American Statistician, 73(3), 307–309.
+  doi: 10.1080/00031305.2018.1549100
+  supports: The definition of Bayesian R², calculated for each posterior draw, and why it lies between 0 and 1.
+  short: R² for Bayesian regression models
+  type: Journal article
+  access: repository
+  access_url: https://aaltodoc.aalto.fi/handle/123456789/38878
+  access_checked: 2026-10-01, OpenAlex: green, submitted version in Aaltodoc (Aalto University); repository page checked
+  checked: 2026-10-01, Crossref
+```
+
 ##### Which R² should be used for mixed-effects models?
 
 For mixed-effects or multilevel models, reviewers should distinguish between:
@@ -55,6 +78,17 @@ For mixed-effects or multilevel models, reviewers should distinguish between:
 - **Conditional R²** – variation explained by both fixed and random effects.
 
 Both measures are often informative and answer different scientific questions.
+
+```references
+- cite: Nakagawa, S., & Schielzeth, H. (2013). A general and simple method for obtaining R² from generalized linear mixed-effects models. Methods in Ecology and Evolution, 4(2), 133–142.
+  doi: 10.1111/j.2041-210x.2012.00261.x
+  supports: Marginal and conditional R² for mixed-effects models.
+  short: marginal and conditional R² for mixed models
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read at the publisher)
+  checked: 2026-10-01, Crossref (published online 2012; volume 4 is 2013)
+```
 
 ##### What are pseudo-R² measures?
 
@@ -69,6 +103,25 @@ Examples include:
 
 Pseudo-R² measures are not directly comparable with ordinary R² from linear regression and should not be interpreted using the same thresholds.
 
+```references
+- cite: Nagelkerke, N. J. D. (1991). A note on a general definition of the coefficient of determination. Biometrika, 78(3), 691–692.
+  doi: 10.1093/biomet/78.3.691
+  supports: A general definition of R² for models fitted by maximum likelihood, the basis of Nagelkerke's R².
+  short: Nagelkerke's general R²
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, OpenAlex (Crossref unavailable); confirmed by hand by Tony Myers
+- cite: Tjur, T. (2009). Coefficients of determination in logistic regression models—A new proposal: The coefficient of discrimination. The American Statistician, 63(4), 366–372.
+  doi: 10.1198/tast.2009.08210
+  supports: Tjur's coefficient of discrimination as an R² for logistic regression.
+  short: Tjur's R² for logistic regression
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, Crossref
+```
+
 ##### What is AIC?
 
 **Akaike's Information Criterion (AIC)** estimates the trade-off between model fit and model complexity.
@@ -79,6 +132,25 @@ AIC is useful for comparing competing models fitted to the **same response varia
 
 AIC should not be interpreted as an absolute measure of model quality.
 
+```references
+- cite: Akaike, H. (1974). A new look at the statistical model identification. In E. Parzen, K. Tanabe, & G. Kitagawa (Eds.), Selected papers of Hirotugu Akaike (Springer Series in Statistics). Springer.
+  doi: 10.1007/978-1-4612-1694-0_16
+  supports: The introduction of the information criterion now known as AIC.
+  short: the paper that introduced AIC
+  type: Book chapter
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, confirmed by hand by Tony Myers (reprint in Selected Papers of Hirotugu Akaike; first published in IEEE Transactions on Automatic Control, 19(6), 716–723)
+- cite: Burnham, K. P., & Anderson, D. R. (2004). Multimodel inference: Understanding AIC and BIC in model selection. Sociological Methods & Research, 33(2), 261–304.
+  doi: 10.1177/0049124104268644
+  supports: Interpreting AIC and differences in AIC in model selection.
+  short: AIC and BIC in model selection
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, OpenAlex (Crossref unavailable); full title confirmed by hand by Tony Myers
+```
+
 ##### What is AICc?
 
 **Corrected Akaike's Information Criterion (AICc)** adjusts AIC for finite sample sizes.
@@ -86,6 +158,17 @@ AIC should not be interpreted as an absolute measure of model quality.
 When the sample size is relatively small compared with the number of estimated parameters, AICc is generally preferred over AIC.
 
 As with AIC, **smaller values indicate better expected predictive performance**.
+
+```references
+- cite: Hurvich, C. M., & Tsai, C.-L. (1989). Regression and time series model selection in small samples. Biometrika, 76(2), 297–307.
+  doi: 10.1093/biomet/76.2.297
+  supports: The small-sample correction to AIC, AICc.
+  short: the small-sample corrected AIC
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, OpenAlex (Crossref unavailable); confirmed by hand by Tony Myers
+```
 
 ##### What is BIC?
 
@@ -96,6 +179,33 @@ Lower BIC values indicate a preferred model.
 Compared with AIC, BIC tends to favour simpler models, particularly in larger samples.
 
 BIC is a large-sample approximation to the Bayesian marginal likelihood, so differences in BIC approximate Bayes factors under an implicit prior. It is calculated from the maximum likelihood without an explicit prior, however, and is not a full Bayesian analysis.
+
+```references
+- cite: Schwarz, G. (1978). Estimating the dimension of a model. The Annals of Statistics, 6(2).
+  doi: 10.1214/aos/1176344136
+  supports: The derivation of BIC as a large-sample approximation in Bayesian model choice.
+  short: the paper that introduced BIC
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read at the publisher)
+  checked: 2026-10-01, Crossref (no page numbers in the Crossref record; OpenAlex gives pages that do not look right)
+- cite: Kass, R. E., & Raftery, A. E. (1995). Bayes factors. Journal of the American Statistical Association, 90(430), 773–795.
+  doi: 10.1080/01621459.1995.10476572
+  supports: BIC as an approximation to Bayes factors, and its implicit prior.
+  short: Bayes factors and BIC
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, Crossref
+- cite: Burnham, K. P., & Anderson, D. R. (2004). Multimodel inference: Understanding AIC and BIC in model selection. Sociological Methods & Research, 33(2), 261–304.
+  doi: 10.1177/0049124104268644
+  supports: How AIC and BIC differ in what they target and in their penalties.
+  short: AIC and BIC in model selection
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, OpenAlex (Crossref unavailable); full title confirmed by hand by Tony Myers
+```
 
 ##### What is DIC?
 
@@ -184,6 +294,17 @@ Comparing information criteria across different datasets or different response v
 
 Models with different likelihoods, such as a Poisson and a negative binomial model for the same counts, can be compared, provided that both are fitted to the same observations, the response is on the same scale (a model for log(*y*) and a model for *y* cannot be compared without a Jacobian adjustment), and the full likelihoods, including constants, are calculated in the same way.
 
+```references
+- cite: Burnham, K. P., & Anderson, D. R. (2004). Multimodel inference: Understanding AIC and BIC in model selection. Sociological Methods & Research, 33(2), 261–304.
+  doi: 10.1177/0049124104268644
+  supports: Why information criteria are compared only for models fitted to the same data and response.
+  short: AIC and BIC in model selection
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, OpenAlex (Crossref unavailable); full title confirmed by hand by Tony Myers
+```
+
 ##### Does the lowest information criterion prove a model is correct?
 
 No.
@@ -191,6 +312,17 @@ No.
 Information criteria rank competing models according to their expected balance between fit and complexity.
 
 A lower AIC, BIC, DIC, WAIC or LOOIC does **not** prove that the selected model is scientifically correct or causally valid.
+
+```references
+- cite: Burnham, K. P., & Anderson, D. R. (2004). Multimodel inference: Understanding AIC and BIC in model selection. Sociological Methods & Research, 33(2), 261–304.
+  doi: 10.1177/0049124104268644
+  supports: Model-selection uncertainty, and why the model with the lowest criterion is not the true model.
+  short: AIC and BIC in model selection
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, OpenAlex (Crossref unavailable); full title confirmed by hand by Tony Myers
+```
 
 #### Common misconceptions
 
@@ -217,6 +349,17 @@ Information criteria compare competing models; they do not identify a true model
 Partly.
 
 BIC is derived as an approximation to the Bayesian marginal likelihood, but it is calculated from the maximum likelihood without an explicit prior and is not a full Bayesian analysis.
+
+```references
+- cite: Kass, R. E., & Raftery, A. E. (1995). Bayes factors. Journal of the American Statistical Association, 90(430), 773–795.
+  doi: 10.1080/01621459.1995.10476572
+  supports: In what sense BIC is Bayesian: an approximation to the Bayes factor rather than a full Bayesian analysis.
+  short: Bayes factors and BIC
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, Crossref
+```
 
 ##### "Information criteria can compare any models."
 
@@ -275,6 +418,37 @@ Models should generally be fitted to the same response variable and data before 
 □ Conclusions are based on the overall evidence rather than a single model fit statistic.
 
 □ Model selection is justified scientifically as well as statistically.
+
+#### References
+
+Checked sources for this topic. A section with its own list shows that list instead. Each entry says what it supports; a source is listed for that purpose only, not as support for every sentence in the note.
+
+```references
+- cite: Burnham, K. P., & Anderson, D. R. (2004). Multimodel inference: Understanding AIC and BIC in model selection. Sociological Methods & Research, 33(2), 261–304.
+  doi: 10.1177/0049124104268644
+  supports: Model selection with information criteria, including AIC, BIC and multimodel inference.
+  short: AIC and BIC in model selection
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, OpenAlex (Crossref unavailable); full title confirmed by hand by Tony Myers
+- cite: Gelman, A., Hwang, J., & Vehtari, A. (2013). Understanding predictive information criteria for Bayesian models. Statistics and Computing, 24(6), 997–1016.
+  doi: 10.1007/s11222-013-9416-2
+  supports: How AIC, DIC and WAIC relate as estimates of out-of-sample predictive accuracy.
+  short: AIC, DIC and WAIC compared
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, OpenAlex (Crossref unavailable; OpenAlex gives 2013, the year of online publication); confirmed by hand by Tony Myers
+- cite: Kass, R. E., & Raftery, A. E. (1995). Bayes factors. Journal of the American Statistical Association, 90(430), 773–795.
+  doi: 10.1080/01621459.1995.10476572
+  supports: Bayes factors and their large-sample approximation by BIC.
+  short: Bayes factors and BIC
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, Crossref
+```
 
 ---
 
