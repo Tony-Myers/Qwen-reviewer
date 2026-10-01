@@ -820,6 +820,35 @@ answer draft, or the existing claims.
 """
 
 
+# Abbreviations whose full stop is not a sentence boundary. Kept to the
+# forms that occur in Academic Chat answers; anything else is unchanged.
+# "i.e.", "e.g.", "vs." and "cf." do not end sentences in practice, and
+# "vs." is routinely followed by a capital ("ETI vs. HDI"), so they never
+# split. "et al." can end a sentence, so it splits only when the next word
+# starts with a capital ("... Kruschke et al. The HDI ...") and not before a
+# year, bracket or lower-case word ("Makowski et al. (2019)").
+_NEVER_BOUNDARY_ABBREVIATION = re.compile(
+    r"(?<![A-Za-z.])(?:i\.e|e\.g|vs|cf)\.$",
+    re.IGNORECASE,
+)
+_ET_AL = re.compile(r"(?<![A-Za-z])et al\.$", re.IGNORECASE)
+
+
+def _is_abbreviation_stop(answer_draft: str, stop_end: int) -> bool:
+    """True when the full stop ending at stop_end belongs to an abbreviation."""
+
+    preceding = answer_draft[max(0, stop_end - 8):stop_end]
+
+    if _NEVER_BOUNDARY_ABBREVIATION.search(preceding):
+        return True
+
+    if _ET_AL.search(preceding):
+        following = answer_draft[stop_end:].lstrip()
+        return not (following[:1].isupper())
+
+    return False
+
+
 def answer_sentence_spans(
     answer_draft: str,
 ) -> list[tuple[int, int]]:
@@ -833,6 +862,12 @@ def answer_sentence_spans(
 
     for match in re.finditer(r"[.!?](?=\s|$)", answer_draft):
         sentence_end = match.end()
+
+        if (
+            match.group() == "."
+            and _is_abbreviation_stop(answer_draft, sentence_end)
+        ):
+            continue
 
         while (
             sentence_start < sentence_end

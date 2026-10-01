@@ -39,19 +39,47 @@ check(
     "incomplete checking has its own presentation branch",
 )
 
+incomplete_start = html.find("function academicIncompleteExplanation")
+incomplete_explanation = html[
+    incomplete_start:html.find("}", incomplete_start)
+]
+
 check(
-    "Checking incomplete" in send_function,
-    "incomplete checking is labelled explicitly beside the answer",
+    "could not be completed" in incomplete_explanation,
+    "incomplete-check explanation says that checking did not complete",
 )
 
 check(
-    "could not be completed" in send_function,
-    "incomplete-check warning explains that checking did not complete",
+    "does not establish that the answer is wrong" in incomplete_explanation,
+    "incomplete-check explanation does not reinterpret uncertainty as error",
 )
 
+incomplete_branch = send_function[
+    send_function.find('data.release?.status === "checking_incomplete"'):
+    send_function.find("data.release?.safe_to_present === false")
+]
+
 check(
-    "does not establish that the answer is wrong" in send_function,
-    "incomplete-check warning does not reinterpret uncertainty as error",
+    "data.check_further ? '' :" in incomplete_branch
+    and "Checking incomplete" in incomplete_branch
+    and "academicIncompleteExplanation()" in incomplete_branch,
+    "the older notice appears beside the answer only without an evidence "
+    "check, so the reader is told once",
+)
+
+evidence_start = html.find("function renderAcademicEvidence")
+evidence_renderer = html[
+    evidence_start:html.find("return renderAcademicCheckFurther", evidence_start)
+]
+
+check(
+    "data.check_further && data.release?.status === 'checking_incomplete'"
+    in evidence_renderer
+    and "academicIncompleteExplanation()" in evidence_renderer
+    and evidence_renderer.find("academicIncompleteExplanation()")
+    < evidence_renderer.find("renderAcademicAudit(data)"),
+    "with an evidence check, the older explanation sits in the technical "
+    "checking details",
 )
 
 checking_branch = send_function.find(
@@ -99,8 +127,31 @@ check(
 print("\n[Academic Chat failures separate user messages from diagnostics]")
 
 check(
-    "data.error || ('Server error ' + r.status)" in send_function,
-    "structured server error remains the user-facing failure message",
+    "data.error || ACADEMIC_INTERNAL_ERROR" in send_function,
+    "a structured user-safe server error takes precedence over the generic message",
+)
+
+check(
+    "'Academic Chat could not complete this request because of an internal "
+    "error. ' +\n  'Please try again.'" in html,
+    "the generic failure message is plain language",
+)
+
+check(
+    "Server error" not in send_function
+    and "Academic Chat error:" not in send_function,
+    "the reader never sees a bare 'Server error' status or an error label",
+)
+
+check(
+    "console.error('Academic Chat request failed: HTTP ' + r.status" in send_function,
+    "the HTTP status is kept for the console",
+)
+
+check(
+    "e instanceof AcademicUserError" in send_function
+    and "console.error('Academic Chat failure:', e)" in send_function,
+    "an unexpected browser-side failure is logged and shown as the generic message",
 )
 
 check(
@@ -115,8 +166,8 @@ check(
 )
 
 check(
-    "'Server error ' + r.status" in send_function,
-    "HTTP status remains a fallback when no structured server error is available",
+    "+ esc(message) +" in send_function,
+    "the reader's message is escaped before display",
 )
 
 

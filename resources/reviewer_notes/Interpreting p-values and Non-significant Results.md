@@ -86,10 +86,18 @@ A non-significant *p*-value usually provides **absence of evidence**, **not evid
 - cite: Altman, D. G., & Bland, J. M. (1995). Statistics notes: Absence of evidence is not evidence of absence. BMJ, 311(7003), 485.
   doi: 10.1136/bmj.311.7003.485
   supports: Why a non-significant result is not evidence that there is no effect.
+  short: absence of evidence is not evidence of absence
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read)
   checked: 2026-09-30, Crossref
 - cite: Lakens, D., Scheel, A. M., & Isager, P. M. (2018). Equivalence testing for psychological research: A tutorial. Advances in Methods and Practices in Psychological Science, 1(2), 259–269.
   doi: 10.1177/2515245918770963
   supports: Equivalence testing (TOST) to show that an effect is smaller than a prespecified bound.
+  short: equivalence testing (TOST) for showing negligible effects
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
   checked: 2026-09-30, Crossref
 ```
 
@@ -113,10 +121,18 @@ is usually **not** justified unless the study was specifically designed to demon
 - cite: Altman, D. G., & Bland, J. M. (1995). Statistics notes: Absence of evidence is not evidence of absence. BMJ, 311(7003), 485.
   doi: 10.1136/bmj.311.7003.485
   supports: Why a non-significant result is not evidence that there is no effect.
+  short: absence of evidence is not evidence of absence
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read)
   checked: 2026-09-30, Crossref
 - cite: Lakens, D., Scheel, A. M., & Isager, P. M. (2018). Equivalence testing for psychological research: A tutorial. Advances in Methods and Practices in Psychological Science, 1(2), 259–269.
   doi: 10.1177/2515245918770963
   supports: Equivalence testing (TOST) to show that an effect is smaller than a prespecified bound.
+  short: equivalence testing (TOST) for showing negligible effects
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
   checked: 2026-09-30, Crossref
 ```
 
@@ -136,6 +152,11 @@ The same question arises in Bayesian work without the error-rate meaning; see th
 - cite: Lakens, D., Adolfi, F. G., Albers, C. J., et al. (2018). Justify your alpha. Nature Human Behaviour, 2(3), 168–171.
   doi: 10.1038/s41562-018-0311-x
   supports: The case for justifying the significance threshold rather than defaulting to 0.05.
+  short: justifying the significance threshold rather than defaulting to 0.05
+  type: Journal article
+  access: repository
+  access_url: https://pure.eur.nl/en/publications/a51f8b58-977c-45cc-a977-f1c5839e5afe
+  access_checked: 2026-10-01, OpenAlex: green, repository copy
   checked: 2026-09-30, Crossref
 ```
 
@@ -162,10 +183,18 @@ The choice of 95% is **conventional rather than uniquely correct**, much like th
 - cite: Greenland, S., Senn, S. J., Rothman, K. J., Carlin, J. B., Poole, C., Goodman, S. N., & Altman, D. G. (2016). Statistical tests, P values, confidence intervals, and power: A guide to misinterpretations. European Journal of Epidemiology, 31(4), 337–350.
   doi: 10.1007/s10654-016-0149-3
   supports: Catalogue of common misinterpretations of p-values, confidence intervals and power.
+  short: common misinterpretations of p-values, intervals and power
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
   checked: 2026-09-30, Crossref
 - cite: Morey, R. D., Hoekstra, R., Rouder, J. N., Lee, M. D., & Wagenmakers, E.-J. (2016). The fallacy of placing confidence in confidence intervals. Psychonomic Bulletin & Review, 23(1), 103–123.
   doi: 10.3758/s13423-015-0947-8
   supports: Common fallacies in interpreting a single observed confidence interval.
+  short: fallacies in interpreting a single confidence interval
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
   checked: 2026-09-30, Crossref
 ```
 
@@ -179,6 +208,10 @@ However, reviewers should avoid interpreting non-significant findings using post
 - cite: Hoenig, J. M., & Heisey, D. M. (2001). The abuse of power: The pervasive fallacy of power calculations for data analysis. The American Statistician, 55(1), 19–24.
   doi: 10.1198/000313001300339897
   supports: Why post hoc (observed) power does not help interpret a non-significant result.
+  short: why post hoc power does not explain a non-significant result
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
   checked: 2026-09-30, Crossref
 ```
 
@@ -277,14 +310,26 @@ Checked sources for this topic. A section with its own list shows that list inst
 - cite: Wasserstein, R. L., & Lazar, N. A. (2016). The ASA statement on p-values: Context, process, and purpose. The American Statistician, 70(2), 129–133.
   doi: 10.1080/00031305.2016.1154108
   supports: The American Statistical Association's statement of what a p-value does and does not measure.
+  short: the ASA statement on what p-values do and do not measure
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read)
   checked: 2026-09-30, Crossref
 - cite: Greenland, S., Senn, S. J., Rothman, K. J., Carlin, J. B., Poole, C., Goodman, S. N., & Altman, D. G. (2016). Statistical tests, P values, confidence intervals, and power: A guide to misinterpretations. European Journal of Epidemiology, 31(4), 337–350.
   doi: 10.1007/s10654-016-0149-3
   supports: Catalogue of common misinterpretations of p-values, confidence intervals and power.
+  short: common misinterpretations of p-values, intervals and power
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
   checked: 2026-09-30, Crossref
 - cite: Amrhein, V., Greenland, S., & McShane, B. (2019). Scientists rise up against statistical significance. Nature, 567(7748), 305–307.
   doi: 10.1038/d41586-019-00857-9
   supports: The case against dichotomising results as significant or non-significant.
+  short: the case against dichotomising results as significant or not
+  type: Commentary
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read)
   checked: 2026-09-30, Crossref
 ```
 

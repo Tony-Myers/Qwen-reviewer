@@ -164,7 +164,18 @@ class Passage:
 # proposes them, which is the point: a reference the model supplies can be a
 # real record attached to the wrong claim, or no record at all.
 
-REFERENCE_KEYS = ("cite", "doi", "url", "isbn", "supports", "checked")
+REFERENCE_KEYS = ("cite", "doi", "url", "isbn", "supports", "checked",
+                  "short", "type", "access", "access_url", "access_checked")
+
+# Access is recorded only from checked metadata (OpenAlex, or the hosting page
+# read directly), never assumed. Absent means not checked, and nothing is
+# shown to the reader for it.
+ACCESS_LABELS = {
+    "open": "Free to read",
+    "repository": "Free copy in a repository",
+    "author-copy": "Free copy from the authors",
+    "subscription": "May need institutional access",
+}
 REFERENCES_HEADING = "references"
 
 _REFERENCE_BLOCK = re.compile(
@@ -175,6 +186,10 @@ class ReferenceFormatError(ValueError):
     """A references block that does not follow the curated format."""
 
 
+_CITE_AUTHORS_YEAR = re.compile(r"^(?P<authors>.+?)\s*\((?P<year>\d{4}[a-z]?)\)")
+_AUTHOR_BOUNDARY = re.compile(r"[A-Z]\.\s*,\s*(?=[A-Z\u00C0-\u017F])")
+
+
 @dataclass
 class Reference:
     cite: str
@@ -183,12 +198,47 @@ class Reference:
     url: str = ""
     isbn: str = ""
     checked: str = ""
+    short: str = ""
+    type: str = ""
+    access: str = ""
+    access_url: str = ""
+    access_checked: str = ""
 
     def link(self) -> str:
         """Where the reader can check the source: the DOI first, then a URL."""
         if self.doi:
             return "https://doi.org/" + self.doi
         return self.url
+
+    def author_year(self) -> str:
+        """'Hyndman (1996)', 'Kruschke & Liddell (2018)', 'Lakens et al. (2018)'.
+
+        Derived from the citation so it cannot drift from it. A citation with
+        no year in brackets -- documentation, say -- gives its first element.
+        """
+        match = _CITE_AUTHORS_YEAR.match(self.cite)
+        if not match:
+            return self.cite.split(".")[0].strip() or self.cite
+        authors, year = match.group("authors").strip(), match.group("year")
+        first = authors.split(",")[0].strip()
+        if "et al" in authors:
+            names = f"{first} et al."
+        elif "&" in authors:
+            before, after = authors.split("&", 1)
+            if _AUTHOR_BOUNDARY.search(before.rstrip(" ,")):
+                names = f"{first} et al."
+            else:
+                names = f"{first} & {after.strip().split(',')[0].strip()}"
+        else:
+            names = first
+        return f"{names} ({year})"
+
+    def access_label(self) -> str:
+        return ACCESS_LABELS.get(self.access, "")
+
+    def read_link(self) -> str:
+        """A free copy where one was found, otherwise the DOI or URL."""
+        return self.access_url or self.link()
 
     def to_dict(self) -> Dict[str, str]:
         return {
@@ -199,6 +249,14 @@ class Reference:
             "isbn": self.isbn,
             "checked": self.checked,
             "link": self.link(),
+            "short": self.short or self.supports,
+            "type": self.type,
+            "author_year": self.author_year(),
+            "access": self.access,
+            "access_label": self.access_label(),
+            "access_url": self.access_url,
+            "access_checked": self.access_checked,
+            "read_link": self.read_link(),
         }
 
 
@@ -246,6 +304,19 @@ def parse_references_block(body: str, where: str = "") -> List[Reference]:
             raise ReferenceFormatError(
                 f"{where}: {cite[:60]!r} has no doi, url or isbn; a reader "
                 f"must be able to find it")
+        access = record.get("access", "").lower()
+        if access:
+            if access not in ACCESS_LABELS:
+                raise ReferenceFormatError(
+                    f"{where}: {cite[:60]!r} has access {access!r}; allowed "
+                    f"values are {', '.join(ACCESS_LABELS)}")
+            if not record.get("access_checked"):
+                raise ReferenceFormatError(
+                    f"{where}: {cite[:60]!r} records access without "
+                    f"access_checked; say when and against what it was checked")
+            if access in ("repository", "author-copy") and not record.get("access_url"):
+                raise ReferenceFormatError(
+                    f"{where}: {cite[:60]!r} is a free copy but has no access_url")
         doi = record.get("doi", "")
         for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
             if doi.lower().startswith(prefix):
@@ -257,6 +328,11 @@ def parse_references_block(body: str, where: str = "") -> List[Reference]:
             url=record.get("url", ""),
             isbn=record.get("isbn", ""),
             checked=record.get("checked", ""),
+            short=record.get("short", ""),
+            type=record.get("type", ""),
+            access=access,
+            access_url=record.get("access_url", ""),
+            access_checked=record.get("access_checked", ""),
         ))
     return out
 

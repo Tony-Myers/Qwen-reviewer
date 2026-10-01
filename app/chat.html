@@ -115,20 +115,30 @@
   .academic-result { display: none; margin-top: 20px; }
   .academic-answer { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; line-height: 1.6; font-size: 0.9rem; box-shadow: var(--shadow); }
   .academic-evidence { margin-top: 18px; }
-  .check-further { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius); background: var(--surface); font-size: 0.84rem; line-height: 1.5; }
-  .check-further.level-check_advised { border-left-color: #b7791f; }
-  .check-further.level-check_needed { border-left-color: var(--error); background: var(--error-bg); }
-  .check-further-headline { font-weight: 600; margin-bottom: 6px; }
-  .check-further ul { margin: 4px 0 8px 18px; }
-  .check-further li { margin: 2px 0; }
-  .check-further-group { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--border); }
-  .check-further-group-title { font-weight: 600; }
-  .check-further-claims { color: var(--text-muted); }
-  .check-further-ref { margin: 4px 0 4px 2px; }
-  .check-further-ref .supports { display: block; color: var(--text-muted); font-size: 0.78rem; }
-  .check-further-note { margin-top: 8px; font-size: 0.76rem; color: var(--text-muted); }
-  .check-further details { margin-top: 8px; }
-  .check-further summary { cursor: pointer; font-size: 0.78rem; color: var(--text-muted); }
+  .evidence-check { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius); background: var(--surface); font-size: 0.85rem; line-height: 1.55; }
+  .evidence-check.state-further_reading { border-left-color: #3b6ea8; }
+  .evidence-check.state-worth_checking { border-left-color: #b7791f; }
+  .evidence-check.state-outside_guidance, .evidence-check.state-incomplete { border-left-color: var(--text-muted); }
+  .evidence-check-kicker { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+  .evidence-check-title { font-weight: 600; margin: 2px 0 2px; }
+  .evidence-check-line { margin: 2px 0; }
+  .evidence-check-muted { color: var(--text-muted); }
+  .evidence-check-notice { margin: 8px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--error-bg); }
+  .evidence-check-quote { margin: 6px 0 0 0; padding-left: 10px; border-left: 2px solid var(--border); }
+  .evidence-check details { margin-top: 8px; }
+  .evidence-check summary { cursor: pointer; font-size: 0.8rem; color: var(--accent); }
+  .evidence-topic { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--border); }
+  .evidence-topic-title { font-weight: 600; }
+  .evidence-ref { margin: 5px 0; }
+  .evidence-ref-meta { color: var(--text-muted); font-size: 0.78rem; }
+  .evidence-full-ref { margin: 4px 0; font-size: 0.8rem; }
+  .evidence-points li { margin: 3px 0; }
+  .evidence-about { margin-top: 10px; font-size: 0.78rem; color: var(--text-muted); }
+  .technical-details { margin-top: 10px; }
+  .technical-details > summary { cursor: pointer; font-size: 0.78rem; color: var(--text-muted); }
+  .technical-diagnostics { font-size: 0.78rem; margin: 8px 0; }
+  .technical-diagnostics table { border-collapse: collapse; margin: 4px 0 8px; }
+  .technical-diagnostics td { padding: 1px 10px 1px 0; vertical-align: top; }
   .academic-evidence h3 { font-family: Georgia, 'Times New Roman', serif; font-size: 1rem; margin-bottom: 10px; }
 
   .academic-reference-section {
@@ -1189,109 +1199,6 @@ function renderAcademicAudit(data) {
   return h;
 }
 
-// Where to check this answer, and against what. Rendered above the detailed
-// verification panel because it is the part a reader acts on; the panel stays
-// as the audit trail behind it. Everything here comes from the server's
-// check_further assessment, which applies fixed rules to verdicts already
-// reached and makes no judgement of its own.
-function checkFurtherAttr(value) {
-  return esc(String(value == null ? '' : value)).replace(/"/g, '&quot;');
-}
-
-function checkFurtherReference(ref) {
-  if (!ref) return '';
-  const link = String(ref.link || '');
-  const safe = /^https?:\/\//i.test(link);
-  let h = '<div class="check-further-ref">';
-  h += esc(String(ref.cite || ''));
-  if (safe) {
-    h += ' <a href="' + checkFurtherAttr(link) + '" target="_blank" rel="noopener noreferrer">' +
-      esc(ref.doi ? 'doi:' + String(ref.doi) : 'link') + '</a>';
-  } else if (ref.isbn) {
-    h += ' ISBN ' + esc(String(ref.isbn));
-  }
-  if (ref.supports) {
-    h += '<span class="supports">Listed for: ' + esc(String(ref.supports)) + '</span>';
-  }
-  h += '</div>';
-  return h;
-}
-
-function renderAcademicCheckFurther(cf) {
-  if (!cf || !cf.level) return '';
-  const level = String(cf.level).replace(/[^a-z_]/g, '');
-  let h = '<section class="check-further level-' + level + '">';
-  h += '<div class="check-further-headline">' + esc(String(cf.headline || '')) + '</div>';
-
-  if (cf.error) {
-    h += '<div class="check-further-note">' + esc(String(cf.error)) + '</div>';
-  }
-
-  const triggers = Array.isArray(cf.triggers) ? cf.triggers : [];
-  if (triggers.length) {
-    h += '<ul>';
-    for (const t of triggers) {
-      h += '<li>' + esc(String(t.message || ''));
-      const items = Array.isArray(t.items) ? t.items : [];
-      if (items.length && t.rule !== 'not_settled_by_notes' && t.rule !== 'no_curated_references') {
-        h += '<ul>';
-        for (const item of items) h += '<li>' + esc(String(item)) + '</li>';
-        h += '</ul>';
-      }
-      h += '</li>';
-    }
-    h += '</ul>';
-  }
-
-  const groups = Array.isArray(cf.groups) ? cf.groups : [];
-  for (const g of groups) {
-    h += '<div class="check-further-group">';
-    h += '<div class="check-further-group-title">' +
-      esc(g.note ? String(g.note) + ' — ' + String(g.heading || '') : 'Not close to any section of your notes') +
-      '</div>';
-    const claims = Array.isArray(g.claims) ? g.claims : [];
-    h += '<div class="check-further-claims">' + claims.length +
-      (claims.length === 1 ? ' claim' : ' claims') + ' not settled by this section.</div>';
-    const refs = Array.isArray(g.references) ? g.references : [];
-    if (refs.length) {
-      h += '<div>Check against:</div>';
-      for (const r of refs) h += checkFurtherReference(r);
-    } else {
-      h += '<div class="check-further-note">This section lists no sources yet.</div>';
-    }
-    if (claims.length) {
-      h += '<details><summary>Show the claims</summary><ul>';
-      for (const c of claims) h += '<li>' + esc(String(c)) + '</li>';
-      h += '</ul></details>';
-    }
-    h += '</div>';
-  }
-
-  const reading = Array.isArray(cf.further_reading) ? cf.further_reading : [];
-  if (reading.length && !groups.length) {
-    h += '<div class="check-further-group"><div class="check-further-group-title">Sources for the notes consulted</div>';
-    for (const r of reading) h += checkFurtherReference(r);
-    h += '</div>';
-  }
-
-  const rules = Array.isArray(cf.rules) ? cf.rules : [];
-  if (rules.length) {
-    h += '<details><summary>How this is decided</summary><ul>';
-    for (const r of rules) {
-      h += '<li><strong>' + esc(String(r.level || '').replace(/_/g, ' ')) + ':</strong> ' +
-        esc(String(r.when || '')) + '</li>';
-    }
-    h += '<li><strong>consistent with notes:</strong> none of the above applies. ' +
-      'That means agreement with your notes, not independent verification.</li>';
-    h += '</ul></details>';
-  }
-
-  h += '<div class="check-further-note">Sources are curated in your reviewer notes and were checked ' +
-    'before being added. Each is listed for the purpose stated, not as support for every sentence.</div>';
-  h += '</section>';
-  return h;
-}
-
 function renderAcademicEvidence(data) {
   const references = Array.isArray(data.references) ? data.references : [];
   const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
@@ -1303,24 +1210,24 @@ function renderAcademicEvidence(data) {
     ? data.local_guidance.passages
     : [];
 
-  let h = '';
-
-  h += renderAcademicCheckFurther(data.check_further);
+  let referencesHtml = '';
 
   if (references.length) {
-    h += '<section class="academic-reference-section">';
-    h += '<h3>References</h3>';
+    referencesHtml += '<section class="academic-reference-section">';
+    referencesHtml += '<h3>References</h3>';
 
     for (let i = 0; i < references.length; i++) {
-      h += renderAcademicReference(references[i], i);
+      referencesHtml += renderAcademicReference(references[i], i);
     }
 
-    h += '<div class="academic-reference-note">' +
+    referencesHtml += '<div class="academic-reference-note">' +
       'Reference matching establishes bibliographic identity only. ' +
       'It does not by itself establish that a source supports a claim.' +
       '</div>';
-    h += '</section>';
+    referencesHtml += '</section>';
   }
+
+  let auditHtml = '';
 
   if (
     localGuidancePassages.length ||
@@ -1330,19 +1237,217 @@ function renderAcademicEvidence(data) {
     data.claim_coverage ||
     data.release
   ) {
-    h += '<section class="academic-verification-summary">';
-    h += '<div><strong>Evidence status:</strong> ' +
+    auditHtml += '<section class="academic-verification-summary">';
+    if (data.check_further && data.release?.status === 'checking_incomplete') {
+      auditHtml += '<div class="academic-incomplete-detail"><strong>Checking incomplete.</strong> ' +
+        academicIncompleteExplanation() + '</div>';
+    }
+    auditHtml += '<div><strong>Evidence status:</strong> ' +
       esc(academicVerificationSummary(data)) + '</div>';
-
-    h += '<details class="academic-verification-details">';
-    h += '<summary>Show verification details</summary>';
-    h += '<div class="academic-audit-content">' +
+    auditHtml += '<div class="academic-audit-content">' +
       renderAcademicAudit(data) + '</div>';
-    h += '</details>';
-    h += '</section>';
+    auditHtml += '</section>';
   }
 
+  // Without a check_further assessment (the draft endpoint, or an older
+  // server) keep the previous layout rather than show an empty evidence box.
+  if (!data.check_further) {
+    let h = referencesHtml;
+    if (auditHtml) {
+      h += '<details class="academic-verification-details">';
+      h += '<summary>Show verification details</summary>' + auditHtml + '</details>';
+    }
+    return h;
+  }
+
+  return renderAcademicCheckFurther(data.check_further, referencesHtml, auditHtml);
+}
+
+// ---------------------------------------------------------------------------
+// Evidence for the academic reader, at three levels of detail.
+//
+// 1. The compact evidence statement, always visible: a state worded for the
+//    reader, never for whoever maintains the guidance, with no counts, scores
+//    or per-claim statuses.
+// 2. Evidence and further reading, behind one toggle: curated references by
+//    topic in a compact form, full citations and the points the guidance did
+//    not settle behind further toggles, and a short note on what the checks do.
+// 3. Technical checking details, behind a separate toggle: the diagnostics of
+//    the evidence layer and the existing verification panel, unchanged.
+//
+// Everything comes from the server's check_further assessment, which applies
+// fixed rules to verdicts already reached and makes no judgement of its own.
+// ---------------------------------------------------------------------------
+function checkFurtherAttr(value) {
+  return esc(String(value == null ? '' : value)).replace(/"/g, '&quot;');
+}
+
+function checkFurtherLink(url, label) {
+  const link = String(url || '');
+  if (!/^https?:\/\//i.test(link)) return '';
+  return '<a href="' + checkFurtherAttr(link) + '" target="_blank" rel="noopener noreferrer">' +
+    esc(String(label)) + '</a>';
+}
+
+function checkFurtherReference(ref) {
+  if (!ref) return '';
+  let h = '<div class="evidence-ref">';
+  h += '<strong>' + esc(String(ref.author_year || '')) + '</strong>';
+  if (ref.short) h += ' — ' + esc(String(ref.short));
+  const meta = [];
+  if (ref.type) meta.push(esc(String(ref.type)));
+  if (ref.access_label) meta.push(esc(String(ref.access_label)));
+  const read = checkFurtherLink(ref.read_link, ref.access_url ? 'Read the free copy' : 'View source');
+  if (read) meta.push(read);
+  if (meta.length) h += '<div class="evidence-ref-meta">' + meta.join(' · ') + '</div>';
+  h += '</div>';
   return h;
+}
+
+function checkFurtherFullReference(ref) {
+  if (!ref) return '';
+  let h = '<div class="evidence-full-ref">' + esc(String(ref.cite || ''));
+  if (ref.doi) h += ' ' + checkFurtherLink(ref.link, 'doi:' + String(ref.doi));
+  else if (ref.link) h += ' ' + checkFurtherLink(ref.link, String(ref.link));
+  if (ref.isbn) h += ' ISBN ' + esc(String(ref.isbn));
+  if (ref.access_url && ref.access_url !== ref.link) {
+    h += ' (' + checkFurtherLink(ref.access_url, 'free copy') + ')';
+  }
+  return h + '</div>';
+}
+
+function checkFurtherPoint(point) {
+  if (!point) return '';
+  const text = esc(String(point.text || ''));
+  return point.kind === 'answer_sentence'
+    ? '<li>“' + text + '”</li>'
+    : '<li>' + text + ' <span class="evidence-check-muted">(summarised point)</span></li>';
+}
+
+function renderCheckFurtherDiagnostics(d) {
+  if (!d) return '';
+  let h = '<div class="technical-diagnostics">';
+  h += '<div><strong>Evidence layer diagnostics</strong> (rules version ' +
+    esc(String(d.rules_version || '')) + ')</div>';
+  if (d.error) h += '<div>Error: ' + esc(String(d.error)) + '</div>';
+  if (d.release_status) h += '<div>Release status: ' + esc(String(d.release_status)) + '</div>';
+  const counts = d.counts || {};
+  const names = Object.keys(counts);
+  if (names.length) {
+    h += '<table>';
+    for (const k of names) {
+      h += '<tr><td>' + esc(k.replace(/_/g, ' ')) + '</td><td>' + esc(String(counts[k])) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  const list = (title, items, render) => {
+    if (!Array.isArray(items) || !items.length) return '';
+    let out = '<div><em>' + esc(title) + '</em></div><ul>';
+    for (const item of items) out += '<li>' + render(item) + '</li>';
+    return out + '</ul>';
+  };
+  h += list('Sections retrieved for the question', d.question_sections, x => esc(String(x)));
+  h += list('Of those, sections with curated references', d.sourced_question_sections, x => esc(String(x)));
+  h += list('Routing of unsettled statements', d.routing, x =>
+    esc(String(x.statement || '')) + ' → ' +
+    esc(String(x.routed_to || 'not routed')) + ' <span class="evidence-check-muted">(' +
+    esc(String(x.reason || '')) + ')</span>');
+  h += list('Points not routed to further reading', d.unrouted, x =>
+    '“' + esc(String(x.point || '')) + '” <span class="evidence-check-muted">nearest: ' +
+    esc(String(x.nearest_section || 'none')) + '</span>');
+  h += list('Conditions lost when claims were separated from the answer', d.lost_conditions, x =>
+    'Answer sentence: “' + esc(String(x.answer_sentence || '')) + '”<br>' +
+    '<span class="evidence-check-muted">Atomic claim generated for checking: ' +
+    esc(String(x.atomic_claim || '')) + '<br>Contextual status: ' +
+    esc(String(x.contextual_status || 'not assessed')) + '</span>');
+  h += list('Conflicts reported by the methodology judge', d.conflicts, x =>
+    esc(String(x.answer_text || x.statement || '')) + ' <span class="evidence-check-muted">' +
+    esc((x.reasons || []).join(' ')) + '</span>');
+  return h + '</div>';
+}
+
+function renderAcademicCheckFurther(cf, referencesHtml, auditHtml) {
+  if (!cf || !cf.state) return (referencesHtml || '') + (auditHtml || '');
+  const state = String(cf.state).replace(/[^a-z_]/g, '');
+  const groups = Array.isArray(cf.further_reading) ? cf.further_reading : [];
+
+  // ---- level 1: the compact evidence statement ------------------------------
+  let h = '<section class="evidence-check state-' + state + '">';
+  h += '<div class="evidence-check-kicker">Evidence check</div>';
+  h += '<div class="evidence-check-title">' + esc(String(cf.title || '')) + '</div>';
+  h += '<div class="evidence-check-line">' + esc(String(cf.summary || '')) + '</div>';
+  if (cf.secondary) h += '<div class="evidence-check-line evidence-check-muted">' + esc(String(cf.secondary)) + '</div>';
+
+  const worth = Array.isArray(cf.worth_checking) ? cf.worth_checking : [];
+  for (const w of worth) {
+    h += '<div class="evidence-check-quote">' +
+      (w.kind === 'answer_sentence' ? '“' + esc(String(w.text || '')) + '”' : esc(String(w.text || ''))) +
+      (w.topic ? '<div class="evidence-check-muted">Related topic in the local guidance: ' +
+        esc(String(w.topic)) + '</div>' : '') + '</div>';
+  }
+
+  if (cf.citation_notice) {
+    h += '<div class="evidence-check-notice"><strong>' + esc(String(cf.citation_notice.title || 'Citation check')) +
+      ':</strong> ' + esc(String(cf.citation_notice.message || '')) + '</div>';
+  }
+
+  if (groups.length && cf.source_count) {
+    h += '<div class="evidence-check-line">Further reading: ' + esc(String(cf.source_count)) +
+      (cf.source_count === 1 ? ' relevant source available.' : ' relevant sources available.') + '</div>';
+  }
+
+  // ---- level 2: evidence and further reading ---------------------------------
+  h += '<details class="evidence-detail"><summary>View evidence and sources</summary>';
+  for (const g of groups) {
+    const refs = Array.isArray(g.references) ? g.references : [];
+    const points = Array.isArray(g.points) ? g.points : [];
+    h += '<div class="evidence-topic">';
+    h += '<div class="evidence-topic-title">Further reading: ' + esc(String(g.topic || '')) + '</div>';
+    for (const r of refs) h += checkFurtherReference(r);
+    if (refs.length) {
+      h += '<details><summary>Show full references</summary>';
+      for (const r of refs) h += checkFurtherFullReference(r);
+      h += '</details>';
+    }
+    if (points.length) {
+      h += '<details><summary>Show the points not settled by the guidance</summary><ul class="evidence-points">';
+      for (const p of points) h += checkFurtherPoint(p);
+      h += '</ul></details>';
+    }
+    h += '</div>';
+  }
+  if (referencesHtml) h += '<div class="evidence-topic">' + referencesHtml + '</div>';
+  h += '<div class="evidence-about"><strong>About these checks.</strong> ' + esc(String(cf.about || '')) + '</div>';
+  h += '</details>';
+  h += '</section>';
+
+  // ---- level 3: technical checking details -----------------------------------
+  h += '<details class="technical-details"><summary>Technical checking details</summary>';
+  h += renderCheckFurtherDiagnostics(cf.diagnostics);
+  h += auditHtml || '';
+  h += '</details>';
+  return h;
+}
+
+// What the reader is told when Academic Chat fails without a user-safe
+// message of its own. The HTTP status and any diagnostic detail go to the
+// browser console (and the server log), never into the reader's view.
+const ACADEMIC_INTERNAL_ERROR =
+  'Academic Chat could not complete this request because of an internal error. ' +
+  'Please try again.';
+const ACADEMIC_UNREACHABLE_ERROR =
+  'Academic Chat could not reach the local server. ' +
+  'Please check that it is running and try again.';
+
+// A failure whose message is already fit for the reader.
+class AcademicUserError extends Error {}
+
+// The older notice for incomplete checking, now shown beside the answer only
+// when the response has no evidence check of its own; otherwise it sits under
+// Technical checking details and the evidence check tells the reader once.
+function academicIncompleteExplanation() {
+  return 'Independent technical-claim coverage checking could not be completed. ' +
+    'This does not establish that the answer is wrong.';
 }
 
 async function sendAcademicMessage() {
@@ -1365,30 +1470,35 @@ async function sendAcademicMessage() {
   evidence.style.display = 'none';
 
   try {
-    const r = await fetch(BASE + '/api/chat/academic', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question })
-    });
+    let r;
+    try {
+      r = await fetch(BASE + '/api/chat/academic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question })
+      });
+    } catch (networkError) {
+      console.error('Academic Chat request did not reach the server:', networkError);
+      throw new AcademicUserError(ACADEMIC_UNREACHABLE_ERROR);
+    }
 
     const data = await r.json().catch(() => ({}));
 
     if (!r.ok) {
-      if (data.detail) {
-        console.error('Academic Chat diagnostic:', data.detail);
-      }
-      throw new Error(data.error || ('Server error ' + r.status));
+      console.error('Academic Chat request failed: HTTP ' + r.status +
+        (data.detail ? ' - ' + data.detail : ''));
+      throw new AcademicUserError(data.error || ACADEMIC_INTERNAL_ERROR);
     }
 
     if (data.release?.status === "checking_incomplete") {
       answer.innerHTML =
         '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
-        '<div style="margin-top:10px; color:var(--text-muted);">' +
-        '<strong>Checking incomplete.</strong> ' +
-        'Independent technical-claim coverage checking could not be completed. ' +
-        'This does not establish that the answer is wrong. ' +
-        'See the verification details below.' +
-        '</div>';
+        (data.check_further ? '' :
+          '<div style="margin-top:10px; color:var(--text-muted);">' +
+          '<strong>Checking incomplete.</strong> ' +
+          academicIncompleteExplanation() + ' ' +
+          'See the verification details below.' +
+          '</div>');
     } else if (data.release?.safe_to_present === false) {
       answer.innerHTML =
         '<div style="color:var(--error);">' +
@@ -1406,9 +1516,14 @@ async function sendAcademicMessage() {
       renderAcademicEvidence(data);
     evidence.style.display = 'block';
   } catch (e) {
+    if (!(e instanceof AcademicUserError)) {
+      console.error('Academic Chat failure:', e);
+    }
+    const message = e instanceof AcademicUserError
+      ? e.message
+      : ACADEMIC_INTERNAL_ERROR;
     answer.innerHTML =
-      '<div style="color:var(--error);"><strong>Academic Chat error:</strong> ' +
-      esc(e.message || String(e)) + '</div>';
+      '<div style="color:var(--error);">' + esc(message) + '</div>';
     evidence.style.display = 'none';
   } finally {
     setAcademicRunning(false);

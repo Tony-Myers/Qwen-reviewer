@@ -654,6 +654,16 @@ ACADEMIC_COVERAGE_DECOMPOSITION_MAX_TOKENS = 1000
 ACADEMIC_COVERAGE_REPRESENTATION_MAX_TOKENS = 256
 
 
+def _raised_in(exc: BaseException, function_name: str) -> bool:
+    """True when the innermost frame of exc's traceback is function_name."""
+    tb = exc.__traceback__
+    if tb is None:
+        return False
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    return tb.tb_frame.f_code.co_name == function_name
+
+
 def assess_academic_claim_coverage(
     *,
     answer_draft: str,
@@ -716,6 +726,24 @@ def assess_academic_claim_coverage(
     except academic_claim_coverage.ClaimCoverageOutputError:
         return academic_claim_coverage.ClaimCoverageAssessment.unavailable(
             "Local claim-coverage output could not be validated."
+        )
+    except ValueError as exc:
+        # Raised by resolve_claim_source_context when a discovered claim's
+        # verbatim anchor does not sit inside one application-owned answer
+        # sentence: the model quoted across a full stop. (Abbreviations such
+        # as "i.e." no longer split a sentence; see answer_sentence_spans.)
+        # The discovery output is unusable
+        # for this answer, which is the same situation as the validation
+        # failure above, so it takes the same designed path: coverage is
+        # unavailable and the release reports checking as incomplete. The
+        # traceback is kept in the server log so the cause stays visible.
+        # Any other ValueError is a programming error and still propagates.
+        if not _raised_in(exc, "resolve_claim_source_context"):
+            raise
+        traceback.print_exc()
+        return academic_claim_coverage.ClaimCoverageAssessment.unavailable(
+            "Local claim-coverage output could not be placed within "
+            "a single answer sentence."
         )
 
     return academic_claim_coverage.ClaimCoverageAssessment.from_result(
@@ -858,19 +886,8 @@ async def academic_chat_first_stage(request: dict):
         ).to_dict()
     except Exception as exc:                                    # noqa: BLE001
         traceback.print_exc()
-        payload["check_further"] = {
-            "level": academic_check_further.LEVEL_NEEDED,
-            "headline": (
-                "The check-further assessment could not be completed, so "
-                "treat this answer as unchecked."
-            ),
-            "error": f"{type(exc).__name__}: {exc}",
-            "triggers": [],
-            "groups": [],
-            "further_reading": [],
-            "notes_consulted": [],
-            "rules": [],
-        }
+        payload["check_further"] = academic_check_further.incomplete_assessment(
+            f"{type(exc).__name__}: {exc}")
 
     return payload
 

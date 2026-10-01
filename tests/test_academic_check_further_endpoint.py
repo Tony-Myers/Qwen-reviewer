@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-The check-further assessment reaches the Academic Chat response.
+The evidence assessment reaches the Academic Chat response.
 
     python3 tests/test_academic_check_further_endpoint.py
 
-Two things are checked at the endpoint: the assessment is computed from the
-final (reconciled) attempt and added under "check_further" without disturbing
+Checked at the endpoint: the assessment is computed from the final
+(reconciled) attempt and added under "check_further" without disturbing
 anything else in the payload; and if the assessment itself fails, the reader
-still gets the answer, with the assessment replaced by an explicit statement
-that it is unchecked rather than silently omitted.
+still gets the answer, told that the evidence check is incomplete -- never
+that the answer is worth checking, which would be a claim about the answer
+rather than about the checking.
 """
 import asyncio
 import contextlib
@@ -77,28 +78,32 @@ def run_with(final):
          server.academic_reconciliation_orchestrator.run_academic_reconciliation) = original
 
 
-print("\n[1] a checked answer carries its check-further assessment")
+print("\n[1] a checked answer carries its evidence assessment")
 payload = run_with(Final())
 cf = payload.get("check_further", {})
 check(payload.get("answer_draft") == "Synthetic answer.",
       "the existing payload is unchanged")
-check(cf.get("level") == "check_advised",
-      "an unsettled claim advises a check")
-check(cf.get("groups") and cf["groups"][0]["heading"] == SECTION[1],
-      "the claim is placed under the section it was judged against")
-check(any(r["doi"] == "10.1080/00031305.1996.10474359"
-          for r in cf["groups"][0]["references"]),
+check(cf.get("state") == "further_reading",
+      "an unsettled point under a curated section offers further reading")
+groups = cf.get("further_reading") or []
+check(groups and groups[0]["heading"] == SECTION[1],
+      "under the section it was judged against")
+check(any(r["doi"] == "10.1080/00031305.1996.10474359" for r in groups[0]["references"]),
       "with that section's curated references")
-check(len(cf.get("rules", [])) >= 7, "the rules travel with the assessment")
+check("diagnostics" in cf and "routing" in cf["diagnostics"],
+      "the diagnostics travel with the assessment")
 
 print("\n[2] a failure in the assessment does not cost the reader the answer")
 payload = run_with(Final(broken=True))
 cf = payload.get("check_further", {})
 check(payload.get("answer_draft") == "Synthetic answer.",
       "the answer is still returned")
-check(cf.get("level") == "check_needed" and "unchecked" in cf.get("headline", ""),
-      "and the assessment says plainly that it is unchecked")
-check(bool(cf.get("error")), "with the error recorded")
+check(cf.get("state") == "incomplete" and cf.get("title") == "Evidence check incomplete",
+      "the reader is told the evidence check is incomplete")
+check(cf.get("worth_checking") == [],
+      "and is not told the answer is worth checking")
+check(bool(cf.get("diagnostics", {}).get("error")),
+      "with the error recorded in the diagnostics only")
 
 print()
 if failures:

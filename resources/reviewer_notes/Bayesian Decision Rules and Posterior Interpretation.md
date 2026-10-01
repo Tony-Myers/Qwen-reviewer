@@ -58,19 +58,33 @@ Reviewers should be cautious of several common overstatements:
 - cite: Hyndman, R. J. (1996). Computing and graphing highest density regions. The American Statistician, 50(2), 120–126.
   doi: 10.1080/00031305.1996.10474359
   supports: Definition and computation of highest density regions, including regions that are not a single interval.
+  short: highest-density regions, including disconnected regions
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
   checked: 2026-09-30, Crossref
 - cite: Kruschke, J. K. (2015). Doing Bayesian data analysis: A tutorial with R, JAGS, and Stan (2nd ed.). Academic Press.
   isbn: 9780124058880
   url: https://www.sciencedirect.com/book/9780124058880/doing-bayesian-data-analysis
   supports: Textbook treatment of the highest density interval and its use to summarise a posterior.
+  short: textbook treatment of HDIs and posterior summaries
+  type: Book
   checked: 2026-09-30, publisher record (no DOI confirmed)
 - cite: Makowski, D., Ben-Shachar, M. S., & Lüdecke, D. (2019). bayestestR: Describing effects and their uncertainty, existence and significance within the Bayesian framework. Journal of Open Source Software, 4(40), 1541.
   doi: 10.21105/joss.01541
   supports: Software implementing the HDI, ETI, ROPE and probability of direction for summarising posteriors.
+  short: practical posterior summaries including HDI, ETI and ROPE
+  type: Software paper
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (diamond, CC BY)
   checked: 2026-09-30, Crossref
-- cite: easystats. Credible Intervals (CI). bayestestR package documentation.
+- cite: bayestestR documentation. Credible Intervals (CI). easystats.
   url: https://easystats.github.io/bayestestR/articles/credible_interval.html
   supports: Practical comparison of HDI and ETI, including that the ETI is unchanged by monotone transformations while the HDI is not. Documentation, not peer reviewed.
+  short: practical ETI/HDI comparison, including behaviour under transformations
+  type: Documentation
+  access: open
+  access_checked: 2026-09-30, page read directly
   checked: 2026-09-30, page read
 ```
 
@@ -128,10 +142,18 @@ The ROPE must be justified substantively rather than selected after inspecting t
 - cite: Kruschke, J. K. (2018). Rejecting or accepting parameter values in Bayesian estimation. Advances in Methods and Practices in Psychological Science, 1(2), 270–280.
   doi: 10.1177/2515245918771304
   supports: Decision rules combining the HDI with a region of practical equivalence, and how a ROPE can be set.
+  short: HDI and ROPE decision rules, and setting a ROPE
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read)
   checked: 2026-09-30, Crossref
 - cite: Makowski, D., Ben-Shachar, M. S., & Lüdecke, D. (2019). bayestestR: Describing effects and their uncertainty, existence and significance within the Bayesian framework. Journal of Open Source Software, 4(40), 1541.
   doi: 10.21105/joss.01541
   supports: Software implementing the HDI, ETI, ROPE and probability of direction for summarising posteriors.
+  short: practical posterior summaries including HDI, ETI and ROPE
+  type: Software paper
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (diamond, CC BY)
   checked: 2026-09-30, Crossref
 ```
 
@@ -161,6 +183,10 @@ It is often useful for:
 - cite: Spiegelhalter, D. J., Abrams, K. R., & Myles, J. P. (2003). Bayesian approaches to clinical trials and health-care evaluation. Wiley.
   doi: 10.1002/0470092602
   supports: Bayesian methods for trials, including clinically important thresholds, predictive probabilities and interim monitoring.
+  short: Bayesian trial methods, clinical thresholds and predictive probability
+  type: Book
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
   checked: 2026-09-30, Crossref
 ```
 
@@ -180,10 +206,19 @@ A posterior probability alone does not determine a decision unless the consequen
 - cite: Berger, J. O. (1985). Statistical decision theory and Bayesian analysis (2nd ed.). Springer.
   doi: 10.1007/978-1-4757-4286-2
   supports: Formal Bayesian decision theory: losses, utilities, and choosing an action by expected loss.
+  short: formal Bayesian decision theory
+  type: Book
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
   checked: 2026-09-30, Crossref
 - cite: Gelman, A., Carlin, J. B., Stern, H. S., Dunson, D. B., Vehtari, A., & Rubin, D. B. (2013). Bayesian data analysis (3rd ed.). Chapman and Hall/CRC.
   doi: 10.1201/b16018
   supports: Standard reference for posterior summaries, posterior intervals and Bayesian decision analysis.
+  short: standard reference on posterior summaries, intervals and decision analysis
+  type: Book
+  access: author-copy
+  access_url: https://sites.stat.columbia.edu/gelman/book/BDA3.pdf
+  access_checked: 2026-10-01, authors' book page read: PDF for non-commercial use; not in OpenAlex
   checked: 2026-09-30, Crossref
 ```
 
@@ -263,22 +298,43 @@ Checked sources for this topic. A section with its own list shows that list inst
 - cite: Kruschke, J. K. (2021). Bayesian analysis reporting guidelines. Nature Human Behaviour, 5(10), 1282–1291.
   doi: 10.1038/s41562-021-01177-7
   supports: Reporting guidelines for Bayesian analyses, including posterior summaries, credible intervals and decision criteria.
+  short: reporting guidelines for Bayesian analyses
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
   checked: 2026-09-30, Crossref
 - cite: Kruschke, J. K., & Liddell, T. M. (2018). The Bayesian New Statistics: Hypothesis testing, estimation, meta-analysis, and power analysis from a Bayesian perspective. Psychonomic Bulletin & Review, 25(1), 178–206.
   doi: 10.3758/s13423-016-1221-4
   supports: Bayesian estimation compared with hypothesis testing, including credible intervals, ROPE-based decisions and Bayesian power analysis.
+  short: Bayesian estimation versus hypothesis testing, ROPEs and power
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read)
   checked: 2026-09-30, Crossref
 - cite: Gelman, A., Carlin, J. B., Stern, H. S., Dunson, D. B., Vehtari, A., & Rubin, D. B. (2013). Bayesian data analysis (3rd ed.). Chapman and Hall/CRC.
   doi: 10.1201/b16018
   supports: Standard reference for posterior summaries, posterior intervals and Bayesian decision analysis.
+  short: standard reference on posterior summaries, intervals and decision analysis
+  type: Book
+  access: author-copy
+  access_url: https://sites.stat.columbia.edu/gelman/book/BDA3.pdf
+  access_checked: 2026-10-01, authors' book page read: PDF for non-commercial use; not in OpenAlex
   checked: 2026-09-30, Crossref
 - cite: Berger, J. O. (1985). Statistical decision theory and Bayesian analysis (2nd ed.). Springer.
   doi: 10.1007/978-1-4757-4286-2
   supports: Formal Bayesian decision theory: losses, utilities, and choosing an action by expected loss.
+  short: formal Bayesian decision theory
+  type: Book
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
   checked: 2026-09-30, Crossref
 - cite: Spiegelhalter, D. J., Abrams, K. R., & Myles, J. P. (2003). Bayesian approaches to clinical trials and health-care evaluation. Wiley.
   doi: 10.1002/0470092602
   supports: Bayesian methods for trials, including clinically important thresholds, predictive probabilities and interim monitoring.
+  short: Bayesian trial methods, clinical thresholds and predictive probability
+  type: Book
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
   checked: 2026-09-30, Crossref
 ```
 

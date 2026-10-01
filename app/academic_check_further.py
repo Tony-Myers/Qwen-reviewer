@@ -1,36 +1,50 @@
 """
-When should the reader check an Academic Chat answer further, and where?
+What an academic reader should be told about the evidence behind an answer.
 
-The checking machinery produces a great deal of evidence: per-claim technical
-and methodological statuses, contextual assessments, reference verification
-and a release decision. It does not say, in terms a reader can act on,
-whether this answer needs checking and against what. This module does. It
-makes no model call and changes no verdict: it reads what the machinery
-already decided and applies a small set of fixed rules to it.
+The checking machinery reaches many fine-grained verdicts per answer. A reader
+who asked "what is the difference between an ETI and an HDI?" needs three
+things from them, at three levels of detail:
 
-Three things it is careful about.
+1.  A compact evidence statement. One of five states, worded for the reader
+    and never for whoever maintains the guidance: no specific concern
+    identified; further reading available; worth checking; outside the local
+    guidance; or evidence check incomplete. No claim counts, scores or
+    per-claim statuses at this level.
+2.  Evidence and further reading. Curated references grouped by the
+    methodological topic they belong to, in a compact form, with the full
+    citation and the points the guidance did not settle behind a toggle.
+3.  Technical checking details. Counts, routing decisions, points that were
+    not routed, lost conditions and per-claim verdicts, for whoever is
+    developing or auditing the checks.
 
-1.  CONSISTENCY WITH THE NOTES IS NOT TRUTH.
-    The notes are one person's curated guidance. A claim that agrees with them
-    is consistent with that guidance, which is worth knowing and is not
-    verification. The best outcome is therefore worded as "consistent with
-    your notes", never as "verified", and it still lists where to confirm it.
+This module makes no model call and changes no verdict. It reads what the
+machinery decided -- the release decision, per-claim methodological
+judgements, contextual assessments and reference verification -- and applies
+fixed rules to it. The judge's prompt and schema, the release logic and the
+claim-assessment pipeline are untouched.
 
-2.  "NOT ESTABLISHED" MOSTLY MEANS THE NOTES ARE SILENT.
-    On the ETI/HDI question a textbook definition of the HDI was marked not
-    established because the note words it differently. Reporting each such
-    claim as doubtful repeats the noise the verification panel already has.
-    Instead the unsettled claims are grouped under the note section closest
-    to them, and each group carries that section's curated references: the
-    reader is told where to check, once per topic, not once per sentence.
+Rules that matter, and why.
 
-3.  EVERY "CHECK THIS" SAYS WHERE.
-    A rule that tells a reader to check something and gives them nowhere to
-    look is not a rule they can follow. When the relevant notes carry no
-    curated references yet, that is itself reported.
+ROUTING. An unsettled point is offered further reading only from a section
+that (a) was retrieved for the original question, (b) carries curated
+references, and (c) the point was actually judged against. A section that
+merely ranked highly in a claim's own retrieval is not enough: on the ETI/HDI
+answer that routed "Both intervals contain 95% of the posterior probability"
+to a section on credible intervals being mistaken for confidence intervals,
+which is a recommendation the guidance never made. Points with no qualifying
+section are kept in the technical details and generate no literature group.
 
-The rules are listed in RULES, in order of severity, and are returned with
-every assessment so the interface can show why a message appeared.
+WHAT THE ANSWER SAID. A point is shown as the answer's own sentence, taken
+from the application-owned source sentence, wherever one exists. An atomic
+claim is the checker's restatement and can lose a condition the answer
+attached; presenting it as what the answer said misrepresents the answer.
+Structured claims with no located sentence are labelled as summarised points.
+
+CHECKING VERSUS CONCERN. A failure or gap in the checking is never presented
+as a concern about the answer. "Worth checking" is reserved for an affirmative
+signal: a judged conflict with the guidance, or a release blocked by a
+conflict. An unmatched citation gets its own notice, because it is a fact
+about a cited source, not about the evidence for the answer as a whole.
 """
 
 from __future__ import annotations
@@ -44,123 +58,122 @@ import academic_orchestrator
 import reviewer_notes
 
 
-RULES_VERSION = "1"
+RULES_VERSION = "2"
 
-LEVEL_SETTLED = "consistent_with_notes"
-LEVEL_ADVISED = "check_advised"
-LEVEL_NEEDED = "check_needed"
+STATE_NO_CONCERN = "no_specific_concern"
+STATE_FURTHER_READING = "further_reading"
+STATE_WORTH_CHECKING = "worth_checking"
+STATE_OUTSIDE = "outside_guidance"
+STATE_INCOMPLETE = "incomplete"
 
-_LEVEL_ORDER = {LEVEL_SETTLED: 0, LEVEL_ADVISED: 1, LEVEL_NEEDED: 2}
-
-HEADLINES = {
-    LEVEL_NEEDED: "Check this answer before using it.",
-    LEVEL_ADVISED: (
-        "Parts of this answer are not settled by your notes. Check them "
-        "against the sources listed."
-    ),
-    LEVEL_SETTLED: (
-        "Every claim that was checked is consistent with your notes. Your "
-        "notes are guidance rather than proof; the sources below are where "
-        "to confirm it."
-    ),
+TITLES = {
+    STATE_NO_CONCERN: "No specific concern identified",
+    STATE_FURTHER_READING: "Further reading available",
+    STATE_WORTH_CHECKING: "Worth checking",
+    STATE_OUTSIDE: "Outside the local guidance",
+    STATE_INCOMPLETE: "Evidence check incomplete",
 }
 
-# (rule id, level, when it applies). Kept as data so the interface can show
-# the reader the rule that produced a message, not just the message.
-RULES: Tuple[Tuple[str, str, str], ...] = (
-    ("release_blocked", LEVEL_NEEDED,
-     "The checks blocked the answer, or could not finish checking it."),
-    ("notes_conflict", LEVEL_NEEDED,
-     "Your notes say something incompatible with part of the answer."),
-    ("reference_not_confirmed", LEVEL_NEEDED,
-     "The answer cites a source that could not be matched to a published "
-     "record, or whose details conflict with the record."),
-    ("no_guidance", LEVEL_NEEDED,
-     "Nothing in your notes addresses the question, so no part of the answer "
-     "was checked against them."),
-    ("nothing_checked", LEVEL_ADVISED,
-     "Your notes were consulted, but no claim in the answer was judged "
-     "against them."),
-    ("not_settled_by_notes", LEVEL_ADVISED,
-     "Some claims are neither supported nor contradicted by your notes."),
-    ("condition_not_resolved", LEVEL_ADVISED,
-     "A claim lost a condition when it was separated from the answer, and "
-     "the check made with the condition restored did not find it consistent."),
-    ("no_curated_references", LEVEL_ADVISED,
-     "The notes relevant to the unsettled claims do not list sources yet."),
+# Incomplete checking says nothing about whether the answer is right. The
+# reader is told that once, here, in place of the older notice beside the
+# answer (which now sits under Technical checking details).
+INCOMPLETE_SUMMARY = ("Academic Chat could not complete its comparison with "
+                      "the local methodological guidance.")
+INCOMPLETE_SECONDARY = ("This does not mean the answer is wrong, only that it "
+                        "could not be fully checked.")
+
+ABOUT = (
+    "Academic Chat compares parts of its answer with locally curated "
+    "methodological guidance. Agreement with that guidance is not independent "
+    "verification. Where the local guidance does not settle a point, relevant "
+    "curated references may be provided for further checking."
 )
 
-_RULE_LEVEL = {rule: level for rule, level, _ in RULES}
+_BLOCKED_SUMMARIES = {
+    "blocked_methodological_conflict": (
+        "A point in this answer may warrant closer checking: the local "
+        "methodological guidance appears to say something different."),
+    "blocked_technical_conflict": (
+        "A technical statement in this answer did not pass an automated "
+        "check and may warrant closer checking."),
+    "blocked_source_contradiction": (
+        "A source associated with this answer appears to say something "
+        "different from it, so the point may warrant closer checking."),
+}
+
+POINT_ANSWER_SENTENCE = "answer_sentence"
+POINT_SUMMARISED = "summarised_point"
+
+
+# ---------------------------------------------------------------------------
+# Result types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Point:
+    """Something the answer said, as the reader should see it."""
+
+    text: str
+    kind: str                      # POINT_ANSWER_SENTENCE or POINT_SUMMARISED
+
+    def to_dict(self) -> Dict[str, str]:
+        return {"text": self.text, "kind": self.kind}
 
 
 @dataclass
-class CheckGroup:
-    """Unsettled claims that fall under one note section, and where to check."""
+class ReadingGroup:
+    """Curated references for one methodological topic, and the points they bear on."""
 
     note: str
     heading: str
-    claims: List[str]
     references: List[reviewer_notes.Reference]
+    points: List[Point] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "topic": self.heading or self.note,
             "note": self.note,
             "heading": self.heading,
-            "claims": list(self.claims),
             "references": [r.to_dict() for r in self.references],
-        }
-
-
-@dataclass
-class Trigger:
-    rule: str
-    message: str
-    items: List[str] = field(default_factory=list)
-
-    @property
-    def level(self) -> str:
-        return _RULE_LEVEL[self.rule]
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "rule": self.rule,
-            "level": self.level,
-            "message": self.message,
-            "items": list(self.items),
+            "points": [p.to_dict() for p in self.points],
         }
 
 
 @dataclass
 class CheckFurtherAssessment:
-    level: str
-    triggers: List[Trigger]
-    groups: List[CheckGroup]
-    further_reading: List[Tuple[str, str, reviewer_notes.Reference]]
-    notes_consulted: List[Tuple[str, str]]
+    state: str
+    summary: str
+    secondary: str
+    worth_checking: List[Dict[str, str]]
+    citation_notice: Optional[Dict[str, Any]]
+    groups: List[ReadingGroup]
+    diagnostics: Dict[str, Any]
 
     @property
-    def headline(self) -> str:
-        return HEADLINES[self.level]
+    def title(self) -> str:
+        return TITLES[self.state]
+
+    @property
+    def source_count(self) -> int:
+        seen = set()
+        for group in self.groups:
+            for ref in group.references:
+                seen.add(_reference_key(ref))
+        return len(seen)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "level": self.level,
-            "headline": self.headline,
             "rules_version": RULES_VERSION,
-            "triggers": [t.to_dict() for t in self.triggers],
-            "groups": [g.to_dict() for g in self.groups],
-            "further_reading": [
-                dict(ref.to_dict(), note=note, heading=heading)
-                for note, heading, ref in self.further_reading
-            ],
-            "notes_consulted": [
-                {"note": note, "heading": heading}
-                for note, heading in self.notes_consulted
-            ],
-            "rules": [
-                {"rule": rule, "level": level, "when": when}
-                for rule, level, when in RULES
-            ],
+            "state": self.state,
+            "title": self.title,
+            "summary": self.summary,
+            "secondary": self.secondary,
+            "worth_checking": list(self.worth_checking),
+            "citation_notice": self.citation_notice,
+            "further_reading": [g.to_dict() for g in self.groups],
+            "source_count": self.source_count,
+            "about": ABOUT,
+            "diagnostics": self.diagnostics,
         }
 
 
@@ -168,39 +181,30 @@ class CheckFurtherAssessment:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _normalise(statement: str) -> str:
-    """Case, spacing, quotes and final punctuation only; wording is kept.
-
-    Paraphrases are not merged: saying two sentences mean the same thing is a
-    judgement, and this layer makes none.
-    """
-    text = re.sub(r"[\"'‘’“”]", "", statement or "")
+def _normalise(text: str) -> str:
+    """Case, spacing, quotes and final punctuation only; wording is kept."""
+    text = re.sub(r"[\"'‘’“”]", "", text or "")
     text = re.sub(r"\s+", " ", text).strip().lower()
     return text.rstrip(" .;:")
 
 
-def _home_section(passages) -> Optional[Tuple[str, str]]:
-    """The retrieved section a claim was judged against most closely."""
-    if not passages:
+def _reference_key(ref: reviewer_notes.Reference) -> str:
+    return ref.doi.lower() or ref.url or ref.isbn or ref.cite
+
+
+def _section(passage) -> Tuple[str, str]:
+    return (passage.note, passage.heading)
+
+
+def _best(passages, allowed=None):
+    """Highest-scoring passage, optionally among allowed sections only."""
+    pool = [p for p in passages if allowed is None or _section(p) in allowed]
+    if not pool:
         return None
-    best = max(passages, key=lambda p: (p.score or 0.0))
-    if not (best.score or 0.0):
-        best = passages[0]
-    return (best.note, best.heading)
+    return max(pool, key=lambda p: (p.score or 0.0))
 
 
-def _dedupe_references(refs):
-    seen, out = set(), []
-    for ref in refs:
-        key = ref.doi.lower() or ref.url or ref.isbn or ref.cite
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(ref)
-    return out
-
-
-def _reference_label(proposed) -> str:
+def _citation_label(proposed) -> str:
     parts = [
         getattr(proposed, "author", None) or "",
         f"({proposed.year})" if getattr(proposed, "year", None) else "",
@@ -213,6 +217,23 @@ def _reference_label(proposed) -> str:
     return label or "an unnamed source"
 
 
+@dataclass
+class _Judgement:
+    statement: str
+    status: str
+    passages: list
+    reasons: list
+    point: Point
+    contextual: bool
+
+
+def _point_for(claim, statement: str, sentence_by_claim) -> Point:
+    sentence = sentence_by_claim(claim, statement)
+    if sentence:
+        return Point(sentence.strip(), POINT_ANSWER_SENTENCE)
+    return Point(statement.strip(), POINT_SUMMARISED)
+
+
 # ---------------------------------------------------------------------------
 # Assessment
 # ---------------------------------------------------------------------------
@@ -221,29 +242,36 @@ def assess_check_further(
     result: Any,
     index: reviewer_notes.NotesIndex,
 ) -> CheckFurtherAssessment:
-    """Apply RULES to a checked Academic Chat result.
+    """Turn a checked Academic Chat result into what the reader is told.
 
-    ``result`` is an AcademicFirstStageResult: for a reconciled answer, pass
-    the final attempt. ``index`` should be the index that supplied the
-    guidance, so the references match the sections that were retrieved.
+    ``result`` is an AcademicFirstStageResult; for a reconciled answer pass the
+    final attempt. ``index`` should be the index that supplied the guidance.
     """
-    triggers: List[Trigger] = []
     consistent = academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT
     conflict = academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
 
-    # ---- release ---------------------------------------------------------
-    release = result.release
-    if not release.safe_to_present:
-        reasons = list(release.reasons) or [release.status]
-        triggers.append(Trigger(
-            "release_blocked",
-            "The checks blocked this answer or could not finish checking it.",
-            reasons,
-        ))
-
-    # ---- collect every methodological judgement, as the release does ------
     assessments = list(result.discovered_claim_assessments or [])
-    judgements = []   # (statement, status, passages, contextual)
+    guidance = list(getattr(result.local_guidance, "passages", []) or [])
+    question_sections = []
+    for passage in guidance:
+        if _section(passage) not in question_sections:
+            question_sections.append(_section(passage))
+
+    # The answer's own sentence for a claim, wherever the coverage step
+    # located one: by identity of the claim object first, as the release
+    # logic matches them, then by identical wording.
+    def sentence_by_claim(claim, statement):
+        for item in assessments:
+            if item.discovered_claim.claim is claim or item.discovered_claim.claim == claim:
+                return item.source_context.source_sentence
+        key = _normalise(statement)
+        for item in assessments:
+            if _normalise(item.discovered_claim.claim.statement) == key:
+                return item.source_context.source_sentence
+        return ""
+
+    # ---- every methodological judgement, collected as the release does -----
+    judgements: List[_Judgement] = []
     for item in result.technical_claims or []:
         method = item.methodological_consistency
         if method is None:
@@ -251,163 +279,237 @@ def assess_check_further(
         if academic_orchestrator.standalone_methodology_is_contextually_superseded(
                 item.claim, assessments):
             continue
-        judgements.append((item.claim.statement, method.status,
-                           list(method.passages), False))
+        judgements.append(_Judgement(
+            item.claim.statement, method.status, list(method.passages),
+            list(getattr(method, "reasons", []) or []),
+            _point_for(item.claim, item.claim.statement, sentence_by_claim),
+            False))
     for item in assessments:
         method = item.contextual_methodological_consistency
         if method is None:
             continue
-        judgements.append((item.discovered_claim.claim.statement,
-                           method.status, list(method.passages), True))
+        judgements.append(_Judgement(
+            item.discovered_claim.claim.statement, method.status,
+            list(method.passages), list(getattr(method, "reasons", []) or []),
+            Point(item.source_context.source_sentence.strip(), POINT_ANSWER_SENTENCE),
+            True))
 
-    # ---- conflicts ---------------------------------------------------------
-    conflicts = []
-    seen_conflicts = set()
-    for statement, status, passages, _ in judgements:
-        if status != conflict:
-            continue
-        key = _normalise(statement)
-        if key in seen_conflicts:
-            continue
-        seen_conflicts.add(key)
-        home = _home_section(passages)
-        where = f" (see {home[0]} - {home[1]})" if home and home[1] else ""
-        conflicts.append(statement + where)
-    if conflicts:
-        triggers.append(Trigger(
-            "notes_conflict",
-            "Your notes say something incompatible with part of this answer.",
-            conflicts,
-        ))
+    settled = {_normalise(j.statement) for j in judgements if j.status == consistent}
+    conflicts = [j for j in judgements if j.status == conflict]
+    conflict_keys = {_normalise(j.statement) for j in conflicts}
 
-    # ---- references the answer itself proposed -----------------------------
-    unconfirmed = []
-    for proposal in result.references or []:
-        verification = proposal.verification
-        status = getattr(verification.crossref_verification, "status", "")
-        if status != "verified" or verification.identity_conflict:
-            unconfirmed.append(_reference_label(proposal.proposed_reference))
-    if unconfirmed:
-        triggers.append(Trigger(
-            "reference_not_confirmed",
-            "The answer cites a source that could not be matched to a "
-            "published record, or whose details conflict with it.",
-            unconfirmed,
-        ))
-
-    # ---- was anything in the notes brought to bear at all? -----------------
-    guidance = list(getattr(result.local_guidance, "passages", []) or [])
-    if not guidance and not any(p for _, _, p, _ in judgements):
-        triggers.append(Trigger(
-            "no_guidance",
-            "Nothing in your notes addresses this question, so no part of "
-            "the answer was checked against them.",
-        ))
-
-    if guidance and not judgements:
-        triggers.append(Trigger(
-            "nothing_checked",
-            "Your notes were consulted, but no claim in this answer was "
-            "judged against them, so agreement with them is unknown.",
-        ))
-
-    # ---- claims the notes do not settle ------------------------------------
-    # A statement is settled once any judgement of it is consistent; one
-    # judged in conflict is reported above instead. What remains is grouped
-    # under the section it was judged against most closely.
-    settled = {_normalise(s) for s, st, _, _ in judgements if st == consistent}
-    groups: Dict[Tuple[str, str], CheckGroup] = {}
+    # ---- unsettled points, routed only to qualifying sections ---------------
+    sourced = {
+        section for section in question_sections
+        if index.references_for(*section)
+    }
+    groups: Dict[Tuple[str, str], ReadingGroup] = {}
     order: List[Tuple[str, str]] = []
-    counted = set()
-    for statement, status, passages, _ in judgements:
-        key = _normalise(statement)
-        if (status == consistent or status == conflict or key in settled
-                or key in seen_conflicts or key in counted):
+    placed_points = set()
+    routing, unrouted = [], []
+    unsettled_keys = set()
+    for j in judgements:
+        key = _normalise(j.statement)
+        if j.status in (consistent, conflict) or key in settled or key in conflict_keys:
             continue
-        counted.add(key)
-        home = _home_section(passages) or ("", "")
-        if home not in groups:
-            groups[home] = CheckGroup(
-                note=home[0],
-                heading=home[1],
-                claims=[],
-                references=index.references_for(*home) if home[0] else [],
-            )
-            order.append(home)
-        groups[home].claims.append(statement)
-    group_list = [groups[k] for k in order]
-
-    if counted:
-        noun = "claim" if len(counted) == 1 else "claims"
-        triggers.append(Trigger(
-            "not_settled_by_notes",
-            f"{len(counted)} {noun} in this answer are neither supported nor "
-            "contradicted by your notes.",
-            [f"{g.note} - {g.heading}" if g.note else
-             "Not close to any section of your notes"
-             for g in group_list],
-        ))
+        unsettled_keys.add(key)
+        best = _best(j.passages, allowed=sourced)
+        if best is None:
+            nearest = _best(j.passages)
+            reason = (
+                "no section judged against it was both retrieved for the "
+                "question and curated with references")
+            unrouted.append({
+                "point": j.point.text,
+                "kind": j.point.kind,
+                "statement": j.statement,
+                "nearest_section": (
+                    f"{nearest.note} - {nearest.heading}" if nearest else None),
+                "reason": reason,
+            })
+            routing.append({"statement": j.statement, "routed_to": None,
+                            "reason": reason})
+            continue
+        section = _section(best)
+        if section not in groups:
+            groups[section] = ReadingGroup(
+                note=section[0], heading=section[1],
+                references=_dedupe(index.references_for(*section)))
+            order.append(section)
+        point_key = _normalise(j.point.text)
+        if point_key not in placed_points:
+            placed_points.add(point_key)
+            groups[section].points.append(j.point)
+        routing.append({"statement": j.statement,
+                        "routed_to": f"{section[0]} - {section[1]}",
+                        "reason": "judged against a curated section retrieved "
+                                  "for the question"})
+    group_list = [groups[s] for s in order]
 
     # ---- conditions lost when a claim was separated from the answer --------
-    unresolved = []
+    lost_conditions = []
     for item in assessments:
         restriction = item.material_restriction
         if restriction is None or not restriction.material_restriction_omitted:
             continue
         method = item.contextual_methodological_consistency
-        if method is not None and method.status == consistent:
-            continue
-        unresolved.append(item.discovered_claim.claim.statement)
-    if unresolved:
-        triggers.append(Trigger(
-            "condition_not_resolved",
-            "A claim was checked without a condition the answer attached to "
-            "it, and restoring the condition did not show it consistent with "
-            "your notes.",
-            unresolved,
-        ))
+        lost_conditions.append({
+            "answer_sentence": item.source_context.source_sentence,
+            "atomic_claim": item.discovered_claim.claim.statement,
+            "contextual_status": method.status if method is not None else None,
+            "contextual_reasons": list(method.reasons) if method is not None else [],
+        })
 
-    # ---- somewhere to check -------------------------------------------------
-    uncovered = [
-        f"{g.note} - {g.heading}" if g.note else
-        "Claims not close to any section of your notes"
-        for g in group_list if not g.references
-    ]
-    if uncovered:
-        triggers.append(Trigger(
-            "no_curated_references",
-            "These parts of your notes do not list sources yet, so there is "
-            "no curated place to check the claims under them.",
-            uncovered,
-        ))
+    # ---- a cited source that does not match a record ------------------------
+    unmatched, conflicting = [], []
+    for proposal in result.references or []:
+        verification = proposal.verification
+        status = getattr(verification.crossref_verification, "status", "")
+        label = _citation_label(proposal.proposed_reference)
+        if verification.identity_conflict:
+            conflicting.append(label)
+        elif status != "verified":
+            unmatched.append(label)
+    citation_notice = None
+    if unmatched or conflicting:
+        parts = []
+        if unmatched:
+            parts.append(
+                "A source cited in this answer could not be matched to a "
+                "published record." if len(unmatched) == 1 else
+                "Some sources cited in this answer could not be matched to a "
+                "published record.")
+        if conflicting:
+            parts.append(
+                "The details given for a cited source conflict with the "
+                "published record." if len(conflicting) == 1 else
+                "The details given for some cited sources conflict with the "
+                "published record.")
+        citation_notice = {
+            "title": "Citation check",
+            "message": " ".join(parts) + " Check the citation before relying on it.",
+            "unmatched": unmatched,
+            "conflicting": conflicting,
+        }
 
-    # ---- further reading: the curated sources for what was consulted -------
-    consulted: List[Tuple[str, str]] = []
-    for p in guidance:
-        if (p.note, p.heading) not in consulted:
-            consulted.append((p.note, p.heading))
-    reading: List[Tuple[str, str, reviewer_notes.Reference]] = []
-    seen_reading = set()
-    for note, heading in consulted:
-        for ref in index.references_for(note, heading):
-            key = ref.doi.lower() or ref.url or ref.isbn or ref.cite
-            if key in seen_reading:
+    # ---- state ---------------------------------------------------------------
+    release = result.release
+    secondary = ""
+    worth_checking: List[Dict[str, str]] = []
+    if release.status == "checking_incomplete":
+        state = STATE_INCOMPLETE
+        summary = INCOMPLETE_SUMMARY
+        secondary = INCOMPLETE_SECONDARY
+    elif release.status in _BLOCKED_SUMMARIES or conflicts:
+        state = STATE_WORTH_CHECKING
+        summary = _BLOCKED_SUMMARIES.get(
+            release.status, _BLOCKED_SUMMARIES["blocked_methodological_conflict"])
+        seen = set()
+        for j in conflicts:
+            key = _normalise(j.point.text)
+            if key in seen:
                 continue
-            seen_reading.add(key)
-            reading.append((note, heading, ref))
+            seen.add(key)
+            nearest = _best(j.passages)
+            worth_checking.append({
+                "text": j.point.text,
+                "kind": j.point.kind,
+                "topic": nearest.heading if nearest else "",
+                "explanation": (
+                    "The local methodological guidance appears to say "
+                    "something different about this point."),
+            })
+    elif not guidance:
+        state = STATE_OUTSIDE
+        summary = ("This question is not covered by the local methodological "
+                   "guidance, so the answer has not been compared with it.")
+    elif not judgements:
+        state = STATE_OUTSIDE
+        summary = ("The answer has not been compared with the local "
+                   "methodological guidance, so its agreement with that "
+                   "guidance is unknown.")
+    elif group_list:
+        state = STATE_FURTHER_READING
+        summary = (
+            "Parts of this answer align with the local methodological "
+            "guidance, while some details go beyond what that guidance covers."
+            if settled else
+            "Some details of this answer go beyond what the local "
+            "methodological guidance covers.")
+        # The source count shown beneath the summary already says this;
+        # repeating it in a second sentence added length and nothing else.
+        secondary = ""
+    else:
+        state = STATE_NO_CONCERN
+        summary = ("Nothing in the local methodological guidance gave a clear "
+                   "reason to question this answer.")
+        if unsettled_keys:
+            secondary = ("Some details go beyond what the local methodological "
+                         "guidance covers, and no curated sources are "
+                         "available for them yet.")
 
-    level = LEVEL_SETTLED
-    for trigger in triggers:
-        if _LEVEL_ORDER[trigger.level] > _LEVEL_ORDER[level]:
-            level = trigger.level
-
-    for group in group_list:
-        group.references = _dedupe_references(group.references)
+    diagnostics = {
+        "rules_version": RULES_VERSION,
+        "release_status": release.status,
+        "counts": {
+            "judgements": len(judgements),
+            "consistent": sum(1 for j in judgements if j.status == consistent),
+            "conflict": len(conflicts),
+            "not_established": sum(
+                1 for j in judgements if j.status not in (consistent, conflict)),
+            "unsettled_statements": len(unsettled_keys),
+            "points_shown": sum(len(g.points) for g in group_list),
+            "unrouted": len(unrouted),
+            "lost_conditions": len(lost_conditions),
+        },
+        "question_sections": [f"{n} - {h}" for n, h in question_sections],
+        "sourced_question_sections": [f"{n} - {h}" for n, h in question_sections
+                                      if (n, h) in sourced],
+        "routing": routing,
+        "unrouted": unrouted,
+        "lost_conditions": lost_conditions,
+        "conflicts": [
+            {"statement": j.statement, "answer_text": j.point.text,
+             "reasons": j.reasons,
+             "sections": [f"{p.note} - {p.heading}" for p in j.passages]}
+            for j in conflicts
+        ],
+    }
 
     return CheckFurtherAssessment(
-        level=level,
-        triggers=sorted(triggers, key=lambda t: -_LEVEL_ORDER[t.level]),
+        state=state,
+        summary=summary,
+        secondary=secondary,
+        worth_checking=worth_checking,
+        citation_notice=citation_notice,
         groups=group_list,
-        further_reading=reading,
-        notes_consulted=consulted,
+        diagnostics=diagnostics,
     )
+
+
+def incomplete_assessment(error: str) -> Dict[str, Any]:
+    """What the reader is told when this assessment itself fails."""
+    return {
+        "rules_version": RULES_VERSION,
+        "state": STATE_INCOMPLETE,
+        "title": TITLES[STATE_INCOMPLETE],
+        "summary": INCOMPLETE_SUMMARY,
+        "secondary": INCOMPLETE_SECONDARY,
+        "worth_checking": [],
+        "citation_notice": None,
+        "further_reading": [],
+        "source_count": 0,
+        "about": ABOUT,
+        "diagnostics": {"rules_version": RULES_VERSION, "error": error},
+    }
+
+
+def _dedupe(refs):
+    seen, out = set(), []
+    for ref in refs:
+        key = _reference_key(ref)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(ref)
+    return out

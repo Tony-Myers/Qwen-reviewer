@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-The check-further rules, one scenario per rule, plus the ETI/HDI answer.
+What the academic reader is told about the evidence behind an answer.
 
     python3 tests/test_academic_check_further.py
 
-The layer reads verdicts the checking machinery has already reached and
-decides whether the reader should check the answer further and against which
-curated sources. It makes no model call, so every case here is deterministic.
+Covers the deterministic routing of unsettled points to curated literature,
+the use of the answer's own sentence wherever one exists, the five reader-
+facing states, and the separation of what the reader sees from the technical
+diagnostics. The layer makes no model call, so every case is deterministic.
 """
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -28,248 +30,313 @@ failures = 0
 
 def check(condition, label):
     global failures
-    if condition:
-        print(f"PASS: {label}")
-    else:
+    print(("PASS: " if condition else "FAIL: ") + label)
+    if not condition:
         failures += 1
-        print(f"FAIL: {label}")
 
 
-NOTE = """# Test Note
+# A notes folder with three sections: one curated, one curated only through
+# its note's list, and a note with nothing curated at all.
+CURATED = """# Curated Note
 
-#### Common reviewer questions
+##### Section A?
 
-##### What is alpha?
-
-Alpha is a threshold for rejecting a null hypothesis, and this paragraph is
-long enough to stand as its own section rather than being merged into the
-section before it during chunking, which needs a couple of hundred characters.
+Section A text, long enough to stand as its own section rather than be folded
+into the section before it by the chunker, which needs a couple of hundred
+characters of body text before it will treat a section as standing alone.
 
 ```references
-- cite: Section Source (2020). On alpha. Journal, 1, 1-2.
-  doi: 10.1000/section
-  supports: What alpha is.
-  checked: 2026-09-30, Crossref
+- cite: Smith, J. (2020). On A. Journal, 1, 1-2.
+  doi: 10.1000/a
+  supports: Topic A.
+  short: topic A in brief
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open
+  checked: 2026-10-01, Crossref
 ```
 
-##### What is beta?
+##### Section B?
 
-Beta is the type II error rate, and this paragraph is also long enough to be
-kept as a section in its own right by the chunker rather than folded into the
-previous one, so that a passage can carry this heading on its own.
+Section B text, also long enough to be kept as a section in its own right by
+the chunker rather than being merged into the previous section, so that a
+passage can carry this heading without anything else attached to it.
 
 #### References
 
-Intro sentence for the list.
-
 ```references
-- cite: Note Source (2019). General. Journal, 2, 3-4.
-  doi: https://doi.org/10.1000/NOTE
+- cite: Jones, K., & Brown, L. (2019). General. Journal, 2, 3-4.
+  doi: 10.1000/note
   supports: The whole topic.
-  checked: 2026-09-30, Crossref
+  checked: 2026-10-01, Crossref
 ```
+"""
 
----
+UNCURATED = """# Bare Note
 
-*Based on:* something.
+##### Unrelated misconception?
+
+A section with no curated sources at all, long enough to be a passage of its
+own, which can still rank highly for a claim through word overlap alone and
+must not become a reading recommendation on that basis.
 """
 
 tmp = Path(tempfile.mkdtemp())
-(tmp / "Test Note.md").write_text(NOTE, encoding="utf-8")
+(tmp / "Curated Note.md").write_text(CURATED, encoding="utf-8")
+(tmp / "Bare Note.md").write_text(UNCURATED, encoding="utf-8")
 index = rn.NotesIndex(tmp)
 
+A = ("Curated Note", "Section A?")
+B = ("Curated Note", "Section B?")
+BARE = ("Bare Note", "Unrelated misconception?")
 
-def passage(heading, score=0.5):
-    return rn.Passage("Test Note", heading, "text", score)
+
+def P(section, score=0.5):
+    return rn.Passage(section[0], section[1], "text", score)
 
 
-def tclaim(statement, status, heading="What is alpha?"):
+def tclaim(statement, status, passages, reasons=("judge reason",)):
     claim = NS(statement=statement)
-    method = NS(status=status, passages=[passage(heading)], reasons=["r"])
     return NS(claim=claim, verification=NS(status="not_technically_verified"),
-              methodological_consistency=method)
+              methodological_consistency=NS(status=status, passages=passages,
+                                            reasons=list(reasons)))
 
 
-def result(technical=(), contexts=(), references=(), guidance=None,
-           safe=True, status="release_allowed_with_unverified_claims"):
+def context(statement, sentence, status, passages, omitted=False, claim=None):
     return NS(
-        release=NS(safe_to_present=safe, status=status,
-                   reasons=["blocked for a reason"] if not safe else []),
-        technical_claims=list(technical),
-        discovered_claim_assessments=list(contexts),
-        references=list(references),
-        local_guidance=NS(passages=[passage("What is alpha?")]
-                          if guidance is None else guidance),
+        discovered_claim=NS(claim=claim or NS(statement=statement)),
+        source_context=NS(source_sentence=sentence),
+        material_restriction=NS(material_restriction_omitted=omitted),
+        contextual_methodological_consistency=(
+            None if status is None else
+            NS(status=status, passages=passages, reasons=["context reason"])),
     )
 
 
-def rules(assessment):
-    return [t.rule for t in assessment.triggers]
+def result(technical=(), contexts=(), references=(), guidance=(A,),
+           status="release_allowed_with_unverified_claims"):
+    return NS(
+        release=NS(safe_to_present=not status.startswith(("blocked", "checking")),
+                   status=status, reasons=["reason"]),
+        technical_claims=list(technical),
+        discovered_claim_assessments=list(contexts),
+        references=list(references),
+        local_guidance=NS(passages=[P(s, 0.4) for s in guidance]),
+    )
 
 
-print("\n[parser] references are split from the text and keyed correctly")
-check(index.reference_errors == [], "the test note parses without errors")
-check([r.doi for r in index.references_for("Test Note", "What is alpha?")]
-      == ["10.1000/section"], "a section list overrides the note list")
-check([r.doi for r in index.references_for("Test Note", "What is beta?")]
-      == ["10.1000/NOTE"], "a section without a list falls back to the note's")
-check(index.references_for("Test Note", "What is beta?")[0].link()
-      == "https://doi.org/10.1000/NOTE", "a DOI given as a URL is normalised")
-check(not any("```references" in p.text or "doi:" in p.text
-              for p in index.passages), "no reference text reaches a passage")
-check(not any(p.heading == "References" for p in index.passages),
-      "the References section is not indexed as guidance")
-check(any("*Based on:*" in p.text for p in index.passages),
-      "the Based on line is still indexed, as before")
+def run(r):
+    return cf.assess_check_further(r, index).to_dict()
 
-print("\n[parser] malformed entries are reported, not raised")
-bad = NOTE.replace("  supports: What alpha is.\n", "  suports: typo\n")
-(tmp / "Test Note.md").write_text(bad, encoding="utf-8")
-bad_index = rn.NotesIndex(tmp)
-check(len(bad_index.reference_errors) == 1
-      and "unknown field 'suports'" in bad_index.reference_errors[0],
-      "a misspelt field is reported with its name")
-check(bad_index.references_for("Test Note", "What is alpha?")[0].doi
-      == "10.1000/NOTE", "the bad section list is skipped, not half-read")
-for missing, text in (
-        ("supports", "- cite: X (2020).\n  doi: 10.1/x\n"),
-        ("identifier", "- cite: X (2020).\n  supports: y\n")):
-    try:
-        rn.parse_references_block(text, "t")
-        check(False, f"an entry without {missing} is rejected")
-    except rn.ReferenceFormatError:
-        check(True, f"an entry without {missing} is rejected")
-(tmp / "Test Note.md").write_text(NOTE, encoding="utf-8")
 
-print("\n[rules] consistent with the notes")
-a = cf.assess_check_further(result([tclaim("A", CONSISTENT)]), index)
-check(a.level == cf.LEVEL_SETTLED and rules(a) == [],
-      "every claim consistent, nothing blocked: consistent_with_notes")
-check("guidance rather than proof" in a.headline,
-      "the best outcome still says the notes are not proof")
-check([r.doi for _, _, r in a.further_reading] == ["10.1000/section"],
-      "further reading is drawn from the sections consulted")
+def user_facing(d):
+    """Everything the reader can see at levels one and two."""
+    return json.dumps({k: v for k, v in d.items() if k != "diagnostics"})
 
-print("\n[rules] not settled, grouped by section, with where to check")
-a = cf.assess_check_further(result([
-    tclaim("A", NOT_EST), tclaim("a.", NOT_EST), tclaim("B", NOT_EST),
-    tclaim("C", NOT_EST, heading="What is beta?"), tclaim("D", CONSISTENT),
-]), index)
-check(a.level == cf.LEVEL_ADVISED, "unsettled claims advise a check")
-check(rules(a) == ["not_settled_by_notes"], "and trigger only that rule")
-check("3 claims" in a.triggers[0].message,
-      "case and punctuation variants count once; paraphrases do not merge")
-check([(g.heading, g.claims) for g in a.groups]
-      == [("What is alpha?", ["A", "B"]), ("What is beta?", ["C"])],
-      "claims are grouped under the section they were judged against")
-check([r.doi for r in a.groups[1].references] == ["10.1000/NOTE"],
-      "each group carries its section's references, or the note's")
 
-print("\n[rules] a statement judged consistent anywhere is settled")
-ctx = NS(discovered_claim=NS(claim=NS(statement="A")),
-         material_restriction=NS(material_restriction_omitted=False),
-         contextual_methodological_consistency=NS(
-             status=CONSISTENT, passages=[passage("What is alpha?")]))
-a = cf.assess_check_further(result([tclaim("A", NOT_EST)], [ctx]), index)
-check(a.level == cf.LEVEL_SETTLED,
-      "a consistent contextual judgement settles the same statement")
+# ===========================================================================
+print("\n[routing] a group needs a question section, curated sources and a judgement")
+d = run(result([tclaim("X", NOT_EST, [P(A)])], guidance=(A,)))
+check([g["heading"] for g in d["further_reading"]] == ["Section A?"],
+      "a point judged against a curated question section is routed there")
+check([r["doi"] for r in d["further_reading"][0]["references"]] == ["10.1000/a"],
+      "with that section's own references")
 
-print("\n[rules] conflicts and blocked answers need checking")
-a = cf.assess_check_further(result([tclaim("A", CONFLICT)]), index)
-check(a.level == cf.LEVEL_NEEDED and "notes_conflict" in rules(a),
-      "a conflict with the notes needs checking")
-check("What is alpha?" in a.triggers[0].items[0],
-      "and names the section it conflicts with")
-check(a.groups == [], "a conflicting claim is not also listed as unsettled")
-a = cf.assess_check_further(result(safe=False,
-                                   status="blocked_technical_conflict"), index)
-check(a.level == cf.LEVEL_NEEDED and rules(a)[0] == "release_blocked",
-      "a blocked release needs checking, and is reported first")
+d = run(result([tclaim("X", NOT_EST, [P(BARE, 0.9)])], guidance=(A, BARE)))
+check(d["further_reading"] == [],
+      "a question section with no curated sources produces no group")
+check(d["diagnostics"]["unrouted"][0]["nearest_section"] == "Bare Note - Unrelated misconception?",
+      "the unrouted point is kept in the diagnostics with its nearest section")
 
-print("\n[rules] references the answer proposed")
-good = NS(proposed_reference=NS(author="A", year=2020, title="T", doi="10.1/a"),
-          verification=NS(crossref_verification=NS(status="verified"),
-                          identity_conflict=False))
-bad = NS(proposed_reference=NS(author="B", year=2021, title="U", doi=None),
+d = run(result([tclaim("X", NOT_EST, [P(A)])], guidance=(BARE,)))
+check(d["further_reading"] == [],
+      "a curated section not retrieved for the question produces no group")
+
+d = run(result([tclaim("X", NOT_EST, [P(BARE, 0.9), P(A, 0.2)])], guidance=(A, BARE)))
+check([g["heading"] for g in d["further_reading"]] == ["Section A?"],
+      "a higher-ranking source-less match does not win over a qualifying section")
+
+d = run(result([tclaim("X", NOT_EST, [])], guidance=(A,)))
+check(d["further_reading"] == [] and len(d["diagnostics"]["unrouted"]) == 1,
+      "a point judged against nothing is not routed")
+
+d = run(result([tclaim("X", NOT_EST, [P(B)])], guidance=(B,)))
+check([r["doi"] for r in d["further_reading"][0]["references"]] == ["10.1000/note"],
+      "a section without its own list qualifies through its note's list")
+
+# ===========================================================================
+print("\n[what the answer said] points use the answer's own sentence")
+c = context("Atomic X without its condition",
+            "For skewed posteriors, X holds.", NOT_EST, [P(A)])
+d = run(result(contexts=[c]))
+pts = d["further_reading"][0]["points"]
+check(pts == [{"text": "For skewed posteriors, X holds.", "kind": "answer_sentence"}],
+      "a contextual point is shown as the verified source sentence")
+check("Atomic X without its condition" not in user_facing(d),
+      "the stripped atomic claim appears nowhere the reader can see")
+
+shared = NS(statement="Y holds")
+d2 = run(result([NS(claim=shared, verification=NS(status="x"),
+                    methodological_consistency=NS(status=NOT_EST, passages=[P(A)], reasons=[]))],
+                contexts=[context("Y holds", "In the answer, Y holds.", None, [], claim=shared)]))
+check(d2["further_reading"][0]["points"][0] ==
+      {"text": "In the answer, Y holds.", "kind": "answer_sentence"},
+      "a structured claim located in the answer is shown as that sentence")
+
+d = run(result([tclaim("Z is so", NOT_EST, [P(A)])]))
+check(d["further_reading"][0]["points"][0] == {"text": "Z is so", "kind": "summarised_point"},
+      "a structured claim with no located sentence is labelled as summarised")
+
+d = run(result(contexts=[
+    context("First fragment", "One sentence with two parts.", NOT_EST, [P(A)]),
+    context("Second fragment", "One sentence with two parts.", NOT_EST, [P(A)])]))
+check(len(d["further_reading"][0]["points"]) == 1,
+      "fragments of one sentence become one point")
+
+lost = context("Narrower, unconditionally",
+               "For skewed unimodal posteriors, the HDI tends to be narrower.",
+               NOT_EST, [P(A)], omitted=True)
+d = run(result(contexts=[lost]))
+lc = d["diagnostics"]["lost_conditions"][0]
+check(lc["answer_sentence"].startswith("For skewed unimodal posteriors")
+      and lc["atomic_claim"] == "Narrower, unconditionally",
+      "a lost condition is diagnosed with the answer's sentence beside the atomic claim")
+check("Narrower, unconditionally" not in user_facing(d)
+      and "condition" not in user_facing(d).lower(),
+      "and is not presented to the reader at all")
+
+# ===========================================================================
+print("\n[states] five states, each worded for the reader")
+d = run(result([tclaim("X", CONSISTENT, [P(A)])]))
+check(d["state"] == "no_specific_concern" and d["secondary"] == "",
+      "everything consistent: no specific concern, nothing more to say")
+
+d = run(result([tclaim("X", CONSISTENT, [P(A)]), tclaim("W", NOT_EST, [P(A)])]))
+check(d["state"] == "further_reading"
+      and d["summary"].startswith("Parts of this answer align with the local methodological guidance"),
+      "some consistent, some routed: parts align, some details go beyond")
+check(d["source_count"] == 1, "the number of sources, not of claims, is offered")
+
+d = run(result([tclaim("W", NOT_EST, [P(A)])]))
+check(d["state"] == "further_reading"
+      and d["summary"].startswith("Some details of this answer go beyond"),
+      "nothing consistent: does not claim that parts align")
+
+d = run(result([tclaim("X", CONSISTENT, [P(A)]), tclaim("W", NOT_EST, [P(BARE)])],
+               guidance=(A, BARE)))
+check(d["state"] == "no_specific_concern"
+      and "no curated sources are available" in d["secondary"],
+      "unsettled but unroutable: no concern, and says no sources exist yet")
+
+d = run(result(contexts=[context("C", "The answer's sentence about C.", CONFLICT, [P(A)])],
+               status="blocked_methodological_conflict"))
+check(d["state"] == "worth_checking", "a conflict with the guidance is worth checking")
+check(d["worth_checking"][0]["text"] == "The answer's sentence about C."
+      and d["worth_checking"][0]["topic"] == "Section A?",
+      "naming the answer's sentence and the topic")
+check("context reason" not in user_facing(d)
+      and d["diagnostics"]["conflicts"][0]["reasons"] == ["context reason"],
+      "the judge's own reason stays in the diagnostics")
+
+d = run(result(status="blocked_technical_conflict"))
+check(d["state"] == "worth_checking" and "technical statement" in d["summary"],
+      "a blocked technical conflict is worth checking, in its own words")
+
+d = run(result([tclaim("X", NOT_EST, [P(A)])], status="checking_incomplete"))
+check(d["state"] == "incomplete" and d["title"] == "Evidence check incomplete",
+      "incomplete checking is not presented as a concern about the answer")
+check(d["worth_checking"] == [], "and raises no worth-checking item")
+check(d["secondary"] == cf.INCOMPLETE_SECONDARY
+      and "does not mean the answer is wrong" in d["secondary"],
+      "it says once that incomplete checking does not mean the answer is wrong")
+check(cf.incomplete_assessment("boom")["secondary"] == cf.INCOMPLETE_SECONDARY,
+      "a failed assessment says the same")
+
+d = run(result(guidance=()))
+check(d["state"] == "outside_guidance" and "not covered" in d["summary"],
+      "nothing retrieved: outside the local guidance, not covered")
+
+d = run(result(guidance=(A,)))
+check(d["state"] == "outside_guidance" and "has not been compared" in d["summary"],
+      "retrieved but nothing judged: outside, and says it was not compared")
+
+# ===========================================================================
+print("\n[citations] an unmatched citation has its own notice")
+bad = NS(proposed_reference=NS(author="Lakens, Scheel, Ismar", year=2018,
+                               title="Justify your alpha", doi=None),
          verification=NS(crossref_verification=NS(status="not_verified"),
                          identity_conflict=False))
 clash = NS(proposed_reference=NS(author="C", year=2022, title="V", doi="10.1/c"),
            verification=NS(crossref_verification=NS(status="verified"),
                            identity_conflict=True))
-a = cf.assess_check_further(result([tclaim("A", CONSISTENT)],
-                                   references=[good, bad, clash]), index)
-check(rules(a) == ["reference_not_confirmed"] and len(a.triggers[0].items) == 2,
-      "an unmatched reference and an identity conflict both need checking")
+d = run(result([tclaim("X", CONSISTENT, [P(A)])], references=[bad]))
+check(d["state"] == "no_specific_concern" and d["citation_notice"] is not None,
+      "the notice stands alone and does not change the evidence state")
+check("could not be matched to a published record" in d["citation_notice"]["message"],
+      "an unmatched citation says so")
+d = run(result([tclaim("X", CONSISTENT, [P(A)])], references=[clash]))
+check("conflict with the published record" in d["citation_notice"]["message"],
+      "a citation whose details conflict says that instead")
 
-print("\n[rules] nothing to check against")
-a = cf.assess_check_further(result(guidance=[]), index)
-check(a.level == cf.LEVEL_NEEDED and "no_guidance" in rules(a),
-      "no guidance retrieved: the answer was not checked at all")
-a = cf.assess_check_further(result(), index)
-check(rules(a) == ["nothing_checked"] and a.level == cf.LEVEL_ADVISED,
-      "guidance retrieved but no claim judged: agreement is unknown")
+# ===========================================================================
+print("\n[reader-facing wording] no maintainer language, no counts")
+samples = [
+    run(result([tclaim("X", CONSISTENT, [P(A)])])),
+    run(result([tclaim("X", CONSISTENT, [P(A)]), tclaim("W", NOT_EST, [P(A)])])),
+    run(result([tclaim("W", NOT_EST, [P(BARE)])], guidance=(A, BARE))),
+    run(result(status="blocked_technical_conflict")),
+    run(result(status="checking_incomplete")),
+    run(result(guidance=())),
+    run(result(guidance=(A,))),
+]
+texts = []
+for s in samples:
+    texts += [s["title"], s["summary"], s["secondary"], s["about"]]
+    texts += [w["explanation"] for w in s["worth_checking"]]
+check(not any("your" in t.lower() for t in texts),
+      "nothing is addressed to the owner of the guidance")
+check(not any(ch.isdigit() for t in texts for ch in t),
+      "no counts in any title, summary or explanation")
+check(set(samples[0]) == set(cf.incomplete_assessment("boom")),
+      "a failed assessment has the same shape as a completed one")
 
-print("\n[rules] a lost condition that was not resolved")
-lost = NS(discovered_claim=NS(claim=NS(statement="E")),
-          material_restriction=NS(material_restriction_omitted=True),
-          contextual_methodological_consistency=NS(
-              status=NOT_EST, passages=[passage("What is alpha?")]))
-a = cf.assess_check_further(result([tclaim("A", CONSISTENT)], [lost]), index)
-check("condition_not_resolved" in rules(a), "is reported")
-resolved = NS(discovered_claim=NS(claim=NS(statement="E")),
-              material_restriction=NS(material_restriction_omitted=True),
-              contextual_methodological_consistency=NS(
-                  status=CONSISTENT, passages=[passage("What is alpha?")]))
-a = cf.assess_check_further(result([tclaim("A", CONSISTENT)], [resolved]), index)
-check("condition_not_resolved" not in rules(a),
-      "and not reported once the restored condition checks out")
-
-print("\n[rules] every 'check this' says where, or says there is nowhere")
-empty = Path(tempfile.mkdtemp())
-(empty / "Test Note.md").write_text(
-    NOTE.split("```references")[0] + "\n##### What is beta?\n\n" + "x " * 150,
-    encoding="utf-8")
-bare = rn.NotesIndex(empty)
-a = cf.assess_check_further(result([tclaim("A", NOT_EST)]), bare)
-check("no_curated_references" in rules(a),
-      "an unsettled group with no curated sources is reported as such")
-
-print("\n[real notes] the ETI/HDI answer from 30 September")
+# ===========================================================================
+print("\n[real notes] the ETI/HDI answer of 30 September")
 real = rn.NotesIndex()
 check(real.reference_errors == [], "every curated reference in the notes parses")
-section = ("Bayesian Decision Rules and Posterior Interpretation",
-           "Are all 95% credible intervals the same?")
-guide = [rn.Passage(*section, "t", 0.4)]
-
-
-def real_claim(statement, status):
-    return NS(claim=NS(statement=statement),
-              verification=NS(status="not_technically_verified"),
-              methodological_consistency=NS(
-                  status=status, reasons=["r"],
-                  passages=[rn.Passage(*section, "t", 0.4)]))
-
-
-eti_hdi = result([
-    real_claim("A 95% ETI leaves 2.5% of the posterior probability in each tail.", CONSISTENT),
-    real_claim("A 95% HDI contains the values with the highest posterior density.", NOT_EST),
-    real_claim("For skewed unimodal posteriors the HDI is typically narrower.", NOT_EST),
-    real_claim("For skewed unimodal distributions the HDI will generally be narrower.", CONSISTENT),
-], guidance=guide)
-a = cf.assess_check_further(eti_hdi, real)
-check(a.level == cf.LEVEL_ADVISED, "advises a check rather than raising an alarm")
-check(len(a.groups) == 1 and a.groups[0].heading == section[1],
-      "the unsettled claims fall under the credible-interval section")
-check({r.doi for r in a.groups[0].references} >= {
-          "10.1080/00031305.1996.10474359", "10.21105/joss.01541"},
-      "and carry that section's curated sources, Hyndman and bayestestR")
-check("no_curated_references" not in rules(a),
-      "so the reader is told where to check")
-d = a.to_dict()
-check(set(d) >= {"level", "headline", "triggers", "groups",
-                 "further_reading", "rules"}, "the payload has its fields")
-check(all(r["link"] for g in d["groups"] for r in g["references"]),
-      "every reference shown has a link to follow")
+CI = ("Bayesian Decision Rules and Posterior Interpretation",
+      "Are all 95% credible intervals the same?")
+LEE = next((p.note, p.heading) for p in real.passages
+           if p.heading.startswith('"The credible interval is just a confidence interval'))
+eti = result(
+    [tclaim("A 95% ETI leaves 2.5% in each tail.", CONSISTENT, [P(CI)])],
+    contexts=[
+        context("Both intervals contain 95% of the posterior probability.",
+                "Both intervals contain 95% of the posterior probability, but they "
+                "select different subsets of the parameter space to achieve this coverage.",
+                NOT_EST, [P(LEE, 0.6), P(CI, 0.3)]),
+        context("The HDI tends to be narrower than the ETI.",
+                "The HDI tends to be narrower because it excludes low-density tails "
+                "more aggressively than the ETI.", NOT_EST, [P(CI, 0.5)], omitted=True),
+        context("They coincide only when symmetric.",
+                "The HDI and ETI coincide only when the posterior distribution is "
+                "symmetric and unimodal.", NOT_EST, [P(CI, 0.5)]),
+    ],
+    guidance=(CI, LEE))
+d = cf.assess_check_further(eti, real).to_dict()
+check(d["state"] == "further_reading", "the answer offers further reading")
+check([g["heading"] for g in d["further_reading"]] == [CI[1]],
+      "one topic only: credible intervals, and no Lee & Yin group")
+check(d["source_count"] == 4 and {r["author_year"] for r in d["further_reading"][0]["references"]}
+      == {"Hyndman (1996)", "Kruschke (2015)", "Makowski et al. (2019)", "bayestestR documentation"},
+      "with the four curated sources in compact form")
+check(all(p["kind"] == "answer_sentence" for p in d["further_reading"][0]["points"]),
+      "every point shown is a sentence the answer actually wrote")
+access = {r["author_year"]: r["access_label"] for r in d["further_reading"][0]["references"]}
+check(access["Hyndman (1996)"] == "May need institutional access"
+      and access["Makowski et al. (2019)"] == "Free to read"
+      and access["Kruschke (2015)"] == "",
+      "access is shown where checked, and not invented where it was not")
 
 print()
 if failures:
