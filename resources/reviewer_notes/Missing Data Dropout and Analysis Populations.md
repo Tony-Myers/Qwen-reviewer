@@ -50,14 +50,16 @@ Reviewers should ask whether excluding incomplete observations is scientifically
 Complete-case analysis may be reasonable when:
 
 - very little information is missing;
-- missingness is plausibly unrelated to important outcomes after conditioning on observed variables;
+- missingness is plausibly unrelated to the outcome, given the covariates included in the analysis model;
 - sensitivity analyses produce similar conclusions.
 
 Simply stating that "only 5% was missing" is not sufficient.
 
 The mechanism producing missingness matters more than the percentage alone.
 
-MCAR is sufficient for unbiased complete-case estimation in many settings, but it is not a universally necessary condition. Under some MAR mechanisms, complete-case estimates can remain unbiased; this depends on the analysis model, the estimand, and how missingness relates to the variables in that model. Reviewers should therefore not assume either that complete-case analysis is unbiased only under MCAR or that MAR automatically implies biased complete-case estimates.
+MCAR is sufficient for unbiased complete-case estimation in many settings, but it is not a universally necessary condition. Complete-case estimates can remain unbiased under some MAR mechanisms, and even under some MNAR mechanisms: in a regression, for example, missingness in a covariate that depends on that covariate's own value but not on the outcome does not bias the complete-case coefficients. Whether this holds depends on the analysis model, the estimand, and how missingness relates to the variables in that model. Reviewers should therefore not assume either that complete-case analysis is unbiased only under MCAR or that MAR automatically implies biased complete-case estimates.
+
+The conditioning that matters for a complete-case analysis is on the variables in the analysis model. Observed variables outside that model do not make a complete-case analysis valid, however well they explain dropout; they can be used only by a method that includes them, such as multiple imputation or a likelihood-based analysis.
 
 ##### What are MCAR, MAR and MNAR?
 
@@ -67,7 +69,9 @@ Missingness is unrelated to both observed and unobserved information relevant to
 
 **MAR (Missing At Random)**
 
-After accounting for observed variables included in the model, missingness no longer depends on the missing value itself.
+Given the observed data, missingness does not depend on the values that are unobserved. It may still depend strongly on observed variables.
+
+Whether a particular analysis is valid under MAR depends on whether it uses the observed variables that carry this dependence. An imputation or likelihood-based analysis that leaves them out does not inherit the protection of MAR.
 
 **MNAR (Missing Not At Random)**
 
@@ -79,7 +83,7 @@ MNAR is often possible.
 
 Neither assumption can usually be confirmed from the observed data alone.
 
-A partial exception is worth knowing. MCAR is testable to a limited extent, and a reviewer may meet Little's MCAR test in a manuscript. Failing it is evidence against MCAR; passing it is not evidence for it, and it says nothing at all about the distinction between MAR and MNAR, which is the distinction that matters.
+A partial exception is worth knowing. MCAR is testable to a limited extent, and a reviewer may meet Little's MCAR test in a manuscript. Failing it is evidence against MCAR. Passing it does not establish MCAR: the test examines only a limited consequence of MCAR, differences in observed means between missing-data patterns under an assumption of multivariate normality, and it may lack power. It says nothing at all about the distinction between MAR and MNAR, which is the distinction that matters.
 
 ##### What can baseline comparisons between completers and dropouts show?
 
@@ -129,7 +133,9 @@ The required number generally increases with the **fraction of missing informati
 
 Authors should use enough imputations that Monte Carlo error from the imputation procedure is acceptably small.
 
-A commonly cited practical rule of thumb is to use approximately **m = 100 × FMI** imputations, where FMI is the fraction of missing information expressed as a proportion. Thus, an FMI of 0.30 would suggest about thirty imputations. This is a rule of thumb rather than a universal requirement, and it is not equivalent to saying that the number of imputations should equal the percentage of incomplete cases.
+Two practical rules of thumb are commonly cited. White, Royston and Wood (2011) suggest at least as many imputations as the percentage of incomplete cases: about thirty when 30% of cases have a missing value. A rule stated in terms of the fraction of missing information is approximately **m = 100 × FMI**, with FMI as a proportion, so an FMI of 0.30 also suggests about thirty.
+
+The two coincide only when the fraction of missing information equals the fraction of incomplete cases. FMI is not known until the data have been imputed and is often smaller, so the percentage rule can be applied in advance and is usually the more conservative. Either is a reasonable basis for a manuscript; neither is a universal requirement.
 
 The direction matters as much as the number. More missing information generally requires **more** imputations, not fewer, because finite-multiple-imputation estimates become more sensitive to Monte Carlo error as FMI increases. Any rule that reduces m as FMI rises has the relationship inverted.
 
@@ -183,6 +189,8 @@ No.
 Mixed-effects models and FIML commonly remain valid under MAR assumptions.
 
 They do **not** remove bias arising from MNAR missingness.
+
+This applies to missing outcome values. A mixed-effects model fitted in standard software normally drops any observation with a missing covariate value, and for a missing baseline covariate that means the participant. For incomplete covariates it is therefore a complete-case analysis unless the covariates were imputed or modelled jointly. A statement that a mixed model "handled the missing data" should be read as covering missing outcomes only.
 
 Reviewers should therefore ask whether the assumed missing-data mechanism is plausible.
 
@@ -315,7 +323,7 @@ It does not cover:
 - inverse probability weighting;
 - survival censoring.
 
-None of those are covered by any note in this set, so a question about them will return passages that are at best adjacent. Missing *summary statistics* in the studies of a meta-analysis -- a standard deviation that had to be reconstructed from a standard error or a *p* value -- is a different problem from a missing observation, and is covered in the note on effect sizes.
+None of those is covered here in relation to missing observations, so a question about them will return passages that are at best adjacent. Some appear in other notes in other contexts: estimands and inverse probability weighting in the note on causal inference, publication bias in the note on effect sizes, and censoring briefly in the note on choosing statistical distributions. Missing *summary statistics* in the studies of a meta-analysis -- a standard deviation that had to be reconstructed from a standard error or a *p* value -- is a different problem from a missing observation, and is covered in the note on effect sizes.
 
 #### Quick reviewer checklist
 
