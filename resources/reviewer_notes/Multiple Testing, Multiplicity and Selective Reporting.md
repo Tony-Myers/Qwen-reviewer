@@ -493,7 +493,7 @@ However, effect sizes and confidence intervals do not automatically solve multip
 
 Failure to reject a null hypothesis after a multiplicity adjustment does not establish that the effect is absent.
 
-For example, a result that no longer crosses a decision threshold after adjustment may reflect increased protection against false rejection rather than positive evidence that the underlying effect is zero or negligible.
+For example, a result that no longer crosses a decision threshold after adjustment has a *p*-value above the stricter threshold that the adjustment applies to that test in order to control the chosen error rate (for example, the family-wise error rate or the false discovery rate) across the family of tests. That error rate is a property of the procedure across the family, not of the individual result. Because the stricter threshold also lowers the power of each test, failure to reject after adjustment is even less informative about whether the effect is negligible than an unadjusted non-significant result, and it is not positive evidence that the underlying effect is zero or negligible.
 
 Evidence for absence or practical equivalence requires an inferential framework capable of addressing that question, such as an appropriately designed equivalence analysis or other methods that directly quantify evidence concerning negligible effects.
 
