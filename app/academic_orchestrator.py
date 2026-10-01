@@ -380,6 +380,11 @@ class DiscoveredClaimAssessment:
                         }
                         for passage in methodology.passages
                     ],
+                    **(
+                        {"assessment_error": methodology.assessment_error}
+                        if methodology.assessment_error
+                        else {}
+                    ),
                 }
                 if methodology is not None
                 else None

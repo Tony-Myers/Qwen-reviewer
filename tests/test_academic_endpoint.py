@@ -508,7 +508,7 @@ try:
 
 
 
-    print("\n[1d] malformed methodology output is a controlled endpoint failure")
+    print("\n[1d] malformed methodology output no longer withholds the answer")
 
     saved_methodology_orchestrator = (
         server.academic_reconciliation_orchestrator.run_academic_reconciliation
@@ -604,14 +604,26 @@ try:
             )
             payload = response_payload(response)
 
+            # Since 1 October 2026 an unusable judgement makes that claim
+            # "not established" instead of failing the request; see
+            # tests/test_academic_methodology_assessment_failure.py.
             check(
-                response.status_code == 502,
-                f"{case_name} becomes controlled HTTP 502",
+                isinstance(response, dict)
+                and payload["release"]["safe_to_present"] is True,
+                f"{case_name} is presented rather than returning HTTP 502",
+            )
+            methodology = (
+                payload["initial_assessment"]["technical_claims"][0]
+                ["methodological_consistency"]
+                if "initial_assessment" in payload
+                else payload["technical_claims"][0]["methodological_consistency"]
             )
             check(
-                payload["error"]
-                == "Academic methodological checking could not be completed.",
-                f"{case_name} receives stable methodology-checking error",
+                methodology["status"]
+                == academic_methodology.METHODOLOGICAL_STATUS_NOT_ESTABLISHED
+                and "MethodologicalAssessmentOutputError"
+                in methodology.get("assessment_error", ""),
+                f"{case_name} is recorded as not established, with the error kept",
             )
 
         print(

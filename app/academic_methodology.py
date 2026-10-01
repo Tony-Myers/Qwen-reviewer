@@ -14,6 +14,7 @@ provenance; model invocation is injected separately.
 """
 
 from dataclasses import dataclass
+import sys
 from typing import Any
 
 import academic_chat
@@ -38,6 +39,15 @@ class MethodologicalAssessmentOutputError(ValueError):
     """Raised when methodology-assessor output violates its contract."""
 
 
+# Recorded as the reason when the assessor's output for a claim could not be
+# used. The claim is then treated as not established, like any other claim the
+# guidance does not settle, so one unusable judgement cannot withhold an
+# answer; the underlying error is kept in assessment_error for diagnostics.
+METHODOLOGICAL_ASSESSMENT_NOT_COMPLETED_REASON = (
+    "The methodological check could not be completed for this claim."
+)
+
+
 @dataclass
 class MethodologicalConsistencyResult:
     """Auditable assessment of one claim against retrieved local guidance."""
@@ -46,9 +56,10 @@ class MethodologicalConsistencyResult:
     claim: academic_chat.TechnicalClaim
     passages: list[reviewer_notes.Passage]
     reasons: list[str]
+    assessment_error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "status": self.status,
             "claim": self.claim.to_dict(),
             "passages": [
@@ -61,6 +72,9 @@ class MethodologicalConsistencyResult:
             ],
             "reasons": list(self.reasons),
         }
+        if self.assessment_error:
+            out["assessment_error"] = self.assessment_error
+        return out
 
 
 @dataclass
@@ -72,6 +86,7 @@ class ContextualMethodologicalConsistencyResult:
     source_context: academic_claim_coverage.ClaimSourceContext
     passages: list[reviewer_notes.Passage]
     reasons: list[str]
+    assessment_error: str = ""
 
 
 def methodological_consistency_output_schema() -> dict[str, Any]:
@@ -410,17 +425,27 @@ def assess_contextual_methodological_consistency(
     )
     schema = methodological_consistency_output_schema()
 
-    assessor_output = assessor(
-        prompt=prompt,
-        schema=schema,
-    )
-
-    return build_contextual_methodological_consistency(
-        claim=claim,
-        source_context=source_context,
-        passages=passages,
-        assessor_output=assessor_output,
-    )
+    try:
+        assessor_output = assessor(
+            prompt=prompt,
+            schema=schema,
+        )
+        return build_contextual_methodological_consistency(
+            claim=claim,
+            source_context=source_context,
+            passages=passages,
+            assessor_output=assessor_output,
+        )
+    except ValueError as exc:
+        error = _assessment_not_completed(claim, passages, exc)
+        return ContextualMethodologicalConsistencyResult(
+            status=METHODOLOGICAL_STATUS_NOT_ESTABLISHED,
+            claim=claim,
+            source_context=source_context,
+            passages=list(passages),
+            reasons=[METHODOLOGICAL_ASSESSMENT_NOT_COMPLETED_REASON],
+            assessment_error=error,
+        )
 
 
 def assess_methodological_consistency(
@@ -435,13 +460,53 @@ def assess_methodological_consistency(
     )
     schema = methodological_consistency_output_schema()
 
-    assessor_output = assessor(
-        prompt=prompt,
-        schema=schema,
-    )
+    try:
+        assessor_output = assessor(
+            prompt=prompt,
+            schema=schema,
+        )
+        return build_methodological_consistency(
+            claim=claim,
+            passages=passages,
+            assessor_output=assessor_output,
+        )
+    except ValueError as exc:
+        error = _assessment_not_completed(claim, passages, exc)
+        return MethodologicalConsistencyResult(
+            status=METHODOLOGICAL_STATUS_NOT_ESTABLISHED,
+            claim=claim,
+            passages=list(passages),
+            reasons=[METHODOLOGICAL_ASSESSMENT_NOT_COMPLETED_REASON],
+            assessment_error=error,
+        )
 
-    return build_methodological_consistency(
-        claim=claim,
-        passages=passages,
-        assessor_output=assessor_output,
+
+def _assessment_not_completed(
+    claim: academic_chat.TechnicalClaim,
+    passages: list[reviewer_notes.Passage],
+    exc: ValueError,
+) -> str:
+    """Decide whether a failed assessment degrades, and log it if so.
+
+    Only unusable model output degrades to "not established": a contract
+    violation (MethodologicalAssessmentOutputError) or output the assessor
+    could not decode, which it reports as a ValueError subclass. A failure
+    in application-owned inputs -- no retrieved passages, a non-claim --
+    is a programming error and is raised as before. Backend failures are
+    RuntimeErrors and are not caught here at all.
+    """
+    if not isinstance(claim, academic_chat.TechnicalClaim) or not (
+        isinstance(passages, list)
+        and passages
+        and all(isinstance(p, reviewer_notes.Passage) for p in passages)
+    ):
+        raise exc
+
+    error = f"{type(exc).__name__}: {exc}"
+    print(
+        "[methodology] check not completed for claim "
+        f"{claim.statement[:100]!r}: {error}",
+        file=sys.stderr,
+        flush=True,
     )
+    return error
