@@ -3357,12 +3357,17 @@ expected_contextual_query = (
     )
 )
 
-assert expected_contextual_query in contextual_retrieval_queries
+# Since 1 October 2026 the standalone search for a claim with a verified
+# answer location uses that location too (see
+# tests/test_academic_claim_context_retrieval.py), so both searches use the
+# contextual query. The standalone judgement still concerns the claim alone:
+# only the contextual prompt carries the answer context (checked below).
+assert contextual_retrieval_queries.count(expected_contextual_query) == 2
 assert (
     academic_orchestrator._technical_claim_methodological_query(
         duplicate_discovered.claim
     )
-    in contextual_retrieval_queries
+    not in contextual_retrieval_queries
 )
 
 contextual_prompts = [

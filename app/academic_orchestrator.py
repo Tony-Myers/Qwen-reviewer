@@ -150,6 +150,29 @@ def _contextual_claim_methodological_query(
     )
 
 
+def _standalone_claim_methodological_query(
+    claim: academic_chat.TechnicalClaim,
+    source_context: academic_claim_coverage.ClaimSourceContext | None,
+) -> str:
+    """Build the guidance query for a claim's standalone assessment.
+
+    A claim split out of the answer is short and can lose the words that
+    name its topic: "Increasing m does not recover unobserved information"
+    says nothing about imputation. When the claim has a verified location
+    in the answer, its application-owned source sentence and bounded
+    context are added to the query, exactly as for contextual assessment.
+    This changes only where guidance is looked for: the proposition the
+    assessor judges is still the claim alone. The original question is
+    never used, and no question-level guidance is added, so each claim is
+    still judged only against guidance retrieved for that claim (see
+    tests/test_academic_claim_guidance_isolation.py). A claim with no
+    verified location keeps the claim-only query.
+    """
+    if source_context is None:
+        return _technical_claim_methodological_query(claim)
+    return _contextual_claim_methodological_query(claim, source_context)
+
+
 def _normalise_retrieval_doi(doi: str | None) -> str | None:
     """Normalise a DOI for retrieval-identity continuity checks."""
     if doi is None:
@@ -907,6 +930,21 @@ def assess_academic_draft(
             claims_for_assessment.append(claim)
             assessed_keys.add(key)
 
+    # The verified answer location of each split-out claim, keyed as the
+    # claims above are deduplicated. Where a proposition occurs more than
+    # once, the first verified occurrence is used.
+    verified_claim_contexts: dict[
+        tuple[str, str | None],
+        academic_claim_coverage.ClaimSourceContext,
+    ] = {}
+    for assessment in discovered_claim_assessments:
+        verified_claim_contexts.setdefault(
+            _technical_claim_proposition_key(
+                assessment.discovered_claim.claim
+            ),
+            assessment.source_context,
+        )
+
     technical_claims = []
 
     for claim in claims_for_assessment:
@@ -916,7 +954,12 @@ def assess_academic_draft(
         claim_guidance = local_guidance
         if claim_methodological_retriever is not None:
             claim_guidance = claim_methodological_retriever(
-                _technical_claim_methodological_query(claim)
+                _standalone_claim_methodological_query(
+                    claim,
+                    verified_claim_contexts.get(
+                        _technical_claim_proposition_key(claim)
+                    ),
+                )
             )
 
         if (
