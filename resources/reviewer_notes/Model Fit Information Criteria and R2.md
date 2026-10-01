@@ -116,6 +116,64 @@ Where DIC is reported, reviewers can ask which version was calculated, at which 
 
 Where available, **PSIS-LOO and WAIC are generally preferred because they estimate out-of-sample predictive performance more directly and provide additional diagnostics.**
 
+```references
+- cite: Spiegelhalter, D. J., Best, N. G., Carlin, B. P., & van der Linde, A. (2002). Bayesian measures of model complexity and fit. Journal of the Royal Statistical Society Series B: Statistical Methodology, 64(4), 583–639.
+  doi: 10.1111/1467-9868.00353
+  supports: The definition of DIC and of the effective number of parameters, pD, including their dependence on parameterisation.
+  short: the paper that introduced DIC and pD
+  type: Journal article
+  checked: 2026-10-01, Crossref; access not recorded because OpenAlex links this DOI to the published discussion of the paper rather than the paper itself
+- cite: Spiegelhalter, D. J., Best, N. G., Carlin, B. P., & van der Linde, A. (2014). The deviance information criterion: 12 years on. Journal of the Royal Statistical Society Series B: Statistical Methodology, 76(3), 485–493.
+  doi: 10.1111/rssb.12062
+  supports: The limitations of DIC identified since its introduction, including the choice of focus in hierarchical models.
+  short: limitations of DIC, twelve years on
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, Crossref (the fourth author's surname is recorded as "Linde"; "van der Linde" is from OpenAlex)
+- cite: Celeux, G., Forbes, F., Robert, C. P., & Titterington, D. M. (2006). Deviance information criteria for missing data models. Bayesian Analysis, 1(4).
+  doi: 10.1214/06-BA122
+  supports: Why DIC is not uniquely defined for mixture and other latent-variable models, and the alternative versions that result.
+  short: DIC for mixture and missing-data models
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (diamond, CC BY, free to read at the publisher)
+  checked: 2026-10-01, Crossref (no page numbers in the Crossref or OpenAlex record)
+- cite: Plummer, M. (2008). Penalized loss functions for Bayesian model comparison. Biostatistics, 9(3), 523–539.
+  doi: 10.1093/biostatistics/kxm049
+  supports: DIC as an approximation that under-penalises complexity unless the effective number of parameters is small relative to the number of observations.
+  short: why DIC can under-penalise complex models
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, OpenAlex (Crossref unavailable)
+- cite: Gelman, A., Hwang, J., & Vehtari, A. (2013). Understanding predictive information criteria for Bayesian models. Statistics and Computing, 24(6), 997–1016.
+  doi: 10.1007/s11222-013-9416-2
+  supports: How AIC, DIC and WAIC relate as estimates of out-of-sample predictive accuracy.
+  short: AIC, DIC and WAIC compared
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-10-01, OpenAlex (Crossref unavailable; OpenAlex gives 2013, the year of online publication)
+- cite: Vehtari, A., Gelman, A., & Gabry, J. (2017). Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC. Statistics and Computing, 27(5), 1413–1432.
+  doi: 10.1007/s11222-016-9696-4
+  supports: PSIS-LOO and WAIC as estimates of out-of-sample predictive performance, with the Pareto k diagnostic.
+  short: PSIS-LOO and WAIC in practice
+  type: Journal article
+  access: repository
+  access_url: https://arxiv.org/abs/1507.04544
+  access_checked: 2026-10-01, OpenAlex: green, submitted version on arXiv
+  checked: 2026-10-01, Crossref (published online 2016; volume 27 is 2017)
+- cite: Dias, S., Sutton, A. J., Ades, A. E., & Welton, N. J. (2013). Evidence synthesis for decision making 2: A generalized linear modeling framework for pairwise and network meta-analysis of randomized controlled trials. Medical Decision Making, 33(5), 607–617.
+  doi: 10.1177/0272989X12458724
+  supports: The use of DIC and residual deviance to compare models in network meta-analysis.
+  short: DIC in network meta-analysis
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY-NC, free to read at the publisher)
+  checked: 2026-10-01, Crossref (published online 2012; volume 33 is 2013)
+```
+
 ##### Can AIC, BIC, DIC, WAIC or LOOIC be compared across different datasets?
 
 Usually **no**.
