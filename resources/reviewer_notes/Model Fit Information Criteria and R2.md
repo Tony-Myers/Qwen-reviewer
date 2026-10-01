@@ -99,19 +99,22 @@ Despite its name, BIC is derived from frequentist likelihood theory and should n
 
 ##### What is DIC?
 
-**Deviance Information Criterion (DIC)** combines model fit with a penalty for model complexity.
+**Deviance Information Criterion (DIC)** is an older Bayesian criterion that combines model fit, measured by the deviance, with a penalty for model complexity based on the effective number of parameters (*p*D).
 
 Like AIC, WAIC and LOOIC, **lower DIC values indicate a better trade-off between fit and complexity because DIC is reported on a deviance scale.**
 
-DIC remains widely reported in Bayesian network meta-analysis and software such as WinBUGS, OpenBUGS, JAGS, `gemtc` and `MBNMAdose`.
+DIC remains widely reported in Bayesian network meta-analysis and in software such as WinBUGS, OpenBUGS, JAGS, `gemtc` and `MBNMAdose`.
 
 Reviewers should recognise its limitations:
 
-- DIC is not invariant to parameterisation.
-- DIC may perform poorly for hierarchical, mixture or weakly identified models.
-- DIC estimates predictive performance less reliably than modern approaches.
+- DIC is not invariant to parameterisation, because it is calculated at a point estimate of the parameters, usually the posterior mean.
+- In a hierarchical model, DIC depends on which level is treated as the focus. A DIC based on the likelihood conditional on the random effects and one based on the likelihood with the random effects integrated out answer different questions and should not be compared with each other.
+- The effective number of parameters can be poorly estimated, and can even be negative, in mixture models, in weakly identified models and when the prior conflicts with the data.
+- DIC tends to under-penalise complexity when the effective number of parameters is not small relative to the number of observations, so it can favour overfitted models.
 
-Where available, WAIC or PSIS-LOO are generally preferred.
+Where DIC is reported, reviewers can ask which version was calculated, at which level of the model, and whether the reported *p*D is plausible.
+
+Where available, **PSIS-LOO and WAIC are generally preferred because they estimate out-of-sample predictive performance more directly and provide additional diagnostics.**
 
 ##### Can AIC, BIC, DIC, WAIC or LOOIC be compared across different datasets?
 

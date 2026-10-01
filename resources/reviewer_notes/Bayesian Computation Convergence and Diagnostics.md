@@ -114,22 +114,6 @@ Low BFMI suggests inefficient exploration and possible sampling problems.
 
 BFMI should be considered together with divergent transitions and other HMC diagnostics rather than interpreted in isolation.
 
-##### What is DIC?
-
-**DIC (Deviance Information Criterion)** is an older Bayesian model comparison criterion that combines model fit with a penalty for model complexity.
-
-Like WAIC and LOOIC, **smaller DIC values indicate a better trade-off between fit and complexity because DIC is reported on a deviance scale.**
-
-DIC remains widely reported in Bayesian network meta-analysis and disease-modelling software, including WinBUGS, OpenBUGS, JAGS, `gemtc` and `MBNMAdose`.
-
-However, reviewers should recognise its limitations:
-
-- DIC is not invariant to parameterisation.
-- DIC may perform poorly for hierarchical, mixture or weakly identified models.
-- DIC uses an asymptotic approximation and may underestimate predictive uncertainty.
-
-Where available, **PSIS-LOO and WAIC are generally preferred because they estimate out-of-sample predictive performance more directly and provide additional diagnostics.**
-
 #### Common misconceptions
 
 ##### "The model converged because the software finished."
@@ -237,6 +221,6 @@ Modern Bayesian software rarely requires thinning, as increasing the number of p
 
 ---
 
-*Based on:* Kruschke, J. K. (2021), https://doi.org/10.1038/s41562-021-01177-7; van Doorn, J., et al. (2021). The JASP guidelines for conducting and reporting a Bayesian analysis. *Psychonomic Bulletin & Review*, 28, 813-826. https://doi.org/10.3758/s13423-020-01798-5
+*Based on:* Kruschke, J. K. (2021), https://doi.org/10.1038/s41562-021-01177-7; van Doorn, J., et al. (2021). The JASP guidelines for conducting and reporting a Bayesian analysis. *Psychonomic Bulletin & Review*, 28, 813-826. https://doi.org/10.3758/s13423-020-01798-5. See also the note on model fit, information criteria and R² for DIC.
 
 *This note is original work by Tony Myers. It summarises and restates guidance from the sources above; it does not reproduce them.*
