@@ -174,6 +174,26 @@ check("RCT prognostic covariates -> precision and efficiency",
           for passage in rct_prognostic
       ))
 
+# Multiple-imputation guidance abbreviates the fraction of missing information
+# as FMI. When an edit used the abbreviation almost throughout, the plain-words
+# question stopped retrieving the Missing Data note at all and fell through to
+# BFMI, an unrelated HMC diagnostic. The phrase must stay findable, and the
+# relative-efficiency section must answer its own question.
+fmi = index.search("What is the fraction of missing information?", k=3)
+check("fraction of missing information -> the multiple-imputation guidance",
+      bool(fmi)
+      and fmi[0].note.startswith("Missing Data")
+      and "fraction of missing information" in fmi[0].text.lower())
+
+mi_re = index.search(
+    "What is the relative efficiency of multiple imputation with m imputations?",
+    k=3,
+)
+check("MI relative efficiency -> the relative-efficiency section",
+      bool(mi_re)
+      and mi_re[0].heading == "How does FMI affect relative efficiency?"
+      and "1 / (1 + fmi/m)" in mi_re[0].text.lower())
+
 # Known coverage gap rather than a retrieval fault: prior predictive checks are
 # required by the BARG and appear in exactly one passage, inside the BARG
 # summary table, with no section of their own in any note. Recorded here so the

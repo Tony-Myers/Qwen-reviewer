@@ -125,13 +125,23 @@ There is no universal number.
 
 The traditional recommendation of five imputations is often inadequate.
 
-The required number generally increases with the fraction of missing information.
+The required number generally increases with the **fraction of missing information (FMI)**. FMI describes the information lost about a particular estimand because of missing data; it should not be confused with the proportion or percentage of cases that contain missing values. The two quantities can differ substantially.
 
-Authors should use enough imputations that Monte Carlo error from the imputation itself is negligible.
+Authors should use enough imputations that Monte Carlo error from the imputation procedure is acceptably small.
 
-A widely cited rule of thumb sets the number of imputations at roughly one hundred times the fraction of missing information, which is the same as saying at least the percentage of incomplete cases. That is far more than five in most real datasets: a fraction of missing information of 0.3 implies about thirty imputations, not three.
+A commonly cited practical rule of thumb is to use approximately **m = 100 × FMI** imputations, where FMI is the fraction of missing information expressed as a proportion. Thus, an FMI of 0.30 would suggest about thirty imputations. This is a rule of thumb rather than a universal requirement, and it is not equivalent to saying that the number of imputations should equal the percentage of incomplete cases.
 
-The direction matters as much as the number. More missing information requires **more** imputations, not fewer, because the between-imputation variance is being estimated from m draws and its contribution to the total variance grows with the fraction missing. Any rule that reduces m as missingness rises has the relationship inverted.
+The direction matters as much as the number. More missing information generally requires **more** imputations, not fewer, because finite-multiple-imputation estimates become more sensitive to Monte Carlo error as FMI increases. Any rule that reduces m as FMI rises has the relationship inverted.
+
+##### How does FMI affect relative efficiency?
+
+For a fixed number of imputations, the relative efficiency of using **m** imputations rather than an infinite number of imputations, for an estimand with fraction of missing information FMI, is commonly approximated by **RE ≈ 1 / (1 + FMI/m)**.
+
+This relationship means that, for a fixed **m**, relative efficiency decreases as FMI increases. Conversely, increasing **m** makes the finite-imputation estimate approach the result that would be obtained with infinitely many imputations. For example, when FMI is high, more imputations are needed to achieve the same relative efficiency than when FMI is low.
+
+Relative efficiency is usually high even with few imputations: with FMI = 0.3, five imputations give RE ≈ 0.94, and RE ≥ 0.95 requires only m ≥ 19 × FMI, about six imputations. The rule m ≈ 100 × FMI corresponds to RE ≈ 0.99. The case for using many more than five imputations therefore rests mainly on the stability and replicability of standard errors, confidence intervals and *p*-values, which the relative efficiency of the point estimate does not capture.
+
+This finite-imputation relative efficiency should not be confused with the loss of information caused by the missing data themselves. Increasing **m** reduces the additional Monte Carlo uncertainty arising from using a finite number of imputations; it does not recover information that was not observed.
 
 ##### Does imputing missing outcomes always add something?
 
