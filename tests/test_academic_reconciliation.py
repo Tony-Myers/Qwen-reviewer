@@ -147,16 +147,9 @@ if academic_reconciliation is not None:
     )
 
     check(
-        len(corrections.methodological) == 1,
-        "methodological conflict becomes one correction",
-    )
-    check(
-        corrections.methodological[0].claim is methodological_claim,
-        "methodological correction retains original structured claim",
-    )
-    check(
-        corrections.methodological[0].passages == [passage],
-        "methodological correction retains application-owned guidance",
+        not corrections.methodological,
+        "a semantic methodological conflict is evidence, not correction "
+        "material, even beside deterministic and source blockers",
     )
 
     check(
@@ -313,52 +306,13 @@ contextual_corrections = (
 
 check(
     hasattr(contextual_corrections, "contextual_methodological"),
-    "correction set exposes contextual methodological corrections",
+    "correction set keeps its contextual methodological field",
 )
-
-if hasattr(contextual_corrections, "contextual_methodological"):
-    check(
-        len(contextual_corrections.contextual_methodological) == 1,
-        "contextual methodological conflict becomes one correction",
-    )
-
-    if contextual_corrections.contextual_methodological:
-        contextual_correction = (
-            contextual_corrections.contextual_methodological[0]
-        )
-
-        check(
-            contextual_correction.claim is contextual_claim,
-            "contextual correction retains structured claim",
-        )
-        check(
-            contextual_correction.source_context is contextual_source,
-            "contextual correction retains occurrence source context",
-        )
-        check(
-            contextual_correction.passages == [contextual_passage],
-            "contextual correction retains application-owned guidance",
-        )
-
-        contextual_payload = repr(contextual_correction.to_dict())
-
-        check(
-            contextual_source.source_sentence in contextual_payload,
-            "contextual correction exposes verified source sentence",
-        )
-        check(
-            contextual_source.context_excerpt in contextual_payload,
-            "contextual correction exposes bounded context excerpt",
-        )
-        check(
-            contextual_passage.text in contextual_payload,
-            "contextual correction exposes methodological guidance text",
-        )
-        check(
-            "MODEL MUST NOT RECEIVE THIS CONTEXTUAL ASSESSOR REASON"
-            not in contextual_payload,
-            "contextual assessor reason is excluded from correction payload",
-        )
+check(
+    contextual_corrections.is_empty(),
+    "a contextual methodological conflict alone creates no correction, so it "
+    "cannot trigger a revision",
+)
 
 contextual_consistent = academic_orchestrator.DiscoveredClaimAssessment(
     discovered_claim=contextual_discovered,
@@ -396,7 +350,7 @@ if hasattr(nonblocking_contextual, "contextual_methodological"):
 
 
 print(
-    "\n[academic reconciliation contextual supersession of standalone conflict]"
+    "\n[academic reconciliation: no methodological conflict is correction material]"
 )
 
 standalone_context_conflict = academic_orchestrator.TechnicalClaimResult(
@@ -424,13 +378,8 @@ superseded_corrections = academic_reconciliation.extract_academic_corrections(
 )
 
 check(
-    not superseded_corrections.methodological,
-    "completed occurrence-aware assessment suppresses context-poor "
-    "standalone methodological correction",
-)
-check(
-    not superseded_corrections.contextual_methodological,
-    "contextual consistency creates no replacement correction",
+    superseded_corrections.is_empty(),
+    "superseded standalone conflict creates no correction",
 )
 
 paired_contextual_conflict_corrections = (
@@ -442,14 +391,8 @@ paired_contextual_conflict_corrections = (
 )
 
 check(
-    not paired_contextual_conflict_corrections.methodological,
-    "contextual assessment supersedes duplicate standalone correction",
-)
-check(
-    len(
-        paired_contextual_conflict_corrections.contextual_methodological
-    ) == 1,
-    "occurrence-aware conflict remains one blocking contextual correction",
+    paired_contextual_conflict_corrections.is_empty(),
+    "standalone and contextual conflicts together create no correction",
 )
 
 unassessed_context = academic_orchestrator.DiscoveredClaimAssessment(
@@ -470,12 +413,8 @@ unsuperseded_corrections = academic_reconciliation.extract_academic_corrections(
 )
 
 check(
-    len(unsuperseded_corrections.methodological) == 1,
-    "absent contextual assessment preserves standalone methodological correction",
-)
-check(
-    not unsuperseded_corrections.contextual_methodological,
-    "unassessed occurrence invents no contextual correction",
+    unsuperseded_corrections.is_empty(),
+    "an unsuperseded standalone conflict creates no correction either",
 )
 
 

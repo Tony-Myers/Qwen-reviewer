@@ -5,9 +5,10 @@ Progressive disclosure of the evidence assessment in the chat page.
     python3 tests/test_academic_evidence_disclosure_ui.py
 
 Level 1, always visible, is the compact evidence statement. Level 2, behind
-"View evidence and sources", is the curated further reading, with full
-references and the points not settled by the guidance behind toggles of their
-own. Level 3, behind "Technical checking details", holds the diagnostics and
+"View evidence and sources" ("View checking details" when there are no
+sources), is the curated further reading, with full
+references and the points not established by the local guidance check behind
+toggles of their own. Level 3, behind "Technical checking details", holds the diagnostics and
 the existing verification panel. The structural checks always run; the
 rendering checks run the page's own functions under Node when it is installed.
 """
@@ -41,15 +42,17 @@ print("\n[structure] the page builds three levels")
 renderer = function_source("renderAcademicCheckFurther")
 evidence = function_source("renderAcademicEvidence")
 check(bool(renderer) and bool(evidence), "the evidence renderers exist")
-check("<summary>View evidence and sources</summary>" in renderer,
-      "level two sits behind 'View evidence and sources'")
-check("<summary>Show the points not settled by the guidance</summary>" in renderer,
+check("'View evidence and sources'" in renderer and "'View checking details'" in renderer,
+      "level two is labelled by what it holds")
+check("Show the points not settled by the guidance" not in HTML,
+      "the old wording, which credited the guidance rather than the check, is gone")
+check("<summary>Show points not established by the local guidance check</summary>" in renderer,
       "the points sit behind their own toggle, labelled without a count")
 check("<summary>Technical checking details</summary>" in renderer,
       "level three sits behind 'Technical checking details'")
 check(renderer.index("Technical checking details") < renderer.index("h += auditHtml"),
       "the existing verification panel is inside level three")
-check("diagnostics" not in renderer[:renderer.index("View evidence and sources")]
+check("diagnostics" not in renderer[:renderer.index("hasSources")]
       .replace("renderCheckFurtherDiagnostics", ""),
       "level one reads nothing from the diagnostics")
 check("your notes" not in HTML.lower(),
@@ -110,7 +113,7 @@ process.stdout.write(out);
 
     level2_at = html.find("View evidence and sources")
     level3_at = html.find("Technical checking details")
-    points_at = html.find("Show the points not settled by the guidance")
+    points_at = html.find("Show points not established by the local guidance check")
     level1 = html[:level2_at]
     check(level2_at > 0 and level3_at > level2_at and points_at > level2_at,
           "the three levels render in order")
@@ -170,6 +173,21 @@ else:
           "the older technical-claim coverage notice appears only in the technical details")
     check(out.find("COVERAGE-REASON") > level3_at,
           "the coverage failure reason stays in the technical details")
+    check("View checking details" in out and "View evidence and sources" not in out,
+          "with no sources, level two is labelled 'View checking details'")
+
+    # The same state with a source cited by the answer is labelled for sources.
+    cited = dict(incomplete, references=[{"reference": {"author": "Altman", "year": 1995,
+                                                      "title": "Absence of evidence"}}])
+    script = "\n".join(page_functions) + (
+        f"\nprocess.stdout.write(renderAcademicEvidence({json.dumps(cited)}));")
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(script)
+    run = subprocess.run([node, f.name], capture_output=True, text=True, timeout=30)
+    Path(f.name).unlink()
+    check(run.returncode == 0 and "View evidence and sources" in run.stdout
+          and "View checking details" not in run.stdout,
+          "a source cited by the answer keeps 'View evidence and sources'")
 
 print()
 if failures:

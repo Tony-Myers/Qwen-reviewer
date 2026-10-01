@@ -419,6 +419,12 @@ def standalone_methodology_is_contextually_superseded(
     )
 
 
+# Presentable, with a semantic methodological conflict kept as evidence.
+RELEASE_STATUS_METHODOLOGICAL_CONFLICT = (
+    "release_allowed_with_methodological_conflict"
+)
+
+
 @dataclass
 class AcademicReleaseAssessment:
     status: str
@@ -445,11 +451,18 @@ def assess_academic_release(
 ) -> AcademicReleaseAssessment:
     """Assess whether a checked academic draft may be presented.
 
-    A recognised deterministic technical conflict blocks release. A material
-    conflict with retrieved methodological guidance also blocks release.
-    Clear contrary evidence from an assessed source claim blocks release of
-    the unchanged draft. Absence of verification, support, or established
+    A recognised deterministic technical conflict blocks release. Clear
+    contrary evidence from an assessed source claim blocks release of the
+    unchanged draft. Absence of verification, support, or established
     methodological consistency does not by itself establish a conflict.
+
+    A methodological conflict comes from the semantic methodology judge, not
+    from a deterministic check or retrieved source evidence. It is kept as
+    evidence for the reader (presented as worth checking) but does not by
+    itself make the answer unsafe to present, and it is not correction
+    material for reconciliation. The occurrence-aware rules for which
+    standalone and contextual judgements count are unchanged; they now decide
+    whether that evidence is reported rather than whether release is blocked.
     """
     technical_statuses = [
         claim.verification.status
@@ -490,22 +503,6 @@ def assess_academic_release(
             ],
         )
 
-    if (
-        academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
-        in (
-            methodological_statuses
-            + contextual_methodological_statuses
-        )
-    ):
-        return AcademicReleaseAssessment(
-            status="blocked_methodological_conflict",
-            safe_to_present=False,
-            reasons=[
-                "At least one structured technical claim materially "
-                "conflicts with retrieved methodological guidance."
-            ],
-        )
-
     if "claim_contradicted" in source_statuses:
         return AcademicReleaseAssessment(
             status="blocked_source_contradiction",
@@ -527,6 +524,24 @@ def assess_academic_release(
             reasons=[
                 "Independent technical-claim coverage checking could not be "
                 "completed; this does not establish that the answer is wrong."
+            ],
+        )
+
+    if (
+        academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
+        in (
+            methodological_statuses
+            + contextual_methodological_statuses
+        )
+    ):
+        return AcademicReleaseAssessment(
+            status=RELEASE_STATUS_METHODOLOGICAL_CONFLICT,
+            safe_to_present=True,
+            reasons=[
+                "At least one claim was judged to conflict with retrieved "
+                "methodological guidance. This semantic judgement is reported "
+                "as evidence worth checking and does not by itself block "
+                "presentation."
             ],
         )
 

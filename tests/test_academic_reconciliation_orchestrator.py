@@ -816,132 +816,52 @@ if callable(run_lifecycle):
 
     check(
         contextual_initial_checked.release.status
-        == "blocked_methodological_conflict",
-        "contextual conflict alone blocks the initial draft",
+        == academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT,
+        "a contextual conflict alone is reported with its own release status",
     )
     check(
-        not contextual_initial_checked.technical_claims
-        and not contextual_initial_checked.source_claims,
-        "contextual blocker requires no proposition-level correction source",
+        contextual_initial_checked.release.safe_to_present is True,
+        "a contextual conflict alone no longer withholds the initial draft",
     )
 
-    contextual_corrected_draft = academic_chat.AcademicDraft(
-        answer_draft=(
-            "Covariate adjustment can improve precision when the baseline "
-            "covariate strongly predicts the outcome."
-        ),
-        references=[],
-        source_claims=[],
-        technical_claims=[],
-    )
+    def contextual_must_not_revise(*args, **kwargs):
+        raise AssertionError(
+            "A methodological conflict must not trigger a revision.")
 
-    contextual_composition_calls = []
-
-    def contextual_first_stage(
-        supplied_model,
-        supplied_tokenizer,
-        supplied_question,
-    ):
-        contextual_composition_calls.append(
-            (
-                "first_stage",
-                supplied_model,
-                supplied_tokenizer,
-                supplied_question,
-            )
-        )
-        return contextual_initial_checked
-
-    def contextual_revision(
-        supplied_model,
-        supplied_tokenizer,
-        supplied_draft,
-        supplied_corrections,
-    ):
-        contextual_composition_calls.append(
-            (
-                "revision",
-                supplied_model,
-                supplied_tokenizer,
-                supplied_draft,
-                supplied_corrections,
-            )
-        )
-
-        check(
-            not supplied_corrections.technical
-            and not supplied_corrections.methodological
-            and not supplied_corrections.source,
-            "contextual conflict triggers revision without other corrections",
-        )
-        check(
-            len(supplied_corrections.contextual_methodological) == 1,
-            "revision receives the sole contextual methodological correction",
-        )
-
-        return contextual_corrected_draft
-
-    def contextual_reassessor(draft, *, local_guidance):
-        contextual_composition_calls.append(
-            ("reassessment", draft, local_guidance)
-        )
-        return academic_orchestrator.assess_academic_draft(
-            draft,
-            local_guidance=local_guidance,
-        )
+    def contextual_must_not_reassess(*args, **kwargs):
+        raise AssertionError(
+            "A methodological conflict must not trigger a reassessment.")
 
     contextual_composition_result = run_lifecycle(
         model,
         tokenizer,
         "CONFIDENTIAL CONTEXTUAL QUESTION",
-        first_stage_runner=contextual_first_stage,
+        first_stage_runner=lambda *args: contextual_initial_checked,
         correction_extractor=(
             academic_reconciliation.extract_academic_corrections
         ),
-        revision_generator=contextual_revision,
-        draft_assessor=contextual_reassessor,
+        revision_generator=contextual_must_not_revise,
+        draft_assessor=contextual_must_not_reassess,
     )
 
     check(
-        contextual_composition_result.revision_attempted is True,
-        "sole contextual conflict triggers one bounded revision",
+        contextual_composition_result.revision_attempted is False
+        and contextual_composition_result.revised is None,
+        "a sole contextual conflict triggers no revision",
     )
     check(
-        contextual_composition_result.initial is contextual_initial_checked,
-        "contextual blocked result remains separately auditable",
+        contextual_composition_result.final is contextual_initial_checked,
+        "the original answer is the one presented",
     )
     check(
-        contextual_composition_result.revised is not None,
-        "contextual correction receives a fresh reassessment",
-    )
-    check(
-        contextual_composition_result.final.release.safe_to_present is True,
-        "fresh reassessment independently releases contextual correction",
-    )
-    check(
-        contextual_composition_result.final.local_guidance
-        is contextual_retained_guidance,
-        "contextual reassessment reuses exact retained local guidance",
-    )
-    check(
-        len(
-            [
-                call
-                for call in contextual_composition_calls
-                if call[0] == "revision"
-            ]
-        ) == 1,
-        "contextual composition performs exactly one revision",
-    )
-    check(
-        len(
-            [
-                call
-                for call in contextual_composition_calls
-                if call[0] == "reassessment"
-            ]
-        ) == 1,
-        "contextual composition performs exactly one fresh reassessment",
+        academic_reconciliation.extract_academic_corrections(
+            technical_claims=contextual_initial_checked.technical_claims,
+            source_claims=contextual_initial_checked.source_claims,
+            discovered_claim_assessments=(
+                contextual_initial_checked.discovered_claim_assessments
+            ),
+        ).is_empty(),
+        "the contextual conflict is not correction material",
     )
 
 

@@ -279,7 +279,7 @@ def contextual_claim_assessment(status):
     )
 
 
-print("\n[10] contextual methodological conflict blocks release")
+print("\n[10] contextual methodological conflict is evidence, not a block")
 
 release = academic_orchestrator.assess_academic_release(
     [],
@@ -288,12 +288,12 @@ release = academic_orchestrator.assess_academic_release(
 )
 
 check(
-    release.status == "blocked_methodological_conflict",
-    "contextual methodological conflict uses methodological block status",
+    release.status == academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT,
+    "contextual methodological conflict keeps its own status",
 )
 check(
-    release.safe_to_present is False,
-    "contextual methodological conflict blocks unchanged draft",
+    release.safe_to_present is True,
+    "contextual methodological conflict no longer withholds the answer",
 )
 
 
@@ -483,7 +483,7 @@ for contextual_status in (
     )
 
 
-print("\n[16] contextual conflict still blocks superseded standalone claim")
+print("\n[16] contextual conflict is still reported for a superseded standalone claim")
 
 release = academic_orchestrator.assess_academic_release(
     [standalone_conflict],
@@ -496,16 +496,16 @@ release = academic_orchestrator.assess_academic_release(
 )
 
 check(
-    release.status == "blocked_methodological_conflict",
-    "occurrence-aware methodological conflict still blocks release",
+    release.status == academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT,
+    "occurrence-aware methodological conflict is still reported",
 )
 check(
-    release.safe_to_present is False,
-    "contextual conflict remains unsafe to present",
+    release.safe_to_present is True,
+    "contextual conflict is presentable evidence, not a block",
 )
 
 
-print("\n[17] standalone conflict remains blocking without contextual assessment")
+print("\n[17] standalone conflict is still reported without contextual assessment")
 
 unassessed_occurrence = paired_contextual_assessment(
     academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT
@@ -519,12 +519,13 @@ release = academic_orchestrator.assess_academic_release(
 )
 
 check(
-    release.status == "blocked_methodological_conflict",
-    "standalone conflict remains blocking when contextual checking is absent",
+    release.status == academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT,
+    "standalone conflict is still reported when contextual checking is absent",
 )
 check(
-    release.safe_to_present is False,
-    "missing contextual assessment cannot neutralise a standalone conflict",
+    release.safe_to_present is True,
+    "missing contextual assessment cannot neutralise a standalone conflict, "
+    "which is reported without withholding the answer",
 )
 
 
@@ -580,13 +581,13 @@ release = academic_orchestrator.assess_academic_release(
 )
 
 check(
-    release.status == "blocked_methodological_conflict",
+    release.status == academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT,
     "one assessed occurrence does not suppress standalone conflict while "
     "another restricted occurrence remains unassessed",
 )
 check(
-    release.safe_to_present is False,
-    "partially completed occurrence-aware checking remains conservative",
+    release.safe_to_present is True,
+    "the unsuppressed conflict is reported without withholding the answer",
 )
 
 

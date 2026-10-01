@@ -229,8 +229,10 @@ check(d["state"] == "no_specific_concern"
       "unsettled but unroutable: no concern, and says no sources exist yet")
 
 d = run(result(contexts=[context("C", "The answer's sentence about C.", CONFLICT, [P(A)])],
-               status="blocked_methodological_conflict"))
+               status="release_allowed_with_methodological_conflict"))
 check(d["state"] == "worth_checking", "a conflict with the guidance is worth checking")
+check(d["summary"] == cf.METHODOLOGICAL_CONFLICT_SUMMARY,
+      "and says the guidance appears to say something different")
 check(d["worth_checking"][0]["text"] == "The answer's sentence about C."
       and d["worth_checking"][0]["topic"] == "Section A?",
       "naming the answer's sentence and the topic")
@@ -251,6 +253,16 @@ check(d["secondary"] == cf.INCOMPLETE_SECONDARY
       "it says once that incomplete checking does not mean the answer is wrong")
 check(cf.incomplete_assessment("boom")["secondary"] == cf.INCOMPLETE_SECONDARY,
       "a failed assessment says the same")
+
+d = run(result(contexts=[context("C", "The answer's sentence about C.", CONFLICT, [P(A)])],
+               status="checking_incomplete"))
+check(d["state"] == "worth_checking"
+      and d["worth_checking"][0]["text"] == "The answer's sentence about C.",
+      "a recorded conflict is still reported when other checking was incomplete")
+check(d["secondary"] == cf.INCOMPLETE_WITH_CONCERN_SECONDARY,
+      "and the reader is told the check was incomplete, so it may not be the only point")
+check("blocked_methodological_conflict" not in cf._BLOCKED_SUMMARIES,
+      "a methodological conflict is not among the statuses that withhold the answer")
 
 d = run(result(guidance=()))
 check(d["state"] == "outside_guidance" and "not covered" in d["summary"],

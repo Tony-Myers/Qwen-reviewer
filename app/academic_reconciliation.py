@@ -17,7 +17,6 @@ from typing import Any
 import academic_chat
 import academic_claims
 import academic_claim_coverage
-import academic_methodology
 import academic_orchestrator
 import academic_technical
 import llm_backend
@@ -141,7 +140,17 @@ def extract_academic_corrections(
         list[academic_orchestrator.DiscoveredClaimAssessment] | None
     ) = None,
 ) -> AcademicCorrectionSet:
-    """Extract all independently established blockers from a checked draft."""
+    """Extract all independently established blockers from a checked draft.
+
+    Only deterministic technical conflicts and source contradictions are
+    blockers. A methodological conflict is a semantic judgement: it is shown
+    to the reader as evidence worth checking, but it is not correction
+    material, so it can neither trigger a revision nor be passed to the
+    reviser as an established correction. The methodological and contextual
+    methodological fields of the correction set are therefore always empty
+    here; they are kept so the correction-set and revision-prompt structure
+    is unchanged.
+    """
 
     technical: list[TechnicalCorrection] = []
     methodological: list[MethodologicalCorrection] = []
@@ -167,43 +176,6 @@ def extract_academic_corrections(
                 TechnicalCorrection(
                     claim=result.claim,
                     canonical_claim=canonical_claim,
-                )
-            )
-
-        consistency = result.methodological_consistency
-
-        if (
-            consistency is not None
-            and consistency.status
-            == academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
-            and not (
-                academic_orchestrator
-                .standalone_methodology_is_contextually_superseded(
-                    result.claim,
-                    discovered_claim_assessments,
-                )
-            )
-        ):
-            methodological.append(
-                MethodologicalCorrection(
-                    claim=result.claim,
-                    passages=list(consistency.passages),
-                )
-            )
-
-    for assessment in (discovered_claim_assessments or []):
-        consistency = assessment.contextual_methodological_consistency
-
-        if (
-            consistency is not None
-            and consistency.status
-            == academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
-        ):
-            contextual_methodological.append(
-                ContextualMethodologicalCorrection(
-                    claim=consistency.claim,
-                    source_context=assessment.source_context,
-                    passages=list(consistency.passages),
                 )
             )
 

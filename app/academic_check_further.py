@@ -89,10 +89,18 @@ ABOUT = (
     "curated references may be provided for further checking."
 )
 
+# A methodological conflict is a semantic judgement and no longer blocks
+# release (release_allowed_with_methodological_conflict); the answer is shown
+# and the conflict is reported here as worth checking.
+METHODOLOGICAL_CONFLICT_SUMMARY = (
+    "A point in this answer may warrant closer checking: the local "
+    "methodological guidance appears to say something different.")
+INCOMPLETE_WITH_CONCERN_SECONDARY = (
+    "Some of the checking could not be completed, so this may not be the "
+    "only point worth checking.")
+
+# Release statuses that withhold the answer: deterministic or source evidence.
 _BLOCKED_SUMMARIES = {
-    "blocked_methodological_conflict": (
-        "A point in this answer may warrant closer checking: the local "
-        "methodological guidance appears to say something different."),
     "blocked_technical_conflict": (
         "A technical statement in this answer did not pass an automated "
         "check and may warrant closer checking."),
@@ -396,14 +404,15 @@ def assess_check_further(
     release = result.release
     secondary = ""
     worth_checking: List[Dict[str, str]] = []
-    if release.status == "checking_incomplete":
-        state = STATE_INCOMPLETE
-        summary = INCOMPLETE_SUMMARY
-        secondary = INCOMPLETE_SECONDARY
-    elif release.status in _BLOCKED_SUMMARIES or conflicts:
+    # A recorded conflict is a concern about the answer and is reported even
+    # when other checking was incomplete; incomplete checking on its own is
+    # never presented as a concern.
+    if release.status in _BLOCKED_SUMMARIES or conflicts:
         state = STATE_WORTH_CHECKING
         summary = _BLOCKED_SUMMARIES.get(
-            release.status, _BLOCKED_SUMMARIES["blocked_methodological_conflict"])
+            release.status, METHODOLOGICAL_CONFLICT_SUMMARY)
+        if release.status == "checking_incomplete":
+            secondary = INCOMPLETE_WITH_CONCERN_SECONDARY
         seen = set()
         for j in conflicts:
             key = _normalise(j.point.text)
@@ -419,6 +428,10 @@ def assess_check_further(
                     "The local methodological guidance appears to say "
                     "something different about this point."),
             })
+    elif release.status == "checking_incomplete":
+        state = STATE_INCOMPLETE
+        summary = INCOMPLETE_SUMMARY
+        secondary = INCOMPLETE_SECONDARY
     elif not guidance:
         state = STATE_OUTSIDE
         summary = ("This question is not covered by the local methodological "

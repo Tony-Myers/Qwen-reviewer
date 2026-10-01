@@ -2697,7 +2697,7 @@ check(
 )
 
 
-print("\n[methodological release] conflict blocks presentation")
+print("\n[methodological release] conflict is reported without withholding")
 
 
 def conflicting_methodological_assessor(*, prompt, schema):
@@ -2723,19 +2723,19 @@ methodological_conflict_result = academic_orchestrator.run_academic_first_stage(
 
 check(
     methodological_conflict_result.release.status
-    == "blocked_methodological_conflict",
-    "methodological conflict blocks release with its own status",
+    == academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT,
+    "methodological conflict keeps its own release status",
 )
 
 check(
-    methodological_conflict_result.release.safe_to_present is False,
-    "methodological conflict prevents normal presentation",
+    methodological_conflict_result.release.safe_to_present is True,
+    "a semantic methodological conflict does not prevent presentation",
 )
 
 check(
     methodological_conflict_result.answer_draft
     == "A context-informed provisional answer.",
-    "methodologically blocked draft remains available for auditability",
+    "draft with a methodological conflict remains available",
 )
 
 
@@ -3145,12 +3145,13 @@ assert [
 assert len(atomic_method_calls) == 3
 
 assert atomic_masking_result.release.status == (
-    "blocked_methodological_conflict"
+    academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT
 )
-assert atomic_masking_result.release.safe_to_present is False
+assert atomic_masking_result.release.safe_to_present is True
 
 print("PASS: independently discovered atomic claims are checked separately")
 print("PASS: atomic methodological conflict cannot be masked by compound claim")
+print("PASS: the unmasked conflict is reported without withholding the answer")
 
 
 print(
@@ -3397,7 +3398,7 @@ print("PASS: contextual methodological consistency does not block release")
 
 
 print(
-    "\n[claim coverage] contextual methodological conflict blocks release"
+    "\n[claim coverage] contextual methodological conflict is reported, not blocking"
 )
 
 
@@ -3444,12 +3445,12 @@ assert (
 )
 
 assert contextual_conflict_result.release.status == (
-    "blocked_methodological_conflict"
+    academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT
 )
-assert contextual_conflict_result.release.safe_to_present is False
+assert contextual_conflict_result.release.safe_to_present is True
 
 print("PASS: contextual methodological conflict remains occurrence-specific")
-print("PASS: contextual methodological conflict blocks unchanged draft release")
+print("PASS: contextual methodological conflict is reported without withholding")
 
 
 print(
