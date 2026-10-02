@@ -13,7 +13,7 @@ Important epistemic boundary:
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
 import json
 import re
@@ -42,6 +42,14 @@ class ReferenceCandidate:
     work_type: str
     source: str = "crossref"
     title_similarity: float | None = None
+    # Crossref splits many book titles into a main title and a subtitle, and
+    # records a book's publisher and series separately from container-title.
+    # venue keeps its existing meaning (the first container-title) for
+    # display and cross-database corroboration; these fields let matching
+    # read a record by its bibliographic type instead of as a journal article.
+    subtitle: str = ""
+    publisher: str = ""
+    container_titles: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -147,6 +155,107 @@ def _title_similarity(a: str, b: str) -> float:
     ).ratio()
 
 
+# Crossref work types grouped by what an overloaded proposal "venue" can
+# legitimately name. A journal-level item's venue is its container (journal).
+# A whole book's venue may be its publisher or its series. A chapter's may be
+# its containing book, that book's series, or the publisher.
+BOOK_TYPES = frozenset({"book", "monograph", "edited-book", "reference-book"})
+CHAPTER_TYPES = frozenset({"book-chapter", "book-part", "book-section"})
+
+# Words that say what kind of organisation a publisher is rather than which
+# one. Only publisher names are compared this way; venue matching in general
+# is not loosened.
+_PUBLISHER_GENERIC_TOKENS = frozenset({
+    "and", "co", "company", "corporation", "gmbh", "group", "inc",
+    "international", "limited", "llc", "ltd", "media", "press", "publisher",
+    "publishers", "publishing", "sons", "university", "verlag",
+})
+
+
+def _full_titles(candidate: "ReferenceCandidate") -> list[str]:
+    """The record's title alone and, when Crossref splits it, with subtitle."""
+    titles = [candidate.title] if candidate.title else []
+    if candidate.title and candidate.subtitle:
+        titles.append(f"{candidate.title}: {candidate.subtitle}")
+    return titles
+
+
+def _candidate_title_similarity(
+    query_title: str,
+    candidate: "ReferenceCandidate",
+) -> float:
+    """Best title similarity over the main title and main title + subtitle.
+
+    The similarity threshold is unchanged: a proposal must still closely match
+    one complete form of the record's title.
+    """
+    return max(
+        (_title_similarity(query_title, title) for title in _full_titles(candidate)),
+        default=0.0,
+    )
+
+
+def _publisher_core_tokens(name: str) -> set[str]:
+    return {
+        token
+        for token in _normalise_text(name).split()
+        if token not in _PUBLISHER_GENERIC_TOKENS
+    }
+
+
+def _publisher_matches(supplied: str, publisher: str) -> bool:
+    """Whether two publisher names name the same publisher.
+
+    "John Wiley & Sons" and "Wiley", or "Springer New York" and "Springer",
+    differ only by forenames, places and corporate words. Names match when
+    the distinctive words of one are all among those of the other. Generic
+    words ("University", "Press", "Publishing") never count on their own, so
+    "Oxford University Press" does not match "Cambridge University Press".
+
+    A university press matches only another university press: without that,
+    "Cambridge University Press" reduces to "cambridge" and would match
+    "Cambridge Scholars Publishing".
+    """
+    if not supplied or not publisher:
+        return False
+    if _title_similarity(supplied, publisher) >= 0.90:
+        return True
+    if (
+        ("university" in _normalise_text(supplied).split())
+        != ("university" in _normalise_text(publisher).split())
+    ):
+        return False
+    a = _publisher_core_tokens(supplied)
+    b = _publisher_core_tokens(publisher)
+    if not a or not b:
+        return False
+    return a <= b or b <= a
+
+
+def _candidate_venue_matches(
+    supplied: str,
+    candidate: "ReferenceCandidate",
+) -> bool:
+    """Interpret the proposal's venue according to the record's type.
+
+    Journal-level and other records: compared with the journal/container
+    title exactly as before. Books: the publisher or a series/container
+    title. Chapters: the containing book, its series, or the publisher.
+    Only fields Crossref supplies are compared.
+    """
+    containers = list(candidate.container_titles) or (
+        [candidate.venue] if candidate.venue else []
+    )
+    work_type = candidate.work_type
+
+    if work_type in BOOK_TYPES or work_type in CHAPTER_TYPES:
+        if any(_venue_matches(supplied, container) for container in containers):
+            return True
+        return _publisher_matches(supplied, candidate.publisher)
+
+    return _venue_matches(supplied, candidate.venue)
+
+
 def _extract_year(item: dict[str, Any]) -> int | None:
     for field in ("published-print", "published-online", "published", "issued"):
         parts = item.get(field, {}).get("date-parts", [])
@@ -176,26 +285,37 @@ def _extract_candidate(
 
     work_type = str(item.get("type") or "").strip()
 
-    containers = item.get("container-title") or []
-    venue = str(containers[0]).strip() if containers else ""
+    containers = [
+        str(value).strip()
+        for value in (item.get("container-title") or [])
+        if str(value).strip()
+    ]
+    venue = containers[0] if containers else ""
+
+    subtitles = item.get("subtitle") or []
+    subtitle = str(subtitles[0]).strip() if subtitles else ""
+    publisher = str(item.get("publisher") or "").strip()
 
     doi = str(item.get("DOI") or "").strip().lower()
 
-    similarity = (
-        _title_similarity(query_title, title)
-        if query_title and title
-        else None
-    )
-
-    return ReferenceCandidate(
+    candidate = ReferenceCandidate(
         title=title,
         authors=authors,
         year=_extract_year(item),
         venue=venue,
         doi=doi,
         work_type=work_type,
-        title_similarity=similarity,
+        subtitle=subtitle,
+        publisher=publisher,
+        container_titles=containers,
     )
+
+    if query_title and title:
+        candidate.title_similarity = _candidate_title_similarity(
+            query_title, candidate
+        )
+
+    return candidate
 
 
 class OpenAlexUnavailableError(RuntimeError):
@@ -433,8 +553,8 @@ def search_crossref(
         "query.title": title,
         "rows": max(1, min(rows, 10)),
         "select": (
-            "DOI,title,author,published-print,published-online,"
-            "published,issued,container-title,type"
+            "DOI,title,subtitle,author,published-print,published-online,"
+            "published,issued,container-title,publisher,type"
         ),
     }
 
@@ -605,13 +725,18 @@ def _candidate_rank(
         )
     )
 
-    publication_score = {
-        "journal-article": 3,
-        "book-chapter": 2,
-        "book": 2,
-        "proceedings-article": 2,
-        "posted-content": 1,
-    }.get(candidate.work_type, 0)
+    # Crossref types formally published works of all book-level kinds as
+    # book, monograph, edited-book or reference-book; scoring only "book"
+    # left real monographs below an unknown type.
+    publication_score = (
+        2
+        if candidate.work_type in BOOK_TYPES or candidate.work_type in CHAPTER_TYPES
+        else {
+            "journal-article": 3,
+            "proceedings-article": 2,
+            "posted-content": 1,
+        }.get(candidate.work_type, 0)
+    )
 
     return (
         similarity,
@@ -685,7 +810,10 @@ def corroborate_candidates(
     )
 
     title_similarity = (
-        _title_similarity(crossref.title, openalex.title)
+        max(
+            _title_similarity(title, openalex.title)
+            for title in _full_titles(crossref)
+        )
         if crossref.title and openalex.title
         else None
     )
@@ -861,9 +989,9 @@ def verify_reference(
                                 venue,
                                 best_related.venue,
                             )
-                            if _venue_matches(
+                            if _candidate_venue_matches(
                                 venue,
-                                best_related.venue,
+                                best_related,
                             ):
                                 reasons.append(
                                     "The supplied venue closely matches the "
@@ -904,7 +1032,7 @@ def verify_reference(
         uncertainties = []
 
         if title:
-            similarity = _title_similarity(title, candidate.title)
+            similarity = _candidate_title_similarity(title, candidate)
             candidate.title_similarity = similarity
             if similarity >= 0.90:
                 reasons.append(
@@ -930,7 +1058,7 @@ def verify_reference(
 
         if venue:
             venue_similarity = _title_similarity(venue, candidate.venue)
-            if _venue_matches(venue, candidate.venue):
+            if _candidate_venue_matches(venue, candidate):
                 reasons.append("The supplied venue closely matches the Crossref record.")
             else:
                 conflicts.append(
@@ -1005,9 +1133,9 @@ def verify_reference(
                             venue,
                             best_related.venue,
                         )
-                        if _venue_matches(
+                        if _candidate_venue_matches(
                             venue,
-                            best_related.venue,
+                            best_related,
                         ):
                             reasons.append(
                                 "The supplied venue closely matches the "
@@ -1089,6 +1217,11 @@ def verify_reference(
         if venue
         else None
     )
+    venue_ok = (
+        _candidate_venue_matches(venue, candidate)
+        if venue
+        else None
+    )
     year_difference = (
         abs(year - candidate.year)
         if year is not None and candidate.year is not None
@@ -1107,7 +1240,7 @@ def verify_reference(
     if venue_similarity is not None:
         reasons.append(
             "The supplied venue closely matches the best Crossref result."
-            if _venue_matches(venue, candidate.venue)
+            if venue_ok
             else (
                 "The supplied venue does not closely match the best Crossref "
                 f"result (similarity {venue_similarity:.3f})."
@@ -1127,10 +1260,7 @@ def verify_reference(
     strong_title = similarity >= 0.90
     acceptable_year = year_difference is None or year_difference <= 1
     acceptable_author = author_ok is not False
-    acceptable_venue = (
-        venue_similarity is None
-        or _venue_matches(venue, candidate.venue)
-    )
+    acceptable_venue = venue_ok is None or venue_ok
 
     if (
         strong_title
