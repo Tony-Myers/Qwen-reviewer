@@ -54,6 +54,12 @@ is never routed to further reading and never counted as a valid "not
 established" judgement; it makes the evidence check incomplete instead. A
 judgement that completed and found the point not established keeps its
 meaning and is routed exactly as before.
+
+The same holds for the other checks whose model output can be unusable: a
+dropped-condition check that could not be completed is not a finding that no
+condition was lost, and a source assessment that could not be completed is
+not support, non-support or contradiction. Each makes the evidence check
+incomplete and is kept, with its error, in the diagnostics only.
 """
 
 from __future__ import annotations
@@ -70,7 +76,9 @@ import reviewer_notes
 # 3: the citation notice counts only references a source claim points to.
 # 4: a methodological judgement that could not be completed (assessment_error)
 #    makes the check incomplete and is not routed to further reading.
-RULES_VERSION = "4"
+# 5: so do a dropped-condition check and a source assessment that could not
+#    be completed; the incomplete wording covers any check.
+RULES_VERSION = "5"
 
 STATE_NO_CONCERN = "no_specific_concern"
 STATE_FURTHER_READING = "further_reading"
@@ -89,10 +97,14 @@ TITLES = {
 # Incomplete checking says nothing about whether the answer is right. The
 # reader is told that once, here, in place of the older notice beside the
 # answer (which now sits under Technical checking details).
-INCOMPLETE_SUMMARY = ("Academic Chat could not complete its comparison with "
-                      "the local methodological guidance.")
-INCOMPLETE_SECONDARY = ("This does not mean the answer is wrong, only that it "
-                        "could not be fully checked.")
+INCOMPLETE_SUMMARY = ("Some of the checks on this answer could not be "
+                      "completed.")
+INCOMPLETE_SECONDARY = ("This does not mean the answer is wrong, but some "
+                        "points could not be fully checked.")
+# Added to the secondary line when a source given in support of the answer
+# was located but could not be checked against it.
+SOURCE_INCOMPLETE_NOTE = ("A source given in support of this answer could not "
+                          "be fully checked against it.")
 
 ABOUT = (
     "Academic Chat compares parts of its answer with locally curated "
@@ -414,6 +426,41 @@ def assess_check_further(
                 if method is not None else ""),
         })
 
+    # ---- checks whose model output could not be used ------------------------
+    # A dropped-condition check that could not be completed: whether the
+    # atomic claim lost a condition is unknown, not "no condition lost".
+    failed_restrictions = []
+    for item in assessments:
+        error = getattr(item.material_restriction, "assessment_error", "") or ""
+        if error:
+            failed_restrictions.append({
+                "answer_sentence": item.source_context.source_sentence,
+                "atomic_claim": item.discovered_claim.claim.statement,
+                "assessment_error": error,
+            })
+    # A source assessment that could not be completed: the located evidence
+    # stays in the technical details; no support status is implied.
+    failed_sources = []
+    references = list(result.references or [])
+    for item in getattr(result, "source_claims", None) or []:
+        error = getattr(item, "claim_assessment_error", "") or ""
+        if not error:
+            continue
+        index = getattr(item.claim, "reference_index", None)
+        proposal = (references[index] if isinstance(index, int)
+                    and 0 <= index < len(references) else None)
+        location = getattr(item, "claim_location", None)
+        evidence = list(getattr(location, "evidence", None) or [])
+        failed_sources.append({
+            "claim": item.claim.claim,
+            "reference": (_citation_label(proposal.proposed_reference)
+                          if proposal is not None else ""),
+            "located_passages": len(evidence),
+            "pages": sorted({e.page_number for e in evidence
+                             if getattr(e, "page_number", None) is not None}),
+            "assessment_error": error,
+        })
+
     # ---- a source given in support that does not match a record ----------
     unmatched, conflicting, unlinked = [], [], []
     linked = linked_reference_indices(result)
@@ -457,13 +504,15 @@ def assess_check_further(
     # A recorded conflict is a concern about the answer and is reported even
     # when other checking was incomplete; incomplete checking on its own is
     # never presented as a concern.
-    checking_incomplete = release.status == "checking_incomplete" or bool(failed)
+    checking_incomplete = (release.status == "checking_incomplete" or bool(failed)
+                           or bool(failed_restrictions) or bool(failed_sources))
+    source_note = (" " + SOURCE_INCOMPLETE_NOTE) if failed_sources else ""
     if release.status in _BLOCKED_SUMMARIES or conflicts:
         state = STATE_WORTH_CHECKING
         summary = _BLOCKED_SUMMARIES.get(
             release.status, METHODOLOGICAL_CONFLICT_SUMMARY)
         if checking_incomplete:
-            secondary = INCOMPLETE_WITH_CONCERN_SECONDARY
+            secondary = INCOMPLETE_WITH_CONCERN_SECONDARY + source_note
         seen = set()
         for j in conflicts:
             key = _normalise(j.point.text)
@@ -482,7 +531,7 @@ def assess_check_further(
     elif checking_incomplete:
         state = STATE_INCOMPLETE
         summary = INCOMPLETE_SUMMARY
-        secondary = INCOMPLETE_SECONDARY
+        secondary = INCOMPLETE_SECONDARY + source_note
     elif not guidance:
         state = STATE_OUTSIDE
         summary = ("This question is not covered by the local methodological "
@@ -522,6 +571,8 @@ def assess_check_further(
             "not_established": sum(
                 1 for j in completed if j.status not in (consistent, conflict)),
             "failed_methodology_checks": len(failed),
+            "failed_restriction_checks": len(failed_restrictions),
+            "failed_source_assessments": len(failed_sources),
             "unsettled_statements": len(unsettled_keys),
             "points_shown": sum(len(g.points) for g in group_list),
             "unrouted": len(unrouted),
@@ -546,6 +597,8 @@ def assess_check_further(
              "sections": [f"{p.note} - {p.heading}" for p in j.passages]}
             for j in failed
         ],
+        "failed_restriction_checks": failed_restrictions,
+        "failed_source_assessments": failed_sources,
     }
 
     return CheckFurtherAssessment(

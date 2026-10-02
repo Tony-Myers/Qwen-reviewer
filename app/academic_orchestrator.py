@@ -17,10 +17,12 @@ claims and performs no external network access.
 """
 
 from dataclasses import dataclass
+import sys
 import threading
 from typing import Any, Callable
 
 import academic_chat
+import academic_claim_assessor
 import academic_claim_coverage
 import academic_claims
 import academic_methodology
@@ -279,6 +281,22 @@ def resolve_retrieval_identity(
     )
 
 
+# Bound on a recorded checker error: enough to identify the failure in the
+# technical details without carrying an arbitrarily long model message.
+CHECKER_ERROR_MAX_CHARS = 300
+
+
+def _checker_error(stage: str, statement: str, exc: Exception) -> str:
+    """Record a checker whose model output could not be used, and log it."""
+    error = f"{type(exc).__name__}: {exc}"[:CHECKER_ERROR_MAX_CHARS]
+    print(
+        f"[{stage}] check not completed for {statement[:100]!r}: {error}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return error
+
+
 @dataclass
 class VerifiedReferenceProposal:
     proposed_reference: academic_chat.AcademicReference
@@ -320,9 +338,13 @@ class SourceClaimResult:
     source_retrieval: academic_claims.RetrievedSource | None = None
     claim_location: academic_claims.ClaimSupportResult | None = None
     claim_assessment: academic_claims.ClaimAssessmentResult | None = None
+    # Set when the located evidence was given to the semantic assessor but
+    # its output could not be used. claim_assessment is then None: the
+    # failure is not support, partial support, non-support or contradiction.
+    claim_assessment_error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "claim": self.claim.to_dict(),
             "reference": self.reference.to_dict(),
             "retrieval_identity": self.retrieval_identity.to_dict(),
@@ -343,6 +365,9 @@ class SourceClaimResult:
                 else None
             ),
         }
+        if self.claim_assessment_error:
+            out["claim_assessment_error"] = self.claim_assessment_error
+        return out
 
 
 @dataclass
@@ -390,6 +415,16 @@ class DiscoveredClaimAssessment:
                 self.material_restriction.material_restriction_omitted
                 if self.material_restriction is not None
                 else None
+            ),
+            **(
+                {
+                    "material_restriction_assessment_error": (
+                        self.material_restriction.assessment_error
+                    )
+                }
+                if self.material_restriction is not None
+                and self.material_restriction.assessment_error
+                else {}
             ),
             "contextual_methodological_consistency": (
                 {
@@ -810,16 +845,29 @@ def assess_academic_draft(
             )
 
         claim_assessment = None
+        claim_assessment_error = ""
 
         if (
             claim_location is not None
             and claim_location.status == "claim_located"
             and claim_assessor is not None
         ):
-            claim_assessment = claim_assessor(
-                claim.claim,
-                claim_location.evidence,
-            )
+            # Only unusable model output degrades: a contract violation or
+            # output that could not be decoded. The located evidence is kept,
+            # and checking continues. Input errors (plain ValueError),
+            # TypeError and backend failures still propagate.
+            try:
+                claim_assessment = claim_assessor(
+                    claim.claim,
+                    claim_location.evidence,
+                )
+            except (
+                academic_claims.ClaimAssessmentOutputError,
+                academic_claim_assessor.ClaimAssessorOutputError,
+            ) as exc:
+                claim_assessment_error = _checker_error(
+                    "source assessment", claim.claim, exc
+                )
 
         source_claims.append(
             SourceClaimResult(
@@ -830,6 +878,7 @@ def assess_academic_draft(
                 source_retrieval=source_retrieval,
                 claim_location=claim_location,
                 claim_assessment=claim_assessment,
+                claim_assessment_error=claim_assessment_error,
             )
         )
 
@@ -868,13 +917,30 @@ def assess_academic_draft(
 
             material_restriction = None
             if material_restriction_assessor is not None:
-                material_restriction = (
-                    academic_claim_coverage.assess_material_restriction(
-                        candidate_claim=discovered.claim,
-                        source_context=source_context,
-                        assessor=material_restriction_assessor,
+                # Unusable model output for this occurrence is recorded as
+                # not completed (omitted=None), never as "no omission", and
+                # the remaining occurrences are still assessed. TypeError and
+                # backend failures still propagate.
+                try:
+                    material_restriction = (
+                        academic_claim_coverage.assess_material_restriction(
+                            candidate_claim=discovered.claim,
+                            source_context=source_context,
+                            assessor=material_restriction_assessor,
+                        )
                     )
-                )
+                except (
+                    academic_claim_coverage.MaterialRestrictionOutputError,
+                    academic_claim_assessor.ClaimAssessorOutputError,
+                ) as exc:
+                    material_restriction = (
+                        academic_claim_coverage.MaterialRestrictionAssessment(
+                            material_restriction_omitted=None,
+                            assessment_error=_checker_error(
+                                "restriction", discovered.claim.statement, exc
+                            ),
+                        )
+                    )
 
             contextual_methodological_consistency = None
 

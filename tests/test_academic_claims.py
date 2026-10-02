@@ -4899,3 +4899,41 @@ assert cited_different_doi_result.doi == "10.1234/paper-a"
 assert "10.1234/paper-b" in cited_different_doi_result.text
 
 print("PASS: DOI cited in document text is not mistaken for document identity")
+
+
+print("\n[output contract] model-output violations are distinguishable from input errors")
+
+for malformed_output, label in (
+    ("not an object", "a non-object"),
+    ({"status": "claim_supported"}, "missing reason"),
+    ({"status": "claim_probably_supported", "reason": "x"}, "an invented status"),
+    ({"status": "claim_supported", "reason": " "}, "an empty reason"),
+):
+    try:
+        academic_claims.build_claim_assessment(
+            claim="The intervention increased mean jump height by 2.4 cm.",
+            evidence=assessment_evidence,
+            assessor_output=malformed_output,
+        )
+    except academic_claims.ClaimAssessmentOutputError:
+        pass
+    else:
+        raise AssertionError(f"{label} was not rejected as an output-contract error")
+
+assert issubclass(academic_claims.ClaimAssessmentOutputError, ValueError)
+
+try:
+    academic_claims.build_claim_assessment(
+        claim="The intervention increased mean jump height by 2.4 cm.",
+        evidence=[],
+        assessor_output=valid_assessor_output,
+    )
+except academic_claims.ClaimAssessmentOutputError:
+    raise AssertionError("missing evidence is an input error, not model output")
+except ValueError:
+    pass
+else:
+    raise AssertionError("missing evidence was accepted")
+
+print("PASS: malformed assessor output raises ClaimAssessmentOutputError")
+print("PASS: missing located evidence still raises a plain ValueError")

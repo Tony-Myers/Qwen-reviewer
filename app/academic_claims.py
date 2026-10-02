@@ -63,6 +63,15 @@ class SourceRetrievalError(RuntimeError):
     """Expected failure while retrieving or extracting a scholarly source."""
 
 
+class ClaimAssessmentOutputError(ValueError):
+    """Raised when semantic claim-assessor output violates its contract.
+
+    Only the model's output raises this. Application inputs that cannot be
+    assessed (no located evidence, no substantive claim) still raise a plain
+    ValueError, so the two can be told apart.
+    """
+
+
 @dataclass
 class ClaimAssessmentResult:
     """An auditable assessment of located evidence against a claim."""
@@ -289,11 +298,11 @@ def build_claim_assessment(
         )
 
     if not isinstance(assessor_output, dict):
-        raise ValueError("Assessor output must be an object.")
+        raise ClaimAssessmentOutputError("Assessor output must be an object.")
 
     expected_fields = {"status", "reason"}
     if set(assessor_output) != expected_fields:
-        raise ValueError(
+        raise ClaimAssessmentOutputError(
             "Assessor output must contain exactly 'status' and 'reason'."
         )
 
@@ -304,10 +313,14 @@ def build_claim_assessment(
         not isinstance(status, str)
         or status not in CLAIM_ASSESSMENT_STATUSES
     ):
-        raise ValueError("Assessor output contains an invalid status.")
+        raise ClaimAssessmentOutputError(
+            "Assessor output contains an invalid status."
+        )
 
     if not isinstance(reason, str) or not reason.strip():
-        raise ValueError("Assessor reason must be non-empty text.")
+        raise ClaimAssessmentOutputError(
+            "Assessor reason must be non-empty text."
+        )
 
     return ClaimAssessmentResult(
         status=status,

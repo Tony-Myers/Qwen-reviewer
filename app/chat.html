@@ -928,10 +928,13 @@ function renderAcademicSourceClaim(item, index) {
       : 'not located') +
     '</div>';
 
+  // A located claim whose assessment output could not be used is "not
+  // completed": it is neither support nor contradiction, and the located
+  // evidence below stays available for inspection.
   h += '<div><strong>Claim assessment:</strong> ' +
     (assessment
       ? esc(academicStatusLabel(assessment.status))
-      : 'not performed') +
+      : (item?.claim_assessment_error ? 'not completed' : 'not performed')) +
     '</div>';
   h += '</div>';
 
@@ -1043,7 +1046,12 @@ function renderAcademicClaimContext(item, index) {
 
   h += '<div class="academic-audit-grid" style="margin-top:8px;">';
 
-  if (restriction === true) {
+  if (item?.material_restriction_assessment_error) {
+    // Attempted, but the output could not be used: neither "a condition was
+    // lost" nor "no omission detected" is known.
+    h += '<div><strong>Context check:</strong> ' +
+      'Context check not completed.</div>';
+  } else if (restriction === true) {
     h += '<div><strong>Context check:</strong> ' +
       'Material restriction omitted from the atomic claim.</div>';
   } else if (restriction === false) {
@@ -1435,6 +1443,14 @@ function renderCheckFurtherDiagnostics(d) {
   h += list('Methodological checks not completed', d.failed_methodology_checks, x =>
     esc(String(x.answer_text || x.statement || '')) + ' <span class="evidence-check-muted">' +
     (x.contextual ? 'contextual; ' : '') + esc(String(x.assessment_error || '')) + '</span>');
+  h += list('Context checks not completed', d.failed_restriction_checks, x =>
+    'Answer sentence: “' + esc(String(x.answer_sentence || '')) + '”<br>' +
+    '<span class="evidence-check-muted">Atomic claim: ' + esc(String(x.atomic_claim || '')) +
+    '<br>' + esc(String(x.assessment_error || '')) + '</span>');
+  h += list('Source assessments not completed', d.failed_source_assessments, x =>
+    esc(String(x.claim || '')) + ' <span class="evidence-check-muted">' +
+    esc(String(x.reference || '')) + '; located passages: ' +
+    esc(String(x.located_passages ?? 0)) + '; ' + esc(String(x.assessment_error || '')) + '</span>');
   h += list('Conflicts reported by the methodology judge', d.conflicts, x =>
     esc(String(x.answer_text || x.statement || '')) + ' <span class="evidence-check-muted">' +
     esc((x.reasons || []).join(' ')) + '</span>');

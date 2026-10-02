@@ -50,9 +50,17 @@ class ClaimSourceContext:
 
 @dataclass
 class MaterialRestrictionAssessment:
-    """Application-owned material-restriction omission decision."""
+    """Application-owned material-restriction omission decision.
 
-    material_restriction_omitted: bool
+    True: a completed assessment found a material restriction omitted.
+    False: a completed assessment found no omission.
+    None, with a non-empty assessment_error: the assessment was attempted but
+    its output could not be used, so whether a restriction was omitted is
+    unknown. A failure is never recorded as False.
+    """
+
+    material_restriction_omitted: bool | None
+    assessment_error: str = ""
 
 
 @dataclass

@@ -329,8 +329,77 @@ check(d["state"] == "worth_checking"
 check([w["text"] for w in d["worth_checking"]] == ["The answer's sentence about C."],
       "the failed point is not presented as a point worth checking")
 
-check(cf.RULES_VERSION == "4" and d["rules_version"] == "4",
-      "rules version 4 marks the change in routing")
+check(cf.RULES_VERSION == "5" and d["rules_version"] == "5",
+      "rules version 5 marks the change in routing")
+
+# ===========================================================================
+print("\n[failed checks] dropped-condition and source checks that could not be completed")
+
+ERROR = "MaterialRestrictionOutputError: synthetic"
+failed_context = context("Atomic X", "For skewed posteriors, X holds.", None, [P(A)])
+failed_context.material_restriction = NS(material_restriction_omitted=None,
+                                         assessment_error=ERROR)
+d = run(result([tclaim("X", CONSISTENT, [P(A)])], contexts=[failed_context]))
+check(d["state"] == "incomplete" and d["summary"] == cf.INCOMPLETE_SUMMARY
+      and d["secondary"] == cf.INCOMPLETE_SECONDARY,
+      "a context check that could not be completed makes the evidence check incomplete")
+check(d["diagnostics"]["lost_conditions"] == []
+      and d["diagnostics"]["counts"]["failed_restriction_checks"] == 1
+      and d["diagnostics"]["failed_restriction_checks"][0]["assessment_error"] == ERROR
+      and d["diagnostics"]["failed_restriction_checks"][0]["answer_sentence"]
+      == "For skewed posteriors, X holds.",
+      "it is not a lost condition; diagnostics name the sentence and keep the error")
+check("MaterialRestrictionOutputError" not in user_facing(d),
+      "the error stays out of what the reader sees")
+
+SOURCE_ERROR = "ClaimAssessmentOutputError: Assessor output contains an invalid status."
+r = result([tclaim("X", CONSISTENT, [P(A)])],
+           references=[NS(proposed_reference=NS(author="Rubin, D. B.", year=1987,
+                                                title="Multiple Imputation", doi=None),
+                          verification=NS(identity_conflict=False,
+                                          crossref_verification=NS(status="verified")))])
+r.source_claims[0].claim_assessment = None
+r.source_claims[0].claim_assessment_error = SOURCE_ERROR
+r.source_claims[0].claim_location = NS(evidence=[NS(page_number=4), NS(page_number=4)])
+d = run(r)
+check(d["state"] == "incomplete"
+      and d["secondary"] == cf.INCOMPLETE_SECONDARY + " " + cf.SOURCE_INCOMPLETE_NOTE,
+      "a source assessment that could not be completed: incomplete, saying a source "
+      "could not be fully checked")
+row = d["diagnostics"]["failed_source_assessments"][0]
+check(d["diagnostics"]["counts"]["failed_source_assessments"] == 1
+      and row["assessment_error"] == SOURCE_ERROR and row["located_passages"] == 2
+      and row["pages"] == [4] and row["reference"].startswith("Rubin, D. B. (1987)"),
+      "diagnostics keep the claim, its reference, the located evidence and the error")
+check("ClaimAssessmentOutputError" not in user_facing(d) and d["citation_notice"] is None,
+      "no error text for the reader, and no citation notice for a verified reference")
+
+d = run(result(
+    contexts=[context("C", "The answer's sentence about C.", CONFLICT, [P(A)])],
+    status="release_allowed_with_methodological_conflict"))
+check(d["secondary"] == "", "control: a conflict alone has no incomplete secondary")
+r2 = result(contexts=[context("C", "The answer's sentence about C.", CONFLICT, [P(A)]),
+                      failed_context],
+            status="release_allowed_with_methodological_conflict")
+d = run(r2)
+check(d["state"] == "worth_checking"
+      and d["secondary"] == cf.INCOMPLETE_WITH_CONCERN_SECONDARY,
+      "a genuine concern stays primary, with the incomplete secondary")
+
+check(not hasattr(context("Y", "S.", NOT_EST, [P(A)]).material_restriction,
+                  "assessment_error")
+      and run(result(contexts=[context("Y", "S.", NOT_EST, [P(A)], omitted=True)]))
+      ["diagnostics"]["counts"]["failed_restriction_checks"] == 0,
+      "doubles without assessment_error remain compatible")
+
+print("\n[incomplete wording] accurate for any check")
+for text in (cf.INCOMPLETE_SUMMARY, cf.INCOMPLETE_SECONDARY):
+    check("methodological" not in text and "guidance" not in text,
+          f"no mechanism-specific wording: {text!r}")
+check(cf.INCOMPLETE_SUMMARY == "Some of the checks on this answer could not be completed."
+      and cf.INCOMPLETE_SECONDARY == ("This does not mean the answer is wrong, but some "
+                                      "points could not be fully checked."),
+      "the generalised incomplete wording")
 
 # ===========================================================================
 print("\n[citations] an unmatched citation has its own notice")
