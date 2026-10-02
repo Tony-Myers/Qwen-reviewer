@@ -763,6 +763,19 @@ function academicLinkedReferenceIndices(data) {
   return linked;
 }
 
+// The full title of a verified record from its own structured fields.
+// Crossref often splits a book's title ("Causality") from its subtitle
+// ("Models, Reasoning, and Inference"); the reader should see both. The
+// subtitle is not repeated when the title already contains it.
+function academicVerifiedTitle(record) {
+  const title = String(record?.title || '').trim();
+  const subtitle = String(record?.subtitle || '').trim();
+  if (!title || !subtitle) return title;
+  const plain = s => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  if (plain(title).includes(plain(subtitle))) return title;
+  return /[:?!.]$/.test(title) ? title + ' ' + subtitle : title + ': ' + subtitle;
+}
+
 function academicReferenceRecord(record) {
   const authors = Array.isArray(record.authors) ? record.authors.join(', ') : '';
   const details = [];
@@ -795,7 +808,7 @@ function renderAcademicReference(reference, index) {
   const resolved = accepted ? null : (crossref.candidate || null);
   const related = accepted ? null : (crossref.related_candidate || null);
 
-  const title = (accepted ? accepted.title : proposed.title) || 'Untitled reference';
+  const title = (accepted ? academicVerifiedTitle(accepted) : proposed.title) || 'Untitled reference';
   const author = accepted
     ? (Array.isArray(accepted.authors) ? accepted.authors.join(', ') : '')
     : (proposed.author || '');
