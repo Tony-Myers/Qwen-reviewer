@@ -277,6 +277,62 @@ check(d["state"] == "outside_guidance" and "has not been compared" in d["summary
       "retrieved but nothing judged: outside, and says it was not compared")
 
 # ===========================================================================
+print("\n[failed judgements] a judgement that could not be completed is not a gap")
+
+
+def failed_tclaim(statement, passages, error="ClaimAssessorOutputError: synthetic"):
+    """A judgement the model could not complete, as the pipeline records it."""
+    item = tclaim(statement, NOT_EST, passages,
+                  reasons=("The methodological check could not be completed for this claim.",))
+    item.methodological_consistency.assessment_error = error
+    return item
+
+
+check(not hasattr(tclaim("X", NOT_EST, [P(A)]).methodological_consistency,
+                  "assessment_error"),
+      "the existing test doubles carry no assessment_error and still route as before")
+
+d = run(result([failed_tclaim("X", [P(A)])]))
+check(d["state"] == "incomplete" and d["summary"] == cf.INCOMPLETE_SUMMARY
+      and d["secondary"] == cf.INCOMPLETE_SECONDARY,
+      "a failed judgement makes the evidence check incomplete, in the existing words")
+check(d["further_reading"] == [] and d["worth_checking"] == [],
+      "it offers no further reading and raises no worth-checking item")
+counts = d["diagnostics"]["counts"]
+check(counts["failed_methodology_checks"] == 1 and counts["not_established"] == 0
+      and counts["unsettled_statements"] == 0,
+      "diagnostics count it as a failed check, not as 'not established'")
+failed_rows = d["diagnostics"]["failed_methodology_checks"]
+check(len(failed_rows) == 1 and failed_rows[0]["statement"] == "X"
+      and failed_rows[0]["assessment_error"] == "ClaimAssessorOutputError: synthetic",
+      "diagnostics name the statement and keep its assessment_error")
+check("ClaimAssessorOutputError" not in user_facing(d),
+      "the error text stays out of what the reader sees")
+
+d = run(result([failed_tclaim("X", [P(A)]), tclaim("W", NOT_EST, [P(A)])]))
+check(d["state"] == "incomplete",
+      "failed and valid 'not established' together: the check is incomplete")
+points = [pt["text"] for g in d["further_reading"] for pt in g["points"]]
+check([g["heading"] for g in d["further_reading"]] == ["Section A?"]
+      and points == ["W"],
+      "further reading is still offered, for the valid point only")
+check(d["diagnostics"]["counts"]["not_established"] == 1
+      and d["diagnostics"]["counts"]["failed_methodology_checks"] == 1,
+      "each is counted in its own place")
+
+d = run(result([failed_tclaim("X", [P(A)])],
+               contexts=[context("C", "The answer's sentence about C.", CONFLICT, [P(A)])],
+               status="release_allowed_with_methodological_conflict"))
+check(d["state"] == "worth_checking"
+      and d["secondary"] == cf.INCOMPLETE_WITH_CONCERN_SECONDARY,
+      "a conflict stays worth checking, with the existing incomplete-checking secondary")
+check([w["text"] for w in d["worth_checking"]] == ["The answer's sentence about C."],
+      "the failed point is not presented as a point worth checking")
+
+check(cf.RULES_VERSION == "4" and d["rules_version"] == "4",
+      "rules version 4 marks the change in routing")
+
+# ===========================================================================
 print("\n[citations] an unmatched citation has its own notice")
 bad = NS(proposed_reference=NS(author="Lakens, Scheel, Ismar", year=2018,
                                title="Justify your alpha", doi=None),

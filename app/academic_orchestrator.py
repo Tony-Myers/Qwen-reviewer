@@ -430,6 +430,10 @@ def standalone_methodology_is_contextually_superseded(
     This prevents one assessed occurrence of a deduplicated proposition from
     neutralising a standalone conflict while another materially restricted
     occurrence remains contextually unassessed.
+
+    A contextual assessment whose judgement could not be completed (it
+    carries an assessment_error) has not assessed the occurrence, so it does
+    not count as completed and cannot supersede the standalone judgement.
     """
     restricted_occurrences = [
         assessment
@@ -443,6 +447,11 @@ def standalone_methodology_is_contextually_superseded(
 
     return bool(restricted_occurrences) and all(
         assessment.contextual_methodological_consistency is not None
+        and not getattr(
+            assessment.contextual_methodological_consistency,
+            "assessment_error",
+            "",
+        )
         for assessment in restricted_occurrences
     )
 

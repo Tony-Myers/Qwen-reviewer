@@ -46,6 +46,14 @@ signal: a judged conflict with the guidance, or a release blocked by a
 conflict. An unmatched reference gets its own notice, because it is a fact
 about a source given in support of the answer, not about the evidence for the
 answer as a whole.
+
+A FAILED JUDGEMENT IS NOT A GAP IN THE GUIDANCE. A methodological judgement
+the model could not complete is recorded as "not established" with an
+assessment_error. It says nothing about what the guidance establishes, so it
+is never routed to further reading and never counted as a valid "not
+established" judgement; it makes the evidence check incomplete instead. A
+judgement that completed and found the point not established keeps its
+meaning and is routed exactly as before.
 """
 
 from __future__ import annotations
@@ -60,7 +68,9 @@ import reviewer_notes
 
 
 # 3: the citation notice counts only references a source claim points to.
-RULES_VERSION = "3"
+# 4: a methodological judgement that could not be completed (assessment_error)
+#    makes the check incomplete and is not routed to further reading.
+RULES_VERSION = "4"
 
 STATE_NO_CONCERN = "no_specific_concern"
 STATE_FURTHER_READING = "further_reading"
@@ -254,6 +264,13 @@ class _Judgement:
     reasons: list
     point: Point
     contextual: bool
+    # Non-empty when the judgement could not be completed: its status is then
+    # not a judgement about the guidance at all.
+    error: str = ""
+
+    @property
+    def failed(self) -> bool:
+        return bool(self.error)
 
 
 def _point_for(claim, statement: str, sentence_by_claim) -> Point:
@@ -312,7 +329,7 @@ def assess_check_further(
             item.claim.statement, method.status, list(method.passages),
             list(getattr(method, "reasons", []) or []),
             _point_for(item.claim, item.claim.statement, sentence_by_claim),
-            False))
+            False, getattr(method, "assessment_error", "") or ""))
     for item in assessments:
         method = item.contextual_methodological_consistency
         if method is None:
@@ -321,10 +338,15 @@ def assess_check_further(
             item.discovered_claim.claim.statement, method.status,
             list(method.passages), list(getattr(method, "reasons", []) or []),
             Point(item.source_context.source_sentence.strip(), POINT_ANSWER_SENTENCE),
-            True))
+            True, getattr(method, "assessment_error", "") or ""))
 
-    settled = {_normalise(j.statement) for j in judgements if j.status == consistent}
-    conflicts = [j for j in judgements if j.status == conflict]
+    # Judgements that could not be completed are kept apart: they make the
+    # check incomplete and take no part in settling or routing a point.
+    failed = [j for j in judgements if j.failed]
+    completed = [j for j in judgements if not j.failed]
+
+    settled = {_normalise(j.statement) for j in completed if j.status == consistent}
+    conflicts = [j for j in completed if j.status == conflict]
     conflict_keys = {_normalise(j.statement) for j in conflicts}
 
     # ---- unsettled points, routed only to qualifying sections ---------------
@@ -337,7 +359,7 @@ def assess_check_further(
     placed_points = set()
     routing, unrouted = [], []
     unsettled_keys = set()
-    for j in judgements:
+    for j in completed:
         key = _normalise(j.statement)
         if j.status in (consistent, conflict) or key in settled or key in conflict_keys:
             continue
@@ -387,6 +409,9 @@ def assess_check_further(
             "atomic_claim": item.discovered_claim.claim.statement,
             "contextual_status": method.status if method is not None else None,
             "contextual_reasons": list(method.reasons) if method is not None else [],
+            "contextual_assessment_error": (
+                getattr(method, "assessment_error", "") or ""
+                if method is not None else ""),
         })
 
     # ---- a source given in support that does not match a record ----------
@@ -432,11 +457,12 @@ def assess_check_further(
     # A recorded conflict is a concern about the answer and is reported even
     # when other checking was incomplete; incomplete checking on its own is
     # never presented as a concern.
+    checking_incomplete = release.status == "checking_incomplete" or bool(failed)
     if release.status in _BLOCKED_SUMMARIES or conflicts:
         state = STATE_WORTH_CHECKING
         summary = _BLOCKED_SUMMARIES.get(
             release.status, METHODOLOGICAL_CONFLICT_SUMMARY)
-        if release.status == "checking_incomplete":
+        if checking_incomplete:
             secondary = INCOMPLETE_WITH_CONCERN_SECONDARY
         seen = set()
         for j in conflicts:
@@ -453,7 +479,7 @@ def assess_check_further(
                     "The local methodological guidance appears to say "
                     "something different about this point."),
             })
-    elif release.status == "checking_incomplete":
+    elif checking_incomplete:
         state = STATE_INCOMPLETE
         summary = INCOMPLETE_SUMMARY
         secondary = INCOMPLETE_SECONDARY
@@ -494,7 +520,8 @@ def assess_check_further(
             "consistent": sum(1 for j in judgements if j.status == consistent),
             "conflict": len(conflicts),
             "not_established": sum(
-                1 for j in judgements if j.status not in (consistent, conflict)),
+                1 for j in completed if j.status not in (consistent, conflict)),
+            "failed_methodology_checks": len(failed),
             "unsettled_statements": len(unsettled_keys),
             "points_shown": sum(len(g.points) for g in group_list),
             "unrouted": len(unrouted),
@@ -513,6 +540,12 @@ def assess_check_further(
             for j in conflicts
         ],
         "unlinked_references": unlinked,
+        "failed_methodology_checks": [
+            {"statement": j.statement, "answer_text": j.point.text,
+             "contextual": j.contextual, "assessment_error": j.error,
+             "sections": [f"{p.note} - {p.heading}" for p in j.passages]}
+            for j in failed
+        ],
     }
 
     return CheckFurtherAssessment(

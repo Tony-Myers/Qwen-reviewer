@@ -591,6 +591,55 @@ check(
 )
 
 
+print("\n[19] a contextual assessment that could not be completed supersedes nothing")
+
+for contextual_status in (
+    academic_methodology.METHODOLOGICAL_STATUS_NOT_ESTABLISHED,
+    academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT,
+):
+    failed_occurrence = paired_contextual_assessment(contextual_status)
+    failed_occurrence.contextual_methodological_consistency.assessment_error = (
+        "ClaimAssessorOutputError: synthetic unusable contextual judgement"
+    )
+
+    check(
+        not academic_orchestrator.standalone_methodology_is_contextually_superseded(
+            qualified_claim,
+            [failed_occurrence],
+        ),
+        f"a failed {contextual_status!r} contextual assessment does not count "
+        "as completed",
+    )
+
+    release = academic_orchestrator.assess_academic_release(
+        [standalone_conflict],
+        [],
+        [failed_occurrence],
+    )
+
+    check(
+        release.status
+        == academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT,
+        "the standalone conflict is still reported",
+    )
+    check(
+        release.safe_to_present is True,
+        "and it remains advisory: the answer is not withheld",
+    )
+
+check(
+    academic_orchestrator.standalone_methodology_is_contextually_superseded(
+        qualified_claim,
+        [
+            paired_contextual_assessment(
+                academic_methodology.METHODOLOGICAL_STATUS_NOT_ESTABLISHED
+            )
+        ],
+    ),
+    "a completed 'not established' contextual assessment still supersedes",
+)
+
+
 if fails:
     print(f"\n{len(fails)} release test(s) failed.")
     raise SystemExit(1)

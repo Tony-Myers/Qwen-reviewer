@@ -1,3 +1,8 @@
+import json
+import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 html = Path("app/chat.html").read_text()
@@ -147,6 +152,99 @@ check(
     "claim_context_assessments" not in summary_renderer,
     "claim-context diagnosis does not become a top-level evidence verdict",
 )
+
+
+
+print("\n[a methodological check that could not be completed is labelled as such]")
+
+node = shutil.which("node")
+if not node:
+    print("SKIP: Node is not installed, so the rendering checks did not run.")
+else:
+    page_functions = re.findall(r"^function \w+\(.*?\n}\n", html, re.S | re.M)
+
+    def render(expression):
+        script = "\n".join(page_functions) + (
+            f"\nprocess.stdout.write({expression});")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(script)
+        run = subprocess.run([node, f.name], capture_output=True, text=True,
+                             timeout=30)
+        Path(f.name).unlink()
+        if run.returncode != 0:
+            print(run.stderr)
+        return run.stdout
+
+    NOT_ESTABLISHED = "methodological_consistency_not_established"
+    passage = {"note": "Missing Data", "heading": "Imputations", "score": 0.4}
+
+    def methodology(error=None):
+        result = {"status": NOT_ESTABLISHED, "passages": [passage],
+                  "reasons": ["Synthetic reason."]}
+        if error:
+            result["assessment_error"] = error
+        return result
+
+    def technical(error=None):
+        return {"claim": {"statement": "A claim."},
+                "verification": {"status": "not_technically_verified", "reasons": []},
+                "methodological_consistency": methodology(error)}
+
+    def context(error=None):
+        return {"claim_statement": "A claim.", "source_sentence": "A sentence.",
+                "context_excerpt": "Context.", "material_restriction_omitted": True,
+                "contextual_methodological_consistency": methodology(error)}
+
+    ERROR = "ClaimAssessorOutputError: synthetic"
+    failed_technical = render(
+        f"renderAcademicTechnicalClaim({json.dumps(technical(ERROR))}, 0)")
+    valid_technical = render(
+        f"renderAcademicTechnicalClaim({json.dumps(technical())}, 0)")
+    failed_context = render(
+        f"renderAcademicClaimContext({json.dumps(context(ERROR))}, 0)")
+    valid_context = render(
+        f"renderAcademicClaimContext({json.dumps(context())}, 0)")
+
+    check(
+        "Methodological check not completed" in failed_technical
+        and "Methodological consistency not established" not in failed_technical,
+        "failed standalone check: 'Methodological check not completed'",
+    )
+    check(
+        "Methodological consistency not established" in valid_technical
+        and "not completed" not in valid_technical,
+        "valid standalone 'not established' keeps its existing label",
+    )
+    check(
+        "Methodological check not completed" in failed_context
+        and "Methodological consistency not established" not in failed_context,
+        "failed contextual check: 'Methodological check not completed'",
+    )
+    check(
+        "Methodological consistency not established" in valid_context
+        and "not completed" not in valid_context,
+        "valid contextual 'not established' keeps its existing label",
+    )
+
+    diagnostics = render("renderCheckFurtherDiagnostics(" + json.dumps({
+        "rules_version": "4",
+        "counts": {"not_established": 0, "failed_methodology_checks": 1},
+        "lost_conditions": [{
+            "answer_sentence": "A sentence.", "atomic_claim": "A claim.",
+            "contextual_status": NOT_ESTABLISHED,
+            "contextual_assessment_error": ERROR}],
+        "failed_methodology_checks": [{
+            "statement": "A claim.", "answer_text": "A sentence.",
+            "contextual": True, "assessment_error": ERROR, "sections": []}],
+    }) + ")")
+    check(
+        "Methodological checks not completed" in diagnostics and ERROR in diagnostics,
+        "technical diagnostics list the failed check with its error",
+    )
+    check(
+        "Contextual status: check not completed" in diagnostics,
+        "a lost condition whose contextual check failed says so",
+    )
 
 
 if fails:

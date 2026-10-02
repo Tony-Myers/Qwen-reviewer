@@ -726,6 +726,14 @@ function academicStatusLabel(status) {
   return labels[status] || String(status || 'unknown').replace(/_/g, ' ');
 }
 
+// A methodological judgement that could not be completed carries an
+// assessment_error. Its status reads "not established", but it is not a
+// judgement about the guidance, so it is labelled for what happened.
+function academicMethodologyLabel(methodology) {
+  if (methodology?.assessment_error) return 'Methodological check not completed';
+  return academicStatusLabel(methodology?.status);
+}
+
 function academicReasons(reasons) {
   if (!Array.isArray(reasons) || !reasons.length) return '';
   let h = '<ul class="academic-audit-reasons">';
@@ -989,7 +997,7 @@ function renderAcademicTechnicalClaim(item, index) {
   if (methodology) {
     h += '<div class="academic-audit-grid" style="margin-top:8px;">';
     h += '<div><strong>Methodological check:</strong> ' +
-      esc(academicStatusLabel(methodology.status)) + '</div>';
+      esc(academicMethodologyLabel(methodology)) + '</div>';
     h += '</div>';
     h += academicReasons(methodology.reasons);
 
@@ -1061,7 +1069,7 @@ function renderAcademicClaimContext(item, index) {
   if (methodology) {
     h += '<div class="academic-audit-grid" style="margin-top:8px;">';
     h += '<div><strong>Contextual methodological check:</strong> ' +
-      esc(academicStatusLabel(methodology.status)) + '</div>';
+      esc(academicMethodologyLabel(methodology)) + '</div>';
     h += '</div>';
 
     h += academicReasons(methodology.reasons);
@@ -1420,9 +1428,13 @@ function renderCheckFurtherDiagnostics(d) {
     'Answer sentence: “' + esc(String(x.answer_sentence || '')) + '”<br>' +
     '<span class="evidence-check-muted">Atomic claim generated for checking: ' +
     esc(String(x.atomic_claim || '')) + '<br>Contextual status: ' +
-    esc(String(x.contextual_status || 'not assessed')) + '</span>');
+    esc(x.contextual_assessment_error ? 'check not completed'
+      : String(x.contextual_status || 'not assessed')) + '</span>');
   h += list('Proposed references not linked to any claim (not shown as references)',
     d.unlinked_references, x => esc(String(x)));
+  h += list('Methodological checks not completed', d.failed_methodology_checks, x =>
+    esc(String(x.answer_text || x.statement || '')) + ' <span class="evidence-check-muted">' +
+    (x.contextual ? 'contextual; ' : '') + esc(String(x.assessment_error || '')) + '</span>');
   h += list('Conflicts reported by the methodology judge', d.conflicts, x =>
     esc(String(x.answer_text || x.statement || '')) + ' <span class="evidence-check-muted">' +
     esc((x.reasons || []).join(' ')) + '</span>');

@@ -19,8 +19,14 @@ endpoint. Only the model calls are replaced. Checked:
   1. an over-long reason, or output the assessor cannot decode, makes that
      claim "not established" instead of failing the request;
   2. the failure is kept for diagnostics and written to the server log;
-  3. the answer is presented, and is not reported as a concern;
-  4. backend failures and application-owned input errors still raise.
+  3. the answer is presented, and is not reported as a concern; the evidence
+     check is incomplete, and the failed points offer no further reading;
+  4. backend failures and application-owned input errors still raise;
+  5. a judgement that validly finds a point not established is unchanged;
+  6. a failed contextual judgement does not supersede a standalone conflict;
+  7. a valid contextual judgement still supersedes it;
+  8. failed and valid points together: incomplete, with further reading for
+     the valid point only.
 """
 import asyncio
 import contextlib
@@ -191,6 +197,21 @@ evidence = cf.assess_check_further(
     reconciled.final, orchestrator.methodological_notes_index()).to_dict()
 check(evidence["state"] != "worth_checking" and evidence["worth_checking"] == [],
       f"the reader is not told it is worth checking ({evidence['state']})")
+check(evidence["state"] == cf.STATE_INCOMPLETE
+      and evidence["summary"] == cf.INCOMPLETE_SUMMARY,
+      "the reader is told the evidence check is incomplete")
+check(evidence["further_reading"] == [],
+      "a failed judgement is not presented as a gap in the guidance: no further reading")
+counts = evidence["diagnostics"]["counts"]
+check(counts["failed_methodology_checks"] == len(results)
+      and counts["not_established"] == 0,
+      f"diagnostics count {len(results)} failed checks and no valid 'not established'")
+check(all(row["assessment_error"]
+          for row in evidence["diagnostics"]["failed_methodology_checks"]),
+      "each failed check keeps its assessment_error in the diagnostics")
+reader_view = str({k: v for k, v in evidence.items() if k != "diagnostics"})
+check("30 words" not in reader_view and "ClaimAssessorOutputError" not in reader_view,
+      "the error text is not shown to the reader")
 
 with contextlib.redirect_stderr(io.StringIO()):
     original = (server.ensure_model,
@@ -247,6 +268,115 @@ except am.MethodologicalAssessmentOutputError:
     check(True, "the validator itself is unchanged: it still rejects the output")
 else:
     check(False, "the validator itself is unchanged: it still rejects the output")
+
+
+# ===========================================================================
+NE = am.METHODOLOGICAL_STATUS_NOT_ESTABLISHED
+CONFLICT = am.METHODOLOGICAL_STATUS_CONFLICT
+FAILS = object()
+
+
+def judge_returning(standalone, contextual):
+    """A judge giving one verdict standalone and another in context.
+
+    FAILS stands for output the assessor could not decode.
+    """
+    def judge(*, prompt, schema):
+        verdict = contextual if "VERIFIED SOURCE SENTENCE" in prompt else standalone
+        if callable(verdict):
+            verdict = verdict(prompt)
+        if verdict is FAILS:
+            raise academic_claim_assessor.ClaimAssessorOutputError(
+                "Claim assessor did not return valid JSON.")
+        return {"status": verdict, "reason": "Synthetic judgement."}
+    return judge
+
+
+def run_case(judge, condition_dropped):
+    draft = academic_chat.AcademicDraft(
+        answer_draft=ANSWER, references=[], source_claims=[], technical_claims=[])
+    with contextlib.redirect_stderr(io.StringIO()):
+        checked = orchestrator.assess_academic_draft(
+            draft,
+            local_guidance=orchestrator.retrieve_methodological_context(QUESTION),
+            technical_verifier=academic_technical.verify_technical_claim,
+            methodological_assessor=judge,
+            claim_methodological_retriever=orchestrator.retrieve_methodological_context,
+            coverage_assessor=coverage_assessor,
+            material_restriction_assessor=(
+                lambda **kwargs: {"material_restriction_omitted": condition_dropped}),
+        )
+    reconciled = lifecycle.run_academic_reconciliation(
+        object(), object(), QUESTION,
+        first_stage_runner=lambda *args: checked,
+        correction_extractor=reconciliation.extract_academic_corrections,
+        revision_generator=must_not_revise,
+        draft_assessor=must_not_revise)
+    corrections = reconciliation.extract_academic_corrections(
+        technical_claims=checked.technical_claims,
+        source_claims=checked.source_claims,
+        discovered_claim_assessments=checked.discovered_claim_assessments)
+    evidence = cf.assess_check_further(
+        reconciled.final, orchestrator.methodological_notes_index()).to_dict()
+    return checked, reconciled, corrections, evidence
+
+
+def reading_points(evidence):
+    return [point["text"] for group in evidence["further_reading"]
+            for point in group["points"]]
+
+
+print("\n[5] a valid 'not established' judgement keeps its meaning")
+checked, reconciled, corrections, evidence = run_case(judge_returning(NE, NE), False)
+check(checked.release.safe_to_present is True and reconciled.revision_attempted is False,
+      "presentable, with no revision")
+check(evidence["state"] == cf.STATE_FURTHER_READING and evidence["further_reading"],
+      "further reading is offered exactly as before")
+check(sorted(reading_points(evidence)) == sorted([FORMULA_SENTENCE, COUNT_SENTENCE]),
+      "for both points the guidance did not settle")
+check(evidence["diagnostics"]["counts"]["not_established"] == 2
+      and evidence["diagnostics"]["counts"]["failed_methodology_checks"] == 0,
+      "counted as valid 'not established', with no failed checks")
+
+print("\n[6] a failed contextual judgement does not supersede a standalone conflict")
+checked, reconciled, corrections, evidence = run_case(
+    judge_returning(CONFLICT, FAILS), True)
+check(any(a.contextual_methodological_consistency is not None
+          and a.contextual_methodological_consistency.assessment_error
+          for a in checked.discovered_claim_assessments),
+      "the contextual judgements failed")
+check(checked.release.status == orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT,
+      f"the standalone conflict is still reported ({checked.release.status})")
+check(checked.release.safe_to_present is True,
+      "safe to present: the conflict remains advisory")
+check(reconciled.revision_attempted is False and corrections.is_empty(),
+      "no revision, and no correction material")
+check(evidence["state"] == cf.STATE_WORTH_CHECKING
+      and evidence["secondary"] == cf.INCOMPLETE_WITH_CONCERN_SECONDARY,
+      "the reader gets 'worth checking', with the incomplete-checking secondary")
+
+print("\n[7] a valid contextual judgement still supersedes a standalone conflict")
+checked, reconciled, corrections, evidence = run_case(
+    judge_returning(CONFLICT, NE), True)
+check(checked.release.status == "release_allowed_with_unverified_claims"
+      and checked.release.safe_to_present is True,
+      f"the standalone conflict is superseded, as before ({checked.release.status})")
+check(evidence["state"] == cf.STATE_FURTHER_READING and evidence["worth_checking"] == [],
+      "and the evidence check is unchanged: further reading, nothing worth checking")
+
+print("\n[8] failed and valid points together")
+checked, reconciled, corrections, evidence = run_case(
+    judge_returning(lambda prompt: FAILS if FORMULA in prompt else NE, NE), False)
+check(checked.release.safe_to_present is True and reconciled.revision_attempted is False,
+      "presentable, with no revision")
+check(evidence["state"] == cf.STATE_INCOMPLETE,
+      "the evidence check is incomplete")
+check(reading_points(evidence) == [COUNT_SENTENCE],
+      "further reading is offered for the valid point only")
+check(FORMULA_SENTENCE not in reading_points(evidence)
+      and [row["statement"] for row in
+           evidence["diagnostics"]["failed_methodology_checks"]] == [FORMULA],
+      "the failed point is excluded from further reading and named in the diagnostics")
 
 print()
 print("All checks passed." if not failures else f"{failures} check(s) FAILED.")
