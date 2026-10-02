@@ -1,3 +1,8 @@
+import json
+import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 html = Path("app/chat.html").read_text()
@@ -13,17 +18,7 @@ def check(condition, message):
         fails.append(message)
 
 
-print("\n[academic answer presentation honours release decision]")
-
-check(
-    "data.release?.safe_to_present === false" in html,
-    "Academic Chat explicitly checks a blocked release before presentation",
-)
-
-check(
-    "data.answer_draft" in html,
-    "auditable draft remains available to the browser response path",
-)
+print("\n[academic answer presentation renders the server's decision]")
 
 send_start = html.find("async function sendAcademicMessage()")
 send_end = html.find("// --- File upload ---", send_start)
@@ -35,8 +30,16 @@ check(
 )
 
 check(
-    'data.release?.status === "checking_incomplete"' in send_function,
-    "incomplete checking has its own presentation branch",
+    "presentation.mode" in send_function
+    and "safe_to_present" not in send_function
+    and "release?.status" not in send_function,
+    "presentation follows presentation.mode alone; the page does not "
+    "re-derive it from the release",
+)
+
+check(
+    "data.answer_draft" in html,
+    "auditable draft remains available to the browser response path",
 )
 
 incomplete_start = html.find("function academicIncompleteExplanation")
@@ -54,19 +57,6 @@ check(
     "incomplete-check explanation does not reinterpret uncertainty as error",
 )
 
-incomplete_branch = send_function[
-    send_function.find('data.release?.status === "checking_incomplete"'):
-    send_function.find("data.release?.safe_to_present === false")
-]
-
-check(
-    "data.check_further ? '' :" in incomplete_branch
-    and "Checking incomplete" in incomplete_branch
-    and "academicIncompleteExplanation()" in incomplete_branch,
-    "the older notice appears beside the answer only without an evidence "
-    "check, so the reader is told once",
-)
-
 evidence_start = html.find("function renderAcademicEvidence")
 evidence_renderer = html[
     evidence_start:html.find("return renderAcademicCheckFurther", evidence_start)
@@ -82,46 +72,110 @@ check(
     "checking details",
 )
 
-checking_branch = send_function.find(
-    'data.release?.status === "checking_incomplete"'
-)
-blocked_branch = send_function.find(
-    "data.release?.safe_to_present === false",
-    checking_branch + 1,
-)
-normal_branch = send_function.find(
-    "fmtMd(data.answer_draft",
-    blocked_branch + 1,
-)
+node = shutil.which("node")
+if not node:
+    print("SKIP: Node is not installed, so the rendering checks did not run.")
+else:
+    page_functions = re.findall(r"^function \w+\(.*?\n}\n", html, re.S | re.M)
+    constants = re.findall(r"^const ACADEMIC_\w+ =\n?.*?;\n", html, re.S | re.M)
 
-check(
-    checking_branch >= 0
-    and blocked_branch > checking_branch
-    and normal_branch > blocked_branch,
-    "incomplete, blocked-conflict, and normal presentation remain distinct",
-)
+    def shown(payload):
+        """The answer area sendAcademicMessage renders for this response."""
+        script = """
+const element = () => ({innerHTML: '', style: {}, value: '', disabled: false,
+                        textContent: '', focus() {}});
+const ids = {};
+const document = {getElementById: id => (ids[id] = ids[id] || element())};
+const academicInput = element(); academicInput.value = 'q';
+const academicSendBtn = element();
+let academicGenerating = false;
+const BASE = '';
+const PAYLOAD = %s;
+async function fetch() { return {ok: true, status: 200, json: async () => PAYLOAD}; }
+class AcademicUserError extends Error {}
+%s
+%s
+%s
+sendAcademicMessage().then(() => process.stdout.write(ids['academicAnswer'].innerHTML));
+""" % (json.dumps(payload), "\n".join(constants), "\n".join(page_functions),
+               send_function)
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(script)
+        run = subprocess.run([node, f.name], capture_output=True, text=True,
+                             timeout=30)
+        Path(f.name).unlink()
+        if run.returncode != 0:
+            print(run.stderr)
+        return run.stdout
 
-check(
-    "fmtMd(data.answer_draft" in send_function[checking_branch:blocked_branch],
-    "draft remains visible when checking is incomplete",
-)
+    ANSWER = "The relative efficiency is approximately 1 / (1 + lambda/M)."
 
-check(
-    "Answer withheld after checking." in send_function[blocked_branch:normal_branch],
-    "established blocked release still withholds the draft",
-)
+    def payload(mode, reason, *, status=None, safe=None, check_further=None):
+        body = {
+            "answer_draft": ANSWER,
+            "release": {"status": status or reason, "safe_to_present": safe,
+                        "reasons": []},
+            "presentation": {"mode": mode, "reason": reason},
+        }
+        if check_further is not None:
+            body["check_further"] = check_further
+        return body
 
-check(
-    "contains a conflict identified during verification" in (
-        send_function[blocked_branch:normal_branch]
-    ),
-    "conflict wording remains confined to the established-block branch",
-)
+    page = shown(payload("release", "release_allowed", safe=True))
+    check(ANSWER in page and "withheld" not in page,
+          "release: the answer is displayed")
 
-check(
-    "fmtMd(data.answer_draft" in send_function[normal_branch:],
-    "normal releasable answers still render the generated draft",
-)
+    page = shown(payload("qualified", "checking_incomplete", safe=False))
+    check(ANSWER in page and "Checking incomplete." in page
+          and "does not establish that the answer is wrong" in page,
+          "qualified without an evidence check: the answer, with the older "
+          "incomplete-checking note beside it")
+
+    page = shown(payload("qualified", "checking_incomplete", safe=False,
+                         check_further={"state": "incomplete"}))
+    check(ANSWER in page and "Checking incomplete." not in page,
+          "qualified with an evidence check: the answer, and the evidence "
+          "check tells the reader once")
+
+    page = shown(payload("withheld", "checking_incomplete", safe=False))
+    check(ANSWER not in page
+          and "A problem was found in the original answer" in page
+          and "checking of it could not be completed" in page
+          and "Trying again may help." in page
+          and "checking_incomplete" not in page,
+          "withheld revision with incomplete checking: not displayed, and "
+          "explained without internal names")
+
+    page = shown(payload("withheld", "blocked_technical_conflict", safe=False))
+    check(ANSWER not in page and "Answer withheld after checking." in page
+          and "contains a conflict identified during verification" in page,
+          "withheld for an established conflict: the existing wording")
+
+    page = shown(payload("withheld", "blocked_source_contradiction", safe=False))
+    check(ANSWER not in page and "Answer withheld after checking." in page,
+          "withheld for a source contradiction: the existing wording")
+
+    page = shown(payload("withheld", "blocked_unresolved_source_contradiction",
+                         safe=False))
+    check(ANSWER not in page
+          and "could not be confirmed against that source" in page,
+          "withheld for an unresolved source contradiction: its own wording")
+
+    page = shown(payload("release", "release_allowed",
+                         status="checking_incomplete", safe=False))
+    check(ANSWER in page,
+          "the page follows the decision even when the release disagrees")
+
+    page = shown(payload("withheld", "checking_incomplete",
+                         status="checking_incomplete", safe=False))
+    check(ANSWER not in page,
+          "no status exception can display a withheld revision whose "
+          "checking was incomplete")
+
+    no_decision = payload("release", "release_allowed", safe=True)
+    del no_decision["presentation"]
+    check(ANSWER not in shown(no_decision),
+          "a response without a presentation decision is not displayed")
 
 
 print("\n[Academic Chat failures separate user messages from diagnostics]")

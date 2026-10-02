@@ -9,6 +9,11 @@ assessment itself. The original user question is used only by the supplied
 first-stage runner. Reconciliation operates on the retained AcademicDraft and
 application-owned checking results.
 
+It also owns the presentation decision: whether the reader is shown the
+answer (release), shown it qualified as incompletely checked (qualified), or
+not shown it (withheld). The page renders that decision and does not derive
+its own from release statuses.
+
 It owns one release decision of its own. Once a source contradiction has
 withheld the first attempt, the absence of a contradiction in the revised
 attempt is not evidence that it was resolved: the source may not have been
@@ -197,6 +202,50 @@ def assess_source_contradiction_resolution(
     return SourceContradictionResolution(status=status, sources=sources)
 
 
+PRESENTATION_RELEASE = "release"
+PRESENTATION_QUALIFIED = "qualified"
+PRESENTATION_WITHHELD = "withheld"
+
+# The one release status under which a first answer may still be shown,
+# qualified as incompletely checked: no blocking problem was established, but
+# a check required before ordinary release could not be completed.
+QUALIFIED_FIRST_ATTEMPT_STATUS = "checking_incomplete"
+
+
+@dataclass
+class PresentationDecision:
+    """Whether and how the reader is shown the answer.
+
+    reason is the release status that decided it, in the existing vocabulary.
+    """
+
+    mode: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"mode": self.mode, "reason": self.reason}
+
+
+def decide_presentation(release: Any, *, revised: bool) -> PresentationDecision:
+    """Decide presentation from the final release and whether a revision was made.
+
+    A first answer cleared for ordinary release is released. A first answer
+    whose checking was incomplete, with no blocking problem established, is
+    shown qualified -- a deliberate product decision. Any other first answer
+    is withheld.
+
+    A revision exists only because a blocking problem was established, so it
+    is shown only when cleared for ordinary release and is otherwise withheld.
+    A revision is never shown qualified.
+    """
+    status = getattr(release, "status", None) or ""
+    if getattr(release, "safe_to_present", False) is True:
+        return PresentationDecision(PRESENTATION_RELEASE, status)
+    if not revised and status == QUALIFIED_FIRST_ATTEMPT_STATUS:
+        return PresentationDecision(PRESENTATION_QUALIFIED, status)
+    return PresentationDecision(PRESENTATION_WITHHELD, status)
+
+
 @dataclass
 class AcademicReconciliationResult:
     """Audit both attempts while exposing the independently checked final one."""
@@ -251,12 +300,21 @@ class AcademicReconciliationResult:
             return self.final
         return replace(self.final, release=release)
 
+    @property
+    def presentation(self) -> PresentationDecision:
+        """The single application-owned decision on what the reader is shown."""
+        return decide_presentation(
+            getattr(self.presented, "release", None),
+            revised=self.revised is not None,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize the final result plus the retained reconciliation audit."""
         result = self.final.to_dict()
         release = self.unresolved_release
         if release is not None:
             result["release"] = release.to_dict()
+        result["presentation"] = self.presentation.to_dict()
         result["reconciliation"] = {
             "revision_attempted": self.revision_attempted,
             "initial": self.initial.to_dict(),

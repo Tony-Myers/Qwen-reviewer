@@ -213,9 +213,11 @@ check(payload["check_further"]["state"] == "worth_checking",
       "endpoint: the evidence check reports it as worth checking")
 html = (Path(__file__).resolve().parents[1] / "app" / "chat.html").read_text()
 send = html[html.index("async function sendAcademicMessage()"):]
-check("data.release?.safe_to_present === false" in send
-      and "Answer withheld after checking." in send,
-      "page: only an unsafe release is withheld, so this answer is shown")
+check(payload["presentation"] == {
+          "mode": "release",
+          "reason": orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT}
+      and "presentation.mode" in send,
+      "page: the server releases this answer, and the page renders that decision")
 
 # ===========================================================================
 print("\n[3] deterministic and source gates still withhold, and only they correct")

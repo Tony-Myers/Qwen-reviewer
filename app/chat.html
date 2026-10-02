@@ -1290,6 +1290,11 @@ function renderAcademicAudit(data) {
       esc(academicStatusLabel(release.status)) + '</div>';
     h += '<div class="academic-reference-meta">safe_to_present: ' +
       esc(String(release.safe_to_present === true)) + '</div>';
+    if (data.presentation) {
+      h += '<div class="academic-reference-meta">presentation: ' +
+        esc(String(data.presentation.mode || '')) + ' (' +
+        esc(String(data.presentation.reason || '')) + ')</div>';
+    }
     h += academicReasons(release.reasons);
     h += '</div>';
   }
@@ -1605,6 +1610,30 @@ function academicIncompleteExplanation() {
     'This does not establish that the answer is wrong.';
 }
 
+// What the reader is told when the server withholds the answer. The reason
+// only chooses the words; it does not decide whether the answer is shown.
+function academicWithheldMessage(reason) {
+  let text;
+  if (reason === 'blocked_unresolved_source_contradiction') {
+    text = '<strong>Answer withheld.</strong> ' +
+      'A source given in support of the original answer appeared to contradict it. ' +
+      'A revised answer was prepared, but it could not be confirmed against that ' +
+      'source, so it is not shown.';
+  } else if (reason === 'checking_incomplete') {
+    // Only a revision is withheld for incomplete checking: a first answer
+    // with incomplete checking is shown qualified instead.
+    text = '<strong>Answer withheld.</strong> ' +
+      'A problem was found in the original answer. A revised answer was prepared, ' +
+      'but checking of it could not be completed, so it is not shown. ' +
+      'Trying again may help.';
+  } else {
+    text = '<strong>Answer withheld after checking.</strong> ' +
+      'The generated draft contains a conflict identified during verification. ' +
+      'See the verification details below.';
+  }
+  return '<div style="color:var(--error);">' + text + '</div>';
+}
+
 async function sendAcademicMessage() {
   const question = academicInput.value.trim();
   if (!question || academicGenerating) return;
@@ -1645,7 +1674,15 @@ async function sendAcademicMessage() {
       throw new AcademicUserError(data.error || ACADEMIC_INTERNAL_ERROR);
     }
 
-    if (data.release?.status === "checking_incomplete") {
+    // Whether the answer is shown is decided by the server (presentation.mode);
+    // the page renders that decision and derives none of its own. A response
+    // without one is treated as withheld.
+    const presentation = data.presentation || {};
+    if (presentation.mode === 'release') {
+      answer.innerHTML =
+        '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
+        renderAcademicRelease(data.release);
+    } else if (presentation.mode === 'qualified') {
       answer.innerHTML =
         '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
         (data.check_further ? '' :
@@ -1654,28 +1691,8 @@ async function sendAcademicMessage() {
           academicIncompleteExplanation() + ' ' +
           'See the verification details below.' +
           '</div>');
-    } else if (data.release?.status === 'blocked_unresolved_source_contradiction') {
-      // Reconciliation's own decision: neither the original answer nor the
-      // unconfirmed revision is shown. The revision stays in the payload and
-      // under Technical checking details.
-      answer.innerHTML =
-        '<div style="color:var(--error);">' +
-        '<strong>Answer withheld.</strong> ' +
-        'A source given in support of the original answer appeared to contradict it. ' +
-        'A revised answer was prepared, but it could not be confirmed against that ' +
-        'source, so it is not shown.' +
-        '</div>';
-    } else if (data.release?.safe_to_present === false) {
-      answer.innerHTML =
-        '<div style="color:var(--error);">' +
-        '<strong>Answer withheld after checking.</strong> ' +
-        'The generated draft contains a conflict identified during verification. ' +
-        'See the verification details below.' +
-        '</div>';
     } else {
-      answer.innerHTML =
-        '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
-        renderAcademicRelease(data.release);
+      answer.innerHTML = academicWithheldMessage(presentation.reason);
     }
 
     document.getElementById('academicEvidenceContent').innerHTML =

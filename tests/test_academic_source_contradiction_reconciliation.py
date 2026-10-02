@@ -256,7 +256,8 @@ def cleared(body, label):
     common(body, label)
     own = body["reconciliation"]["revised"]["release"]
     check(resolution(body)["status"] == lifecycle.RESOLUTION_POSITIVELY_CLEARED
-          and body["release"] == own and body["release"]["safe_to_present"] is True,
+          and body["release"] == own and body["release"]["safe_to_present"] is True
+          and body["presentation"]["mode"] == "release",
           f"{label}: positively cleared; the revision's own release stands "
           f"({body['release']['status']})")
     check(body["check_further"]["state"] != cf.STATE_WORTH_CHECKING,
@@ -269,7 +270,8 @@ def unresolved(body, label, *, retry):
     check(resolution(body)["status"] == lifecycle.RESOLUTION_NOT_ESTABLISHED,
           f"{label}: resolution not established")
     check(body["release"]["status"] == UNRESOLVED
-          and body["release"]["safe_to_present"] is False,
+          and body["release"]["safe_to_present"] is False
+          and body["presentation"] == {"mode": "withheld", "reason": UNRESOLVED},
           f"{label}: withheld as {UNRESOLVED}")
     check(own["status"] not in (UNRESOLVED, CONTRADICTION),
           f"{label}: the revision's own release is kept unaltered in the audit "
@@ -419,9 +421,10 @@ check(still_technical.unresolved_release is None,
 # ===========================================================================
 print("\n[UI] what the reader and the technical details show")
 html = (ROOT / "app" / "chat.html").read_text(encoding="utf-8")
-send = html[html.index("async function sendAcademicMessage"):]
-check("'blocked_unresolved_source_contradiction'" in send
-      and "A revised answer was prepared, but it could not be confirmed against that" in send,
+withheld = html[html.index("function academicWithheldMessage"):
+                html.index("async function sendAcademicMessage")]
+check("'blocked_unresolved_source_contradiction'" in withheld
+      and "A revised answer was prepared, but it could not be confirmed against that" in withheld,
       "the answer area names the reason when an unconfirmed revision is withheld")
 node = shutil.which("node")
 if not node:
