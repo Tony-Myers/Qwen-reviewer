@@ -78,7 +78,9 @@ import reviewer_notes
 #    makes the check incomplete and is not routed to further reading.
 # 5: so do a dropped-condition check and a source assessment that could not
 #    be completed; the incomplete wording covers any check.
-RULES_VERSION = "5"
+# 6: a revision withheld because it was not shown to resolve a source
+#    contradiction is reported as a reason for withholding.
+RULES_VERSION = "6"
 
 STATE_NO_CONCERN = "no_specific_concern"
 STATE_FURTHER_READING = "further_reading"
@@ -131,7 +133,17 @@ _BLOCKED_SUMMARIES = {
     "blocked_source_contradiction": (
         "A source associated with this answer appears to say something "
         "different from it, so the point may warrant closer checking."),
+    # Set by reconciliation, not by the first-stage release.
+    "blocked_unresolved_source_contradiction": (
+        "A source given in support of the original answer appeared to "
+        "contradict it, and the revised answer could not be confirmed "
+        "against that source."),
 }
+UNRESOLVED_SOURCE_CONTRADICTION = "blocked_unresolved_source_contradiction"
+# Said only when a revised claim citing that source could not be re-checked,
+# not when the citation was dropped or the source did not support the claim.
+RETRY_MAY_HELP = ("Trying again may help if the source could not be reached "
+                  "or checked.")
 
 POINT_ANSWER_SENTENCE = "answer_sentence"
 POINT_SUMMARISED = "summarised_point"
@@ -299,11 +311,17 @@ def _point_for(claim, statement: str, sentence_by_claim) -> Point:
 def assess_check_further(
     result: Any,
     index: reviewer_notes.NotesIndex,
+    *,
+    source_contradiction_resolution: Any = None,
 ) -> CheckFurtherAssessment:
     """Turn a checked Academic Chat result into what the reader is told.
 
     ``result`` is an AcademicFirstStageResult; for a reconciled answer pass the
-    final attempt. ``index`` should be the index that supplied the guidance.
+    attempt as presented (AcademicReconciliationResult.presented), whose
+    release may be the reconciliation's own. ``index`` should be the index that
+    supplied the guidance. ``source_contradiction_resolution`` is the
+    reconciliation's record of how a revision fared against the sources that
+    contradicted the first attempt, when there is one.
     """
     consistent = academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT
     conflict = academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
@@ -560,6 +578,20 @@ def assess_check_further(
             secondary = ("Some details go beyond what the local methodological "
                          "guidance covers, and no curated sources are "
                          "available for them yet.")
+
+    # A revision withheld because it was not shown to resolve a source
+    # contradiction: the reason is the summary itself. Trying again is
+    # suggested only when a revised claim citing that source could not be
+    # re-checked; it would not help a dropped citation or an unsupported claim.
+    if release.status == UNRESOLVED_SOURCE_CONTRADICTION:
+        retry = False
+        for source in getattr(source_contradiction_resolution, "sources", None) or []:
+            if getattr(source, "outcome", "") != "resolution_not_established":
+                continue
+            for claim in getattr(source, "revised_claims", None) or []:
+                if claim.get("claim_assessment") is None:
+                    retry = True
+        secondary = RETRY_MAY_HELP if retry else ""
 
     diagnostics = {
         "rules_version": RULES_VERSION,

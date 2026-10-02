@@ -1204,6 +1204,63 @@ function renderAcademicLocalGuidance(localGuidance) {
   return h;
 }
 
+// How a revision fared against each source that contradicted the first
+// attempt: the original claim and its contradicting passages, and every
+// revised claim citing the same DOI with its re-check state.
+function renderAcademicSourceResolution(resolution) {
+  if (!resolution || !Array.isArray(resolution.sources)) return '';
+  const ACADEMIC_RESOLUTION_LABELS = {
+    positively_cleared: 'Positively cleared',
+    still_contradicted: 'Still contradicted',
+    resolution_not_established: 'Resolution not established'
+  };
+  let h = '<h4>Source contradiction reconciliation</h4>';
+  h += '<div class="academic-audit-card"><div><strong>Outcome:</strong> ' +
+    esc(ACADEMIC_RESOLUTION_LABELS[resolution.status] || String(resolution.status || '')) +
+    '</div></div>';
+  for (const source of resolution.sources) {
+    h += '<div class="academic-audit-card">';
+    h += '<div><strong>Source:</strong> ' +
+      (source.doi ? '<code>' + esc(String(source.doi)) + '</code>' : 'no DOI') + ' · ' +
+      esc(ACADEMIC_RESOLUTION_LABELS[source.outcome] || String(source.outcome || '')) + '</div>';
+    for (const original of (source.original_claims || [])) {
+      h += '<div style="margin-top:8px;"><strong>Original contradicted claim:</strong> ' +
+        esc(String(original.claim || '')) + '</div>';
+      const evidence = Array.isArray(original.evidence) ? original.evidence : [];
+      if (evidence.length) {
+        h += '<details class="academic-source-evidence"><summary>Contradicting passages (' +
+          evidence.length + ')</summary>';
+        for (const ev of evidence) {
+          h += '<div class="academic-evidence-passage">';
+          if (ev.page_number != null) {
+            h += '<div class="academic-evidence-locator">page ' + esc(String(ev.page_number)) + '</div>';
+          }
+          h += esc(String(ev.text || '')) + '</div>';
+        }
+        h += '</details>';
+      }
+    }
+    const revised = Array.isArray(source.revised_claims) ? source.revised_claims : [];
+    if (!revised.length) {
+      h += '<div class="academic-reference-meta" style="margin-top:8px;">' +
+        'The revised answer has no claim citing this source.</div>';
+    }
+    for (const claim of revised) {
+      h += '<div style="margin-top:8px;"><strong>Revised claim:</strong> ' +
+        esc(String(claim.claim || '')) + '</div>';
+      h += '<div class="academic-reference-meta">Retrieval identity: ' +
+        esc(String(claim.retrieval_identity || 'not reached')) + ' · source: ' +
+        esc(String(claim.source_retrieval || 'not reached')) + ' · location: ' +
+        esc(String(claim.claim_location || 'not reached')) + ' · assessment: ' +
+        esc(claim.claim_assessment ? String(claim.claim_assessment)
+          : (claim.claim_assessment_error ? 'not completed' : 'not performed')) +
+        '</div>';
+    }
+    h += '</div>';
+  }
+  return h;
+}
+
 function renderAcademicAudit(data) {
   const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
   const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
@@ -1216,6 +1273,8 @@ function renderAcademicAudit(data) {
   let h = '';
 
   h += renderAcademicLocalGuidance(data.local_guidance);
+
+  h += renderAcademicSourceResolution(data.reconciliation?.source_contradiction_resolution);
 
   if (claimCoverage) {
     h += '<div class="academic-audit-card">';
@@ -1595,6 +1654,17 @@ async function sendAcademicMessage() {
           academicIncompleteExplanation() + ' ' +
           'See the verification details below.' +
           '</div>');
+    } else if (data.release?.status === 'blocked_unresolved_source_contradiction') {
+      // Reconciliation's own decision: neither the original answer nor the
+      // unconfirmed revision is shown. The revision stays in the payload and
+      // under Technical checking details.
+      answer.innerHTML =
+        '<div style="color:var(--error);">' +
+        '<strong>Answer withheld.</strong> ' +
+        'A source given in support of the original answer appeared to contradict it. ' +
+        'A revised answer was prepared, but it could not be confirmed against that ' +
+        'source, so it is not shown.' +
+        '</div>';
     } else if (data.release?.safe_to_present === false) {
       answer.innerHTML =
         '<div style="color:var(--error);">' +

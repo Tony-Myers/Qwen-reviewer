@@ -881,8 +881,11 @@ async def academic_chat_first_stage(request: dict):
     # in place of the assessment rather than raised.
     try:
         payload["check_further"] = academic_check_further.assess_check_further(
-            result.final,
+            result.presented,
             academic_orchestrator.methodological_notes_index(),
+            source_contradiction_resolution=(
+                result.source_contradiction_resolution
+            ),
         ).to_dict()
     except Exception as exc:                                    # noqa: BLE001
         traceback.print_exc()
