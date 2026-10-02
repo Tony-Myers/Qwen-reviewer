@@ -178,7 +178,8 @@ else:
 
     # The same state with a source cited by the answer is labelled for sources.
     cited = dict(incomplete, references=[{"reference": {"author": "Altman", "year": 1995,
-                                                      "title": "Absence of evidence"}}])
+                                                      "title": "Absence of evidence"}}],
+                 source_claims=[{"claim": {"claim": "c", "reference_index": 0}}])
     script = "\n".join(page_functions) + (
         f"\nprocess.stdout.write(renderAcademicEvidence({json.dumps(cited)}));")
     with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:

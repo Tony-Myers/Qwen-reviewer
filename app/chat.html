@@ -748,25 +748,59 @@ function academicReferenceDoi(reference) {
   return proposed.doi || candidate?.doi || '';
 }
 
+// Positions of the proposed references that a source claim points to
+// (claim.reference_index). Only those are shown to the reader as the answer's
+// references; the rest are model proposals not given in support of any claim
+// and stay in the technical details. Mirrors linked_reference_indices() in
+// academic_check_further.py, which applies the same rule to the citation notice.
+function academicLinkedReferenceIndices(data) {
+  const linked = new Set();
+  const sourceClaims = Array.isArray(data?.source_claims) ? data.source_claims : [];
+  for (const item of sourceClaims) {
+    const index = item?.claim?.reference_index;
+    if (Number.isInteger(index)) linked.add(index);
+  }
+  return linked;
+}
+
+function academicReferenceRecord(record) {
+  const authors = Array.isArray(record.authors) ? record.authors.join(', ') : '';
+  const details = [];
+  if (authors) details.push(authors);
+  if (record.year) details.push(String(record.year));
+  if (record.venue) details.push(record.venue);
+  let h = '<div>' + esc(record.title || 'Untitled record') + '</div>';
+  if (details.length) {
+    h += '<div class="academic-reference-meta">' + esc(details.join(' · ')) + '</div>';
+  }
+  if (record.doi) {
+    const url = 'https://doi.org/' + encodeURIComponent(record.doi);
+    h += '<div class="academic-reference-link">' +
+      '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' +
+      'doi:' + esc(record.doi) + '</a></div>';
+  }
+  return h;
+}
+
 function renderAcademicReference(reference, index) {
   const proposed = reference?.proposed_reference || {};
   const verification = reference?.verification || {};
   const crossref = verification.crossref_verification || {};
-  const accepted = crossref.candidate || null;
-  const related = crossref.related_candidate || null;
+  // Only a verified match is accepted as the same bibliographic identity.
+  // Verification also attaches a record when it is merely probable, or when
+  // a proposed DOI resolves to a record whose details conflict with the
+  // proposal; such a record is shown separately and never takes the place of
+  // the proposed reference.
+  const accepted = crossref.status === 'verified' ? (crossref.candidate || null) : null;
+  const resolved = accepted ? null : (crossref.candidate || null);
+  const related = accepted ? null : (crossref.related_candidate || null);
 
-  // The proposed reference is one bibliographic object. A related search
-  // result is another. Never combine fields from the two unless verification
-  // has explicitly accepted the candidate.
-  const primary = accepted || proposed;
-
-  const title = primary.title || 'Untitled reference';
+  const title = (accepted ? accepted.title : proposed.title) || 'Untitled reference';
   const author = accepted
     ? (Array.isArray(accepted.authors) ? accepted.authors.join(', ') : '')
     : (proposed.author || '');
-  const year = primary.year || '';
-  const venue = primary.venue || '';
-  const doi = accepted?.doi || proposed.doi || '';
+  const year = (accepted ? accepted.year : proposed.year) || '';
+  const venue = (accepted ? accepted.venue : proposed.venue) || '';
 
   let h = '<div class="academic-reference">';
   h += '<div><strong>' + (index + 1) + '. ' + esc(title) + '</strong></div>';
@@ -781,14 +815,17 @@ function renderAcademicReference(reference, index) {
       esc(details.join(' · ')) + '</div>';
   }
 
-  if (doi) {
-    const doiUrl = 'https://doi.org/' + encodeURIComponent(doi);
+  if (accepted && accepted.doi) {
+    const doiUrl = 'https://doi.org/' + encodeURIComponent(accepted.doi);
     h += '<div class="academic-reference-link">' +
       '<a href="' + doiUrl + '" target="_blank" rel="noopener noreferrer">' +
-      'doi:' + esc(doi) + '</a></div>';
+      'doi:' + esc(accepted.doi) + '</a></div>';
+  } else if (proposed.doi) {
+    // Not linked: unverified, the DOI may lead to a different publication.
+    h += '<div class="academic-reference-meta">DOI given: ' + esc(proposed.doi) + '</div>';
   }
 
-  if (crossref.status === 'verified' && accepted) {
+  if (accepted) {
     h += '<div class="academic-reference-status academic-status-good">' +
       'Bibliographic identity verified</div>';
   } else {
@@ -805,36 +842,30 @@ function renderAcademicReference(reference, index) {
     h += '</div>';
   }
 
-  // Keep an unverified related result visibly separate from the proposed
-  // citation. It may help the user investigate the reference, but it is not
-  // silently promoted into the citation itself.
-  if (!accepted && related) {
-    const relatedAuthors = Array.isArray(related.authors)
-      ? related.authors.join(', ')
-      : '';
-
-    const relatedDetails = [];
-    if (relatedAuthors) relatedDetails.push(relatedAuthors);
-    if (related.year) relatedDetails.push(String(related.year));
-    if (related.venue) relatedDetails.push(related.venue);
-
+  // A record verification attached without accepting it: kept visibly
+  // separate from the proposed reference, and labelled for what it is.
+  if (resolved) {
+    const sameDoi = Boolean(proposed.doi && resolved.doi) &&
+      String(proposed.doi).trim().toLowerCase() === String(resolved.doi).trim().toLowerCase();
+    let label;
+    if (crossref.status === 'metadata_conflict') {
+      label = 'The DOI given resolves to a different publication:';
+    } else if (sameDoi) {
+      label = 'The DOI given resolves to a record not established as the same reference:';
+    } else {
+      label = 'Closest Crossref record, not established as the same reference:';
+    }
     h += '<div class="academic-related-record">';
-    h += '<div><strong>Related Crossref record:</strong> ' +
-      esc(related.title || 'Untitled record') + '</div>';
+    h += '<div><strong>' + esc(label) + '</strong></div>';
+    h += academicReferenceRecord(resolved);
+    h += '</div>';
+  }
 
-    if (relatedDetails.length) {
-      h += '<div class="academic-reference-meta">' +
-        esc(relatedDetails.join(' · ')) + '</div>';
-    }
-
-    if (related.doi) {
-      const relatedUrl = 'https://doi.org/' + encodeURIComponent(related.doi);
-      h += '<div class="academic-reference-link">' +
-        '<a href="' + relatedUrl +
-        '" target="_blank" rel="noopener noreferrer">' +
-        'doi:' + esc(related.doi) + '</a></div>';
-    }
-
+  if (related && !(resolved && related.doi && resolved.doi &&
+      String(related.doi).toLowerCase() === String(resolved.doi).toLowerCase())) {
+    h += '<div class="academic-related-record">';
+    h += '<div><strong>Related Crossref record:</strong></div>';
+    h += academicReferenceRecord(related);
     h += '</div>';
   }
 
@@ -1175,6 +1206,19 @@ function renderAcademicAudit(data) {
     h += '</div>';
   }
 
+  const references = Array.isArray(data.references) ? data.references : [];
+  const linkedReferences = academicLinkedReferenceIndices(data);
+  const unlinkedReferences = references.filter((_, i) => !linkedReferences.has(i));
+  if (unlinkedReferences.length) {
+    h += '<h4>Proposed references not linked to any claim</h4>';
+    h += '<div class="academic-reference-meta">The model proposed these, but no ' +
+      'claim in the answer was linked to them, so they are not listed as the ' +
+      'answer\'s references.</div>';
+    for (let i = 0; i < unlinkedReferences.length; i++) {
+      h += renderAcademicReference(unlinkedReferences[i], i);
+    }
+  }
+
   if (sourceClaims.length) {
     h += '<h4>Source-backed claims</h4>';
     for (let i = 0; i < sourceClaims.length; i++) {
@@ -1211,13 +1255,16 @@ function renderAcademicEvidence(data) {
     : [];
 
   let referencesHtml = '';
+  const linkedReferences = academicLinkedReferenceIndices(data);
+  const readerReferences = references.filter((_, i) => linkedReferences.has(i));
+  const unlinkedReferences = references.filter((_, i) => !linkedReferences.has(i));
 
-  if (references.length) {
+  if (readerReferences.length) {
     referencesHtml += '<section class="academic-reference-section">';
     referencesHtml += '<h3>References</h3>';
 
-    for (let i = 0; i < references.length; i++) {
-      referencesHtml += renderAcademicReference(references[i], i);
+    for (let i = 0; i < readerReferences.length; i++) {
+      referencesHtml += renderAcademicReference(readerReferences[i], i);
     }
 
     referencesHtml += '<div class="academic-reference-note">' +
@@ -1231,6 +1278,7 @@ function renderAcademicEvidence(data) {
 
   if (
     localGuidancePassages.length ||
+    unlinkedReferences.length ||
     sourceClaims.length ||
     technicalClaims.length ||
     claimContexts.length ||
@@ -1360,6 +1408,8 @@ function renderCheckFurtherDiagnostics(d) {
     '<span class="evidence-check-muted">Atomic claim generated for checking: ' +
     esc(String(x.atomic_claim || '')) + '<br>Contextual status: ' +
     esc(String(x.contextual_status || 'not assessed')) + '</span>');
+  h += list('Proposed references not linked to any claim (not shown as references)',
+    d.unlinked_references, x => esc(String(x)));
   h += list('Conflicts reported by the methodology judge', d.conflicts, x =>
     esc(String(x.answer_text || x.statement || '')) + ' <span class="evidence-check-muted">' +
     esc((x.reasons || []).join(' ')) + '</span>');

@@ -43,8 +43,9 @@ Structured claims with no located sentence are labelled as summarised points.
 CHECKING VERSUS CONCERN. A failure or gap in the checking is never presented
 as a concern about the answer. "Worth checking" is reserved for an affirmative
 signal: a judged conflict with the guidance, or a release blocked by a
-conflict. An unmatched citation gets its own notice, because it is a fact
-about a cited source, not about the evidence for the answer as a whole.
+conflict. An unmatched reference gets its own notice, because it is a fact
+about a source given in support of the answer, not about the evidence for the
+answer as a whole.
 """
 
 from __future__ import annotations
@@ -58,7 +59,8 @@ import academic_orchestrator
 import reviewer_notes
 
 
-RULES_VERSION = "2"
+# 3: the citation notice counts only references a source claim points to.
+RULES_VERSION = "3"
 
 STATE_NO_CONCERN = "no_specific_concern"
 STATE_FURTHER_READING = "further_reading"
@@ -198,6 +200,25 @@ def _normalise(text: str) -> str:
 
 def _reference_key(ref: reviewer_notes.Reference) -> str:
     return ref.doi.lower() or ref.url or ref.isbn or ref.cite
+
+
+def linked_reference_indices(result) -> set:
+    """Positions of the proposed references that a source claim points to.
+
+    The draft proposes references as a list and, separately, source claims
+    that each name one entry by its position (reference_index, checked
+    against the list when the draft is parsed). That application-owned link
+    is the only record that a reference was given in support of a claim; a
+    proposal no source claim points to is not shown to the reader as a
+    reference and does not trigger the citation notice. It stays in the
+    technical details. No model judges relevance here.
+    """
+    linked = set()
+    for item in getattr(result, "source_claims", None) or []:
+        index = getattr(getattr(item, "claim", None), "reference_index", None)
+        if isinstance(index, int) and not isinstance(index, bool):
+            linked.add(index)
+    return linked
 
 
 def _section(passage) -> Tuple[str, str]:
@@ -368,9 +389,13 @@ def assess_check_further(
             "contextual_reasons": list(method.reasons) if method is not None else [],
         })
 
-    # ---- a cited source that does not match a record ------------------------
-    unmatched, conflicting = [], []
-    for proposal in result.references or []:
+    # ---- a source given in support that does not match a record ----------
+    unmatched, conflicting, unlinked = [], [], []
+    linked = linked_reference_indices(result)
+    for position, proposal in enumerate(result.references or []):
+        if position not in linked:
+            unlinked.append(_citation_label(proposal.proposed_reference))
+            continue
         verification = proposal.verification
         status = getattr(verification.crossref_verification, "status", "")
         label = _citation_label(proposal.proposed_reference)
@@ -383,16 +408,16 @@ def assess_check_further(
         parts = []
         if unmatched:
             parts.append(
-                "A source cited in this answer could not be matched to a "
-                "published record." if len(unmatched) == 1 else
-                "Some sources cited in this answer could not be matched to a "
-                "published record.")
+                "A source given in support of this answer could not be "
+                "matched to a published record." if len(unmatched) == 1 else
+                "Some sources given in support of this answer could not be "
+                "matched to a published record.")
         if conflicting:
             parts.append(
-                "The details given for a cited source conflict with the "
-                "published record." if len(conflicting) == 1 else
-                "The details given for some cited sources conflict with the "
-                "published record.")
+                "The details of a source given in support of this answer "
+                "conflict with the published record." if len(conflicting) == 1
+                else "The details of some sources given in support of this "
+                "answer conflict with the published record.")
         citation_notice = {
             "title": "Citation check",
             "message": " ".join(parts) + " Check the citation before relying on it.",
@@ -487,6 +512,7 @@ def assess_check_further(
              "sections": [f"{p.note} - {p.heading}" for p in j.passages]}
             for j in conflicts
         ],
+        "unlinked_references": unlinked,
     }
 
     return CheckFurtherAssessment(

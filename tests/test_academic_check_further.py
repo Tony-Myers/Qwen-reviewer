@@ -114,13 +114,17 @@ def context(statement, sentence, status, passages, omitted=False, claim=None):
 
 
 def result(technical=(), contexts=(), references=(), guidance=(A,),
-           status="release_allowed_with_unverified_claims"):
+           status="release_allowed_with_unverified_claims", linked=None):
     return NS(
         release=NS(safe_to_present=not status.startswith(("blocked", "checking")),
                    status=status, reasons=["reason"]),
         technical_claims=list(technical),
         discovered_claim_assessments=list(contexts),
         references=list(references),
+        # A source claim points to each reference by position; by default
+        # every reference is linked, as a cited reference is.
+        source_claims=[NS(claim=NS(claim="c", reference_index=i))
+                       for i in (range(len(references)) if linked is None else linked)],
         local_guidance=NS(passages=[P(s, 0.4) for s in guidance]),
     )
 
@@ -286,8 +290,14 @@ check(d["state"] == "no_specific_concern" and d["citation_notice"] is not None,
       "the notice stands alone and does not change the evidence state")
 check("could not be matched to a published record" in d["citation_notice"]["message"],
       "an unmatched citation says so")
+check(d["citation_notice"]["message"].startswith(
+          "A source given in support of this answer could not be matched")
+      and "cited in this answer" not in d["citation_notice"]["message"],
+      "it says the source was given in support of the answer, not cited in it")
 d = run(result([tclaim("X", CONSISTENT, [P(A)])], references=[clash]))
-check("conflict with the published record" in d["citation_notice"]["message"],
+check(d["citation_notice"]["message"].startswith(
+          "The details of a source given in support of this answer conflict "
+          "with the published record."),
       "a citation whose details conflict says that instead")
 
 # ===========================================================================
