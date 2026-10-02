@@ -22,6 +22,10 @@ class ClaimCoverageOutputError(ValueError):
     """Raised when untrusted claim-coverage assessor output is invalid."""
 
 
+class ClaimSourcePlacementError(ValueError):
+    """A proposed anchor cannot be placed within one answer sentence."""
+
+
 class MaterialRestrictionOutputError(ValueError):
     """Raised when untrusted material-restriction output is invalid."""
 
@@ -34,6 +38,22 @@ class DiscoveredClaim:
     source_anchor: str
     source_start: int
     source_end: int
+
+
+@dataclass(frozen=True)
+class RejectedDiscovery:
+    """Internal validation record; grants no provenance to the proposal."""
+
+    index: int
+    reason: str
+
+
+@dataclass
+class ClaimDiscoveryResult:
+    """Validated global discoveries and independently rejected proposals."""
+
+    discovered_claims: list[DiscoveredClaim]
+    rejected_items: list[RejectedDiscovery]
 
 
 @dataclass
@@ -80,6 +100,9 @@ class ClaimCoverageResult:
         default_factory=list
     )
 
+    # Internal only: neither raw proposals nor validation details are public.
+    rejected_global_items: list[RejectedDiscovery] = field(default_factory=list)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "missing_claims": [
@@ -112,6 +135,13 @@ class ClaimCoverageAssessment:
         if not isinstance(result, ClaimCoverageResult):
             raise TypeError(
                 "Coverage assessment requires a ClaimCoverageResult."
+            )
+
+        if result.rejected_global_items:
+            return cls(
+                status=COVERAGE_STATUS_UNAVAILABLE,
+                result=result,
+                reasons=["Local claim-coverage output could not be validated."],
             )
 
         status = (
@@ -924,7 +954,7 @@ def resolve_claim_source_context(
             break
 
     if source_index is None:
-        raise ValueError("Source span does not resolve to one sentence.")
+        raise ClaimSourcePlacementError("Source span does not resolve to one sentence.")
 
     source_sentence_start, source_sentence_end = sentence_spans[source_index]
 
@@ -1309,7 +1339,7 @@ def discover_answer_claims(
     *,
     answer_draft: str,
     assessor: Callable[..., Any],
-) -> list[DiscoveredClaim]:
+) -> ClaimDiscoveryResult:
     """Discover material atomic propositions without representation filtering."""
     prompt = build_claim_discovery_prompt(
         answer_draft=answer_draft,
@@ -1339,14 +1369,30 @@ def discover_answer_claims(
         )
 
     discovered = []
+    rejected_items = []
     discovered_keys = set()
 
     for index, value in enumerate(raw_discovered):
-        discovered_claim = _parse_discovered_claim(
-            value,
-            index,
-            answer_draft=answer_draft,
-        )
+        try:
+            discovered_claim = _parse_discovered_claim(
+                value,
+                index,
+                answer_draft=answer_draft,
+            )
+            # Establish placement before a proposal reaches decomposition or
+            # occurrence checking. Catch only the expected placement failure;
+            # unrelated ValueError/TypeError programming faults still escape.
+            resolve_claim_source_context(
+                answer_draft=answer_draft,
+                source_start=discovered_claim.source_start,
+                source_end=discovered_claim.source_end,
+            )
+        except (ClaimCoverageOutputError, ClaimSourcePlacementError) as exc:
+            rejected_items.append(RejectedDiscovery(
+                index=index,
+                reason=f"{type(exc).__name__}: {exc}",
+            ))
+            continue
         key = _claim_key(discovered_claim.claim)
 
         if key in discovered_keys:
@@ -1355,7 +1401,7 @@ def discover_answer_claims(
         discovered.append(discovered_claim)
         discovered_keys.add(key)
 
-    return discovered
+    return ClaimDiscoveryResult(discovered, rejected_items)
 
 
 def audit_discovered_claims_by_sentence(
@@ -1653,13 +1699,13 @@ def assess_claim_coverage_two_stage(
     assessor: Callable[..., Any],
 ) -> ClaimCoverageResult:
     """Discover answer propositions, then remove established representations."""
-    discovered_claims = discover_answer_claims(
+    discovery = discover_answer_claims(
         answer_draft=answer_draft,
         assessor=assessor,
     )
     discovered_claims = audit_discovered_claims_by_sentence(
         answer_draft=answer_draft,
-        discovered_claims=discovered_claims,
+        discovered_claims=discovery.discovered_claims,
         assessor=assessor,
     )
     discovered_claims = decompose_discovered_claims(
@@ -1693,4 +1739,5 @@ def assess_claim_coverage_two_stage(
     return ClaimCoverageResult(
         missing_claims=missing_claims,
         discovered_claims=discovered_claims,
+        rejected_global_items=discovery.rejected_items,
     )

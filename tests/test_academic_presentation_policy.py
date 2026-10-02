@@ -133,7 +133,8 @@ def retrieve(location):
         locator="source.pdf", reasons=["Synthetic."])
 
 
-def model_output(model, tokenizer, prompt, schema, *, max_tokens=512):
+def model_output(model, tokenizer, prompt, schema, *, max_tokens=512,
+                 diagnostic_raw_output=None):
     if schema == coverage.claim_discovery_output_schema():
         failing = case.get("revised_coverage_fails") if revisions else case.get("coverage_fails")
         if failing:

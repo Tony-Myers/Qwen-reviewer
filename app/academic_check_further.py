@@ -348,12 +348,17 @@ def assess_check_further(
 
     # ---- every methodological judgement, collected as the release does -----
     judgements: List[_Judgement] = []
+    methodology_reconciliation = []
     for item in result.technical_claims or []:
         method = item.methodological_consistency
         if method is None:
             continue
-        if academic_orchestrator.standalone_methodology_is_contextually_superseded(
-                item.claim, assessments):
+        decision = academic_orchestrator.reconcile_methodological_assessments(
+            item.claim, method, assessments)
+        methodology_reconciliation.append({
+            "statement": item.claim.statement, **decision.to_dict(),
+        })
+        if not decision.retain_standalone:
             continue
         judgements.append(_Judgement(
             item.claim.statement, method.status, list(method.passages),
@@ -596,6 +601,7 @@ def assess_check_further(
     diagnostics = {
         "rules_version": RULES_VERSION,
         "release_status": release.status,
+        "methodology_reconciliation": methodology_reconciliation,
         "counts": {
             "judgements": len(judgements),
             "consistent": sum(1 for j in judgements if j.status == consistent),

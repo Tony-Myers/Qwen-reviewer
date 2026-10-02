@@ -1100,6 +1100,7 @@ try:
         schema,
         *,
         max_tokens=512,
+        diagnostic_raw_output=None,
     ):
         coverage_calls.append(
             {
@@ -1318,6 +1319,7 @@ try:
             schema,
             *,
             max_tokens=512,
+            diagnostic_raw_output=None,
             _factory=failure_factory,
         ):
             if schema == academic_claim_coverage.claim_discovery_output_schema():
@@ -1377,6 +1379,7 @@ try:
             schema,
             *,
             max_tokens=512,
+            diagnostic_raw_output=None,
             _factory=failure_factory,
         ):
             if (

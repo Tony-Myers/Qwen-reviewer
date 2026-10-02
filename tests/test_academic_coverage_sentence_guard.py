@@ -5,23 +5,9 @@ the reader the answer.
 
     python3 tests/test_academic_coverage_sentence_guard.py
 
-Background: claim discovery accepts any verbatim, unique anchor from the
-answer, but decomposition then requires that anchor to lie inside one
-application-owned sentence. When it does not -- the anchor crosses a full
-stop, or the sentence splitter breaks inside it after an abbreviation such
-as "i.e." -- resolve_claim_source_context raises ValueError. Nothing caught
-it, so the Academic Chat endpoint answered with a bare 500. The splitter no
-longer breaks after "i.e." and similar abbreviations (see
-test_academic_sentence_spans.py), but a model can still quote across a real
-full stop, so the guard remains.
-
-Checked here:
-  1. the pipeline behaviour itself, unchanged (documents the cause);
-  2. the server's coverage wrapper turns it into "coverage unavailable",
-     the pipeline's own designed failure state, which the release reports
-     as checking incomplete;
-  3. only that failure is absorbed: any other ValueError still propagates,
-     as the endpoint tests require of programming errors.
+Global discovery now rejects cross-sentence anchors individually before
+acceptance. Valid siblings remain available and overall coverage is incomplete.
+Unrelated programming errors still propagate.
 """
 import contextlib
 import io
@@ -76,8 +62,8 @@ def assessor_for(anchor):
     return assessor
 
 
-# 1. The cause, in the unchanged pipeline --------------------------------
-print("\n[1] the pipeline raises ValueError for an anchor outside one sentence")
+# 1. Item-level placement validation --------------------------------
+print("\n[1] the pipeline quarantines an anchor outside one sentence")
 spans = coverage.answer_sentence_spans(DRAFT)
 check(len(spans) == 2,
       "the splitter no longer breaks after 'i.e.' (2 spans for 2 sentences)")
@@ -89,16 +75,12 @@ check(completed.discovered_claims[0].source_anchor == ABBREVIATION_ANCHOR,
       "an anchor quoted across 'i.e.' now completes coverage")
 for name, anchor in (("crossing", CROSSING_ANCHOR),):
     check(DRAFT.count(anchor) == 1, f"{name} anchor is verbatim and unique")
-    try:
-        coverage.assess_claim_coverage_two_stage(
-            answer_draft=DRAFT, existing_claims=[],
-            assessor=assessor_for(anchor))
-        raised = None
-    except Exception as exc:                                    # noqa: BLE001
-        raised = exc
-    check(type(raised) is ValueError
-          and "does not resolve to one sentence" in str(raised),
-          f"{name} anchor raises a plain ValueError (not ClaimCoverageOutputError)")
+    partial = coverage.assess_claim_coverage_two_stage(
+        answer_draft=DRAFT, existing_claims=[], assessor=assessor_for(anchor))
+    check(not partial.discovered_claims and len(partial.rejected_global_items) == 1,
+          f"{name} anchor is rejected individually")
+    check("does not resolve to one sentence" in partial.rejected_global_items[0].reason,
+          f"{name} placement reason is preserved")
 
 
 # 2. The server wrapper ---------------------------------------------------
@@ -109,7 +91,8 @@ def wrapper_with(anchor):
     original = server.academic_claim_assessor.generate_claim_assessor_output
     fake = assessor_for(anchor)
     server.academic_claim_assessor.generate_claim_assessor_output = (
-        lambda model, tokenizer, prompt, schema, max_tokens=None:
+        lambda model, tokenizer, prompt, schema, max_tokens=None,
+        diagnostic_raw_output=None:
         fake(prompt=prompt, schema=schema))
     try:
         with contextlib.redirect_stderr(io.StringIO()) as err:
@@ -123,12 +106,12 @@ def wrapper_with(anchor):
 for name, anchor in (("crossing", CROSSING_ANCHOR),):
     result, logged = wrapper_with(anchor)
     check(result.status == coverage.COVERAGE_STATUS_UNAVAILABLE
-          and result.result is None,
+          and result.result is not None,
           f"{name}: status is coverage_assessment_unavailable")
-    check(any("single answer sentence" in r for r in result.reasons),
-          f"{name}: the reason names the sentence problem")
+    check(result.reasons == ["Local claim-coverage output could not be validated."],
+          f"{name}: reader receives the existing generic validation wording")
     check("does not resolve to one sentence" in logged,
-          f"{name}: the traceback is kept in the server log")
+          f"{name}: the placement failure is kept in the server log")
 
 # Well-placed anchors are untouched by the guard.
 for name, anchor in (("plain", "cuts 2.5% from each tail"),

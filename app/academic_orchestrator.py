@@ -450,27 +450,38 @@ class DiscoveredClaimAssessment:
         }
 
 
-def standalone_methodology_is_contextually_superseded(
+@dataclass(frozen=True)
+class MethodologicalReconciliationDecision:
+    """Application-owned selection; underlying assessments remain untouched."""
+
+    outcome: str
+    retain_standalone: bool
+    standalone_status: str | None
+    contextual_statuses: tuple[str | None, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "outcome": self.outcome,
+            "retain_standalone": self.retain_standalone,
+            "standalone_status": self.standalone_status,
+            "contextual_statuses": list(self.contextual_statuses),
+        }
+
+
+def reconcile_methodological_assessments(
     claim: academic_chat.TechnicalClaim,
-    discovered_claim_assessments: (
-        list[DiscoveredClaimAssessment] | None
-    ),
-) -> bool:
-    """Return whether contextual checking supersedes standalone methodology.
+    standalone,
+    discovered_claim_assessments: list[DiscoveredClaimAssessment] | None,
+) -> MethodologicalReconciliationDecision:
+    """Select effective evidence without mistaking uncertainty for clearance.
 
-    Supersession is deliberately narrow. At least one occurrence of the same
-    structured claim must be known to omit a material restriction, and every
-    such occurrence must have completed contextual methodological assessment.
-
-    This prevents one assessed occurrence of a deduplicated proposition from
-    neutralising a standalone conflict while another materially restricted
-    occurrence remains contextually unassessed.
-
-    A contextual assessment whose judgement could not be completed (it
-    carries an assessment_error) has not assessed the occurrence, so it does
-    not count as completed and cannot supersede the standalone judgement.
+    Positive clearance of a standalone conflict requires completed consistency
+    at every matching restricted occurrence. Completed contextual conflicts
+    can replace the standalone concern, but never count as positive clearance.
+    Missing, failed or unresolved occurrences preserve the standalone concern.
+    Non-conflict judgements retain the existing contextual-selection rule.
     """
-    restricted_occurrences = [
+    occurrences = [
         assessment
         for assessment in (discovered_claim_assessments or [])
         if (
@@ -479,15 +490,39 @@ def standalone_methodology_is_contextually_superseded(
             and assessment.material_restriction.material_restriction_omitted
         )
     ]
+    contexts = [a.contextual_methodological_consistency for a in occurrences]
+    completed = [
+        context is not None and not getattr(context, "assessment_error", "")
+        for context in contexts
+    ]
+    statuses = tuple(
+        context.status if done else None
+        for context, done in zip(contexts, completed)
+    )
+    standalone_status = getattr(standalone, "status", None)
+    all_completed = bool(contexts) and all(completed)
+    conflict = academic_methodology.METHODOLOGICAL_STATUS_CONFLICT
+    consistent = academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT
 
-    return bool(restricted_occurrences) and all(
-        assessment.contextual_methodological_consistency is not None
-        and not getattr(
-            assessment.contextual_methodological_consistency,
-            "assessment_error",
-            "",
-        )
-        for assessment in restricted_occurrences
+    if standalone_status == conflict:
+        if all_completed and all(status == consistent for status in statuses):
+            outcome, retain = "conflict_positively_cleared", False
+        elif conflict in statuses:
+            outcome = "conflict_confirmed_in_context"
+            # A contextual conflict carries the concern only when no other
+            # restricted occurrence remains failed, missing or unresolved.
+            retain = not (all_completed and all(
+                status in (consistent, conflict) for status in statuses
+            ))
+        else:
+            outcome, retain = "conflict_unresolved", True
+    else:
+        retain = not all_completed
+        outcome = ("standalone_retained" if retain
+                   else "contextual_assessment_effective")
+
+    return MethodologicalReconciliationDecision(
+        outcome, retain, standalone_status, statuses,
     )
 
 
@@ -545,10 +580,11 @@ def assess_academic_release(
         for claim in technical_claims
         if (
             claim.methodological_consistency is not None
-            and not standalone_methodology_is_contextually_superseded(
+            and reconcile_methodological_assessments(
                 claim.claim,
+                claim.methodological_consistency,
                 discovered_claim_assessments,
-            )
+            ).retain_standalone
         )
     ]
     contextual_methodological_statuses = [

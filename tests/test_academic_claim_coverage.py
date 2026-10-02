@@ -618,7 +618,7 @@ def fake_discovery_assessor(*, prompt, schema):
 discovered = coverage.discover_answer_claims(
     answer_draft=embedded_answer,
     assessor=fake_discovery_assessor,
-)
+).discovered_claims
 
 assert len(discovered) == 2
 assert all(
@@ -1305,7 +1305,7 @@ def rct_provenance_assessor(*, prompt, schema):
 rct_discovered = coverage.discover_answer_claims(
     answer_draft=rct_context_answer,
     assessor=rct_provenance_assessor,
-)
+).discovered_claims
 
 assert len(rct_discovered) == 1
 assert rct_discovered[0].claim.statement == (
@@ -1343,17 +1343,13 @@ def missing_anchor_assessor(*, prompt, schema):
     }
 
 
-try:
-    coverage.discover_answer_claims(
-        answer_draft=rct_context_answer,
-        assessor=missing_anchor_assessor,
-    )
-except coverage.ClaimCoverageOutputError:
-    pass
-else:
-    raise AssertionError(
-        "Missing discovery source anchor was unexpectedly accepted."
-    )
+partition = coverage.discover_answer_claims(
+    answer_draft=rct_context_answer,
+    assessor=missing_anchor_assessor,
+)
+assert partition.discovered_claims == []
+assert len(partition.rejected_items) == 1
+assert partition.rejected_items[0].index == 0
 
 
 ambiguous_answer = (
@@ -1376,17 +1372,13 @@ def ambiguous_anchor_assessor(*, prompt, schema):
     }
 
 
-try:
-    coverage.discover_answer_claims(
-        answer_draft=ambiguous_answer,
-        assessor=ambiguous_anchor_assessor,
-    )
-except coverage.ClaimCoverageOutputError:
-    pass
-else:
-    raise AssertionError(
-        "Ambiguous discovery source anchor was unexpectedly accepted."
-    )
+partition = coverage.discover_answer_claims(
+    answer_draft=ambiguous_answer,
+    assessor=ambiguous_anchor_assessor,
+)
+assert partition.discovered_claims == []
+assert len(partition.rejected_items) == 1
+assert partition.rejected_items[0].index == 0
 
 print("PASS: missing and ambiguous source anchors are rejected")
 

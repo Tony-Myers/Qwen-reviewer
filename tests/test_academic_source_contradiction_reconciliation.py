@@ -158,7 +158,8 @@ UNDECODABLE = academic_claim_assessor.ClaimAssessorOutputError(
     "Claim assessor did not return valid JSON.")
 
 
-def model_output(model, tokenizer, prompt, schema, *, max_tokens=512):
+def model_output(model, tokenizer, prompt, schema, *, max_tokens=512,
+                 diagnostic_raw_output=None):
     if schema == coverage.claim_discovery_output_schema():
         if case.get("coverage_fails") and revisions:
             raise academic_claim_assessor.ClaimAssessorOutputError(

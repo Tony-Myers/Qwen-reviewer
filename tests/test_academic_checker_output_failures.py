@@ -124,7 +124,8 @@ UNDECODABLE = academic_claim_assessor.ClaimAssessorOutputError(
 case = {}
 
 
-def model_output(model, tokenizer, prompt, schema, *, max_tokens=512):
+def model_output(model, tokenizer, prompt, schema, *, max_tokens=512,
+                 diagnostic_raw_output=None):
     if schema == coverage.claim_discovery_output_schema():
         if "ANSWER DRAFT" not in prompt:
             return {"discovered_claims": []}

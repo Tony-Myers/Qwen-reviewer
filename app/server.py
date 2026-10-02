@@ -671,7 +671,13 @@ def assess_academic_claim_coverage(
 ) -> academic_claim_coverage.ClaimCoverageAssessment:
     """Discover omitted technical claims using a bounded local pipeline."""
 
+    # The pipeline calls global discovery first. Retain only that response,
+    # and only for this invocation; later additive checks are not captured.
+    diagnostic_raw_output = []
+    first_assessment = True
+
     def assessor(*, prompt, schema):
+        nonlocal first_assessment
         if schema == academic_claim_coverage.claim_discovery_output_schema():
             max_tokens = ACADEMIC_COVERAGE_DISCOVERY_MAX_TOKENS
         elif (
@@ -689,6 +695,11 @@ def assess_academic_claim_coverage(
                 "Unexpected schema supplied to claim-coverage pipeline."
             )
 
+        diagnostic_kwargs = (
+            {"diagnostic_raw_output": diagnostic_raw_output}
+            if first_assessment else {}
+        )
+        first_assessment = False
         try:
             return academic_claim_assessor.generate_claim_assessor_output(
                 model,
@@ -696,6 +707,7 @@ def assess_academic_claim_coverage(
                 prompt,
                 schema,
                 max_tokens=max_tokens,
+                **diagnostic_kwargs,
             )
         except (
             BackendError,
@@ -724,6 +736,21 @@ def assess_academic_claim_coverage(
             "Local claim-coverage output could not be decoded."
         )
     except academic_claim_coverage.ClaimCoverageOutputError:
+        # Keep the reader-facing result unchanged. Tracebacks include chained
+        # backend/JSON causes; validation errors name the failing field/anchor.
+        # Never log prompts or answer drafts, or turn a logging failure into
+        # a failed request. repr keeps model text escaped on one log line.
+        try:
+            print("[claim-coverage] global discovery failed", file=sys.stderr)
+            traceback.print_exc()
+            if diagnostic_raw_output:
+                print(
+                    f"[claim-coverage] raw assessor output: {diagnostic_raw_output[0]!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        except Exception:
+            pass  # Diagnostics must not change coverage failure semantics.
         return academic_claim_coverage.ClaimCoverageAssessment.unavailable(
             "Local claim-coverage output could not be validated."
         )
@@ -745,6 +772,24 @@ def assess_academic_claim_coverage(
             "Local claim-coverage output could not be placed within "
             "a single answer sentence."
         )
+
+    if result.rejected_global_items:
+        try:
+            for rejected in result.rejected_global_items:
+                print(
+                    f"[claim-coverage] global discovery item rejected "
+                    f"index={rejected.index}: {rejected.reason}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            if diagnostic_raw_output:
+                print(
+                    f"[claim-coverage] raw assessor output: {diagnostic_raw_output[0]!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        except Exception:
+            pass  # Diagnostics must not change partial-coverage semantics.
 
     return academic_claim_coverage.ClaimCoverageAssessment.from_result(
         result

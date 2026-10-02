@@ -1496,6 +1496,13 @@ function renderCheckFurtherDiagnostics(d) {
   h += list('Points not routed to further reading', d.unrouted, x =>
     '“' + esc(String(x.point || '')) + '” <span class="evidence-check-muted">nearest: ' +
     esc(String(x.nearest_section || 'none')) + '</span>');
+  h += list('Methodological reconciliation', d.methodology_reconciliation, x =>
+    esc(String(x.statement || '')) + ': ' +
+    esc(String(x.outcome || '').replace(/_/g, ' ')) +
+    ' <span class="evidence-check-muted">(standalone: ' +
+    esc(String(x.standalone_status || 'none')) + '; contextual: ' +
+    esc((x.contextual_statuses || []).map(s => s || 'not completed').join(', ')) +
+    ')</span>');
   h += list('Conditions lost when claims were separated from the answer', d.lost_conditions, x =>
     'Answer sentence: “' + esc(String(x.answer_sentence || '')) + '”<br>' +
     '<span class="evidence-check-muted">Atomic claim generated for checking: ' +

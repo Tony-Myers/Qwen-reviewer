@@ -474,12 +474,16 @@ for contextual_status in (
         release.safe_to_present is True,
         (
             "paired occurrence-aware "
-            f"{contextual_status!r} supersedes context-poor standalone conflict"
+            f"{contextual_status!r} keeps methodology advisory"
         ),
     )
     check(
-        release.status == "release_allowed_with_unverified_claims",
-        "superseded standalone conflict no longer blocks release",
+        release.status == (
+            "release_allowed_with_unverified_claims"
+            if contextual_status == academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT
+            else academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT
+        ),
+        "only positive contextual consistency clears the standalone concern",
     )
 
 
@@ -603,10 +607,10 @@ for contextual_status in (
     )
 
     check(
-        not academic_orchestrator.standalone_methodology_is_contextually_superseded(
-            qualified_claim,
+        academic_orchestrator.reconcile_methodological_assessments(
+            qualified_claim, standalone_conflict.methodological_consistency,
             [failed_occurrence],
-        ),
+        ).retain_standalone,
         f"a failed {contextual_status!r} contextual assessment does not count "
         "as completed",
     )
@@ -628,15 +632,15 @@ for contextual_status in (
     )
 
 check(
-    academic_orchestrator.standalone_methodology_is_contextually_superseded(
-        qualified_claim,
+    academic_orchestrator.reconcile_methodological_assessments(
+        qualified_claim, standalone_conflict.methodological_consistency,
         [
             paired_contextual_assessment(
                 academic_methodology.METHODOLOGICAL_STATUS_NOT_ESTABLISHED
             )
         ],
-    ),
-    "a completed 'not established' contextual assessment still supersedes",
+    ).retain_standalone,
+    "completed not-established context leaves the conflict unresolved",
 )
 
 

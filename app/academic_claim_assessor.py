@@ -22,6 +22,7 @@ def generate_claim_assessor_output(
     schema: dict[str, Any],
     *,
     max_tokens: int = 512,
+    diagnostic_raw_output: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Generate and decode one untrusted semantic-assessment proposal."""
     response_format = {
@@ -56,6 +57,10 @@ def generate_claim_assessor_output(
             sampler=sampler,
             verbose=False,
         )
+
+    # Opt-in, request-local capture before decoding; this adapter never logs.
+    if diagnostic_raw_output is not None:
+        diagnostic_raw_output.append(raw)
 
     try:
         decoded = json.loads(raw)

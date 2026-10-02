@@ -24,7 +24,7 @@ endpoint. Only the model calls are replaced. Checked:
   4. backend failures and application-owned input errors still raise;
   5. a judgement that validly finds a point not established is unchanged;
   6. a failed contextual judgement does not supersede a standalone conflict;
-  7. a valid contextual judgement still supersedes it;
+  7. a completed but unresolved contextual judgement cannot clear it;
   8. failed and valid points together: incomplete, with further reading for
      the valid point only.
 """
@@ -355,14 +355,14 @@ check(evidence["state"] == cf.STATE_WORTH_CHECKING
       and evidence["secondary"] == cf.INCOMPLETE_WITH_CONCERN_SECONDARY,
       "the reader gets 'worth checking', with the incomplete-checking secondary")
 
-print("\n[7] a valid contextual judgement still supersedes a standalone conflict")
+print("\n[7] contextual uncertainty cannot clear a standalone conflict")
 checked, reconciled, corrections, evidence = run_case(
     judge_returning(CONFLICT, NE), True)
-check(checked.release.status == "release_allowed_with_unverified_claims"
+check(checked.release.status == orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT
       and checked.release.safe_to_present is True,
-      f"the standalone conflict is superseded, as before ({checked.release.status})")
-check(evidence["state"] == cf.STATE_FURTHER_READING and evidence["worth_checking"] == [],
-      "and the evidence check is unchanged: further reading, nothing worth checking")
+      f"the unresolved standalone conflict remains advisory ({checked.release.status})")
+check(evidence["state"] == cf.STATE_WORTH_CHECKING and evidence["worth_checking"],
+      "contextual uncertainty leaves a visible concern, not just further reading")
 
 print("\n[8] failed and valid points together")
 checked, reconciled, corrections, evidence = run_case(
