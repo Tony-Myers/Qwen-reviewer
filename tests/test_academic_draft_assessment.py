@@ -124,6 +124,7 @@ check(
 expected_payload_keys = {
     "answer_draft",
     "local_guidance",
+    "claim_coverage",
     "references",
     "source_claims",
     "technical_claims",
@@ -139,6 +140,13 @@ check(
 check(
     retained_payload["claim_context_assessments"] == [],
     "first-stage payload exposes no invented claim context",
+)
+
+# No coverage assessor was supplied here. That absence is public and explicit,
+# so it cannot be mistaken for coverage checking that ran and found nothing.
+check(
+    retained_payload["claim_coverage"]["status"] == "coverage_not_attempted",
+    "absent coverage assessor is serialized as coverage_not_attempted",
 )
 
 

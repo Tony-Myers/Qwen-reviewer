@@ -263,17 +263,27 @@ def blocking_reconciliation_orchestrator(*args, **kwargs):
             "test timed out waiting to release Academic Chat orchestration"
         )
 
-    final = type(
-        "SyntheticAcademicFinalResult",
-        (),
-        {"to_dict": lambda self: {"answer": "synthetic academic result"}},
-    )()
+    # The real result types, as the endpoint receives them in production: a
+    # checked first-stage result for an already-generated draft, wrapped in a
+    # reconciliation result that attempted no revision. Assessing an empty
+    # draft makes no model or network call.
+    first_stage = server.academic_orchestrator.assess_academic_draft(
+        server.academic_chat.AcademicDraft(
+            answer_draft="synthetic academic result",
+            references=[],
+            source_claims=[],
+            technical_claims=[],
+        ),
+        local_guidance=server.academic_orchestrator.LocalGuidanceResult(
+            passages=[]
+        ),
+    )
 
-    return type(
-        "SyntheticAcademicReconciliationResult",
-        (),
-        {"final": final},
-    )()
+    return server.academic_reconciliation_orchestrator.AcademicReconciliationResult(
+        initial=first_stage,
+        revised=None,
+        revision_attempted=False,
+    )
 
 
 async def exercise_academic_first_stage():
@@ -343,7 +353,20 @@ ok(
 ok(
     "Academic Chat orchestration still completes after release",
     isinstance(result, dict)
-    and result.get("answer") == "synthetic academic result",
+    and result.get("answer_draft") == "synthetic academic result",
+)
+# The endpoint finishes by building the reader's evidence check. If that step
+# raised, the endpoint would catch it and return the incomplete fallback,
+# which carries the error in its diagnostics; completing that way must not
+# count as success.
+check_further = result.get("check_further") if isinstance(result, dict) else None
+ok(
+    "Academic Chat evidence check completes through its normal path",
+    isinstance(check_further, dict)
+    and check_further.get("state")
+    != server.academic_check_further.STATE_INCOMPLETE
+    and "error" not in (check_further.get("diagnostics") or {}),
+    f"check_further: {check_further!r}",
 )
 
 
