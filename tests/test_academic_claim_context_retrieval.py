@@ -188,7 +188,9 @@ def run(answer, discovered):
 
     def judge(*, prompt, schema):
         prompts.append(prompt)
-        return {"status": am.METHODOLOGICAL_STATUS_NOT_ESTABLISHED,
+        return {"claim_proposition": "Synthetic claim proposition.",
+                "guidance_proposition": "Synthetic guidance proposition.",
+                "relationship": 'insufficient',
                 "reason": "Synthetic deterministic judgement."}
 
     question_guidance = orchestrator.retrieve_methodological_context(QUESTION)

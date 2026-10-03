@@ -69,7 +69,9 @@ prompts = {}
 def judge(*, prompt, schema):
     key = "off" if OFF_TOPIC.statement in prompt else "on"
     prompts[key] = prompt
-    return {"status": am.METHODOLOGICAL_STATUS_NOT_ESTABLISHED,
+    return {"claim_proposition": "Synthetic claim proposition.",
+            "guidance_proposition": "Synthetic guidance proposition.",
+            "relationship": 'insufficient',
             "reason": "Synthetic deterministic judgement."}
 
 

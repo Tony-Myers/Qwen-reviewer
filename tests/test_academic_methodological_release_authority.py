@@ -117,10 +117,14 @@ judge_prompts = []
 def methodology_judge(*, prompt, schema):
     judge_prompts.append(prompt)
     if REJECTED in prompt:
-        return {"status": "methodological_conflict",
+        return {"claim_proposition": "Synthetic claim proposition.",
+                "guidance_proposition": "Synthetic guidance proposition.",
+                "relationship": 'incompatible',
                 "reason": "The guidance says absence of evidence is not "
                           "evidence of absence."}
-    return {"status": "methodologically_consistent",
+    return {"claim_proposition": "Synthetic claim proposition.",
+            "guidance_proposition": "Synthetic guidance proposition.",
+            "relationship": 'supports',
             "reason": "The guidance states this directly."}
 
 

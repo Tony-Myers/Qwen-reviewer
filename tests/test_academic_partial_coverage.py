@@ -138,7 +138,9 @@ class PartialCoverageTests(unittest.TestCase):
         passage = reviewer_notes.Passage('test', 'test', 'Synthetic guidance.', 1.0)
         def method(*, prompt, schema):
             calls.append('methodology')
-            return {'status': methodology.METHODOLOGICAL_STATUS_CONSISTENT,
+            return {"claim_proposition": "Synthetic claim proposition.",
+                    "guidance_proposition": "Synthetic guidance proposition.",
+                    "relationship": 'supports',
                     'reason': 'Synthetic compatible guidance.'}
         def restriction(*, prompt, schema):
             calls.append('restriction')

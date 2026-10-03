@@ -114,7 +114,9 @@ def methodology_judge(*, prompt, schema):
     """The live failure: a reason over 30 words, or undecodable output."""
     judge_calls.append(prompt)
     if FORMULA in prompt:
-        return {"status": "methodologically_consistent", "reason": LONG_REASON}
+        return {"claim_proposition": "Synthetic claim proposition.",
+                "guidance_proposition": "Synthetic guidance proposition.",
+                "relationship": 'supports', "reason": LONG_REASON}
     raise academic_claim_assessor.ClaimAssessorOutputError(
         "Claim assessor did not return valid JSON.")
 
@@ -247,7 +249,9 @@ else:
 
 
 def fine(*, prompt, schema):
-    return {"status": "methodologically_consistent", "reason": "Fine."}
+    return {"claim_proposition": "Synthetic claim proposition.",
+            "guidance_proposition": "Synthetic guidance proposition.",
+            "relationship": 'supports', "reason": "Fine."}
 
 
 try:
@@ -262,7 +266,9 @@ else:
 
 try:
     am.build_methodological_consistency(
-        claim, passages, {"status": "methodologically_consistent",
+        claim, passages, {"claim_proposition": "Synthetic claim proposition.",
+                          "guidance_proposition": "Synthetic guidance proposition.",
+                          "relationship": 'supports',
                           "reason": LONG_REASON})
 except am.MethodologicalAssessmentOutputError:
     check(True, "the validator itself is unchanged: it still rejects the output")
@@ -288,7 +294,13 @@ def judge_returning(standalone, contextual):
         if verdict is FAILS:
             raise academic_claim_assessor.ClaimAssessorOutputError(
                 "Claim assessor did not return valid JSON.")
-        return {"status": verdict, "reason": "Synthetic judgement."}
+        return {"claim_proposition": "Synthetic claim proposition.",
+                "guidance_proposition": "Synthetic guidance proposition.",
+                "relationship": {
+                    "methodologically_consistent": "supports",
+                    "methodological_conflict": "incompatible",
+                    "methodological_consistency_not_established": "insufficient",
+                }[verdict], "reason": "Synthetic judgement."}
     return judge
 
 

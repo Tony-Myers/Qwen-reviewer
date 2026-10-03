@@ -48,12 +48,12 @@ print("[1] schema is bounded")
 
 schema = am.methodological_consistency_output_schema()
 
-assert set(schema["properties"]["status"]["enum"]) == set(
-    am.METHODOLOGICAL_STATUSES
+assert set(schema["properties"]["relationship"]["enum"]) == set(
+    am.METHODOLOGICAL_RELATIONSHIP_STATUSES
 )
 assert schema["additionalProperties"] is False
 
-print("PASS: schema exposes only methodological-consistency statuses")
+print("PASS: schema exposes semantic relationships, not application statuses")
 
 
 print("\n[2] prompt preserves methodological boundary")
@@ -137,7 +137,7 @@ assert (
     in normalised_prompt
 )
 assert (
-    "methodological_conflict requires the guidance to establish an "
+    "incompatible requires the guidance to establish an "
     "incompatible proposition" in normalised_prompt
 )
 assert (
@@ -186,7 +186,9 @@ result = am.build_methodological_consistency(
     hdi_claim,
     passages,
     {
-        "status": "methodological_conflict",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'incompatible',
         "reason": (
             "The guidance explicitly warns against assuming that skewness "
             "makes an HDI narrower than an ETI."
@@ -218,7 +220,9 @@ consistent = am.build_methodological_consistency(
     ),
     passages,
     {
-        "status": "methodologically_consistent",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'supports',
         "reason": (
             "The guidance directly describes an ETI as leaving equal "
             "posterior probability in each tail."
@@ -249,7 +253,9 @@ not_established = am.build_methodological_consistency(
     hdi_claim,
     unrelated,
     {
-        "status": "methodological_consistency_not_established",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'insufficient',
         "reason": (
             "The guidance concerns HMC divergences rather than ETI and HDI "
             "interval width."
@@ -274,7 +280,9 @@ def fake_assessor(*, prompt, schema):
     captured["prompt"] = prompt
     captured["schema"] = schema
     return {
-        "status": "methodological_conflict",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'incompatible',
         "reason": "The supplied guidance directly conflicts with the claim.",
     }
 
@@ -297,19 +305,27 @@ bad_outputs = [
     None,
     [],
     {},
-    {"status": "methodological_conflict", "reason": ""},
+    {"claim_proposition": "Synthetic claim proposition.",
+     "guidance_proposition": "Synthetic guidance proposition.",
+     "relationship": 'incompatible', "reason": ""},
     {"status": "verified", "reason": "Unsupported status."},
     {
-        "status": "methodological_conflict",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'incompatible',
         "reason": "Conflict.",
         "extra": True,
     },
     {
-        "status": "methodological_conflict",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'incompatible',
         "reason": " ".join(["word"] * 31),
     },
     {
-        "status": "methodological_conflict",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'incompatible',
         "reason": "Conflict.",
         "note": "Model-supplied provenance must not be accepted.",
     },
@@ -340,7 +356,9 @@ try:
         hdi_claim,
         [],
         {
-            "status": am.METHODOLOGICAL_STATUS_CONSISTENT,
+            "claim_proposition": "Synthetic claim proposition.",
+            "guidance_proposition": "Synthetic guidance proposition.",
+            "relationship": 'supports',
             "reason": "Synthetic valid assessor judgement.",
         },
     )
@@ -465,7 +483,9 @@ contextual_result = am.build_contextual_methodological_consistency(
     source_context=rct_context,
     passages=rct_passages,
     assessor_output={
-        "status": "methodologically_consistent",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'supports',
         "reason": (
             "The RCT-qualified proposition is directly compatible with the "
             "supplied guidance."
@@ -495,7 +515,9 @@ def fake_contextual_assessor(*, prompt, schema):
     contextual_captured["prompt"] = prompt
     contextual_captured["schema"] = schema
     return {
-        "status": "methodologically_consistent",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'supports',
         "reason": "The context-qualified proposition matches the supplied guidance.",
     }
 
@@ -513,11 +535,13 @@ assert (
     == am.methodological_consistency_output_schema()
 )
 assert set(contextual_captured["schema"]["properties"]) == {
-    "status",
+    "claim_proposition",
+    "guidance_proposition",
+    "relationship",
     "reason",
 }
 
-print("PASS: contextual assessment reuses the bounded status/reason schema")
+print("PASS: contextual assessment reuses the bounded proposition/relationship schema")
 print("PASS: model cannot supply claim, context, or guidance provenance")
 
 

@@ -154,7 +154,13 @@ def model_output(model, tokenizer, prompt, schema, *, max_tokens=512,
     if schema == coverage.material_restriction_output_schema():
         return {"material_restriction_omitted": False}
     if schema == am.methodological_consistency_output_schema():
-        return {"status": case.get("methodology", am.METHODOLOGICAL_STATUS_CONSISTENT),
+        return {"claim_proposition": "Synthetic claim proposition.",
+                "guidance_proposition": "Synthetic guidance proposition.",
+                "relationship": {
+                    "methodologically_consistent": "supports",
+                    "methodological_conflict": "incompatible",
+                    "methodological_consistency_not_established": "insufficient",
+                }[case.get("methodology", am.METHODOLOGICAL_STATUS_CONSISTENT)],
                 "reason": "Synthetic."}
     if schema == academic_claims.claim_assessment_output_schema():
         status = case["recheck"] if revisions else case.get("source", "claim_supported")

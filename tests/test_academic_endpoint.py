@@ -560,7 +560,9 @@ try:
         (
             "31-word reason",
             {
-                "status": academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT,
+                "claim_proposition": "Synthetic claim proposition.",
+                "guidance_proposition": "Synthetic guidance proposition.",
+                "relationship": 'supports',
                 "reason": " ".join(["word"] * 31),
             },
         ),

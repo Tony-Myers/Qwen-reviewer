@@ -172,7 +172,9 @@ def model_output(model, tokenizer, prompt, schema, *, max_tokens=512,
     if schema == coverage.material_restriction_output_schema():
         return {"material_restriction_omitted": False}
     if schema == am.methodological_consistency_output_schema():
-        return {"status": am.METHODOLOGICAL_STATUS_CONSISTENT, "reason": "Synthetic."}
+        return {"claim_proposition": "Synthetic claim proposition.",
+                "guidance_proposition": "Synthetic guidance proposition.",
+                "relationship": 'supports', "reason": "Synthetic."}
     if schema == academic_claims.claim_assessment_output_schema():
         verdicts = case["recheck"] if revisions else case["initial"]
         claim = next(c for c in (CLAIM_A, CLAIM_B, CHANGED_A) if c in prompt)

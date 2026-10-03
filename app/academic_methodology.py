@@ -35,6 +35,14 @@ METHODOLOGICAL_STATUSES = (
 )
 
 
+# The model compares propositions; only the application assigns its status.
+METHODOLOGICAL_RELATIONSHIP_STATUSES = {
+    "supports": METHODOLOGICAL_STATUS_CONSISTENT,
+    "incompatible": METHODOLOGICAL_STATUS_CONFLICT,
+    "insufficient": METHODOLOGICAL_STATUS_NOT_ESTABLISHED,
+}
+
+
 class MethodologicalAssessmentOutputError(ValueError):
     """Raised when methodology-assessor output violates its contract."""
 
@@ -94,16 +102,20 @@ def methodological_consistency_output_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "status": {
+            "claim_proposition": {"type": "string", "minLength": 1},
+            "guidance_proposition": {"type": "string", "minLength": 1},
+            "relationship": {
                 "type": "string",
-                "enum": list(METHODOLOGICAL_STATUSES),
+                "enum": list(METHODOLOGICAL_RELATIONSHIP_STATUSES),
             },
             "reason": {
                 "type": "string",
                 "minLength": 1,
             },
         },
-        "required": ["status", "reason"],
+        "required": [
+            "claim_proposition", "guidance_proposition", "relationship", "reason",
+        ],
         "additionalProperties": False,
     }
 
@@ -173,23 +185,41 @@ Do not treat retrieval of a passage as evidence that it addresses the claim.
 Assess whether the guidance addresses the same methodological proposition,
 including important qualifiers, conditions, direction, and context.
 
-Use exactly one of these statuses:
+First state claim_proposition: the material proposition actually asserted,
+preserving frequency, quantifiers, modality, direction, conditions and context.
+Then state guidance_proposition: what the supplied guidance actually establishes
+about that proposition, preserving the same distinctions. If it establishes no
+relevant proposition, say so explicitly rather than inventing one.
+Keep each proposition concise. Do not strengthen or weaken either proposition.
 
-methodologically_consistent
-The supplied guidance directly addresses the same material proposition and is
-compatible with the claim.
+Compare those propositions using exactly one relationship:
 
-methodological_conflict
-The supplied guidance clearly establishes a materially incompatible
-proposition about the same relevant concept and context.
+supports
+The guidance establishes the claim's complete material proposition.
+Mere compatibility, shared topic or absence of contradiction is insufficient.
 
-methodological_consistency_not_established
-The supplied guidance does not address the proposition sufficiently to
-establish either consistency or conflict.
+incompatible
+The guidance establishes a materially incompatible proposition about the same
+concept, conditions and context. Identify the actual incompatibility.
+
+insufficient
+The guidance establishes neither the claim's material proposition nor a
+materially incompatible proposition.
+
+Check whether both propositions could be true before selecting incompatible.
+"Typically X" and "not always/universally X" can both be true. The latter alone
+neither establishes nor contradicts typicality: select insufficient.
+Likewise, "may X" versus "not necessarily X", "often X" versus "not always X",
+"usually X" versus "exceptions exist", and "can improve X" versus "does not
+guarantee improvement" are not automatically incompatible. Association and a
+warning that causation does not necessarily follow are not contrary causal
+assertions. Compatibility alone still does not establish supports.
+A claim that an inference is established is incompatible with guidance that
+explicitly says that same inference is not established under the same conditions.
 
 Absence of a warning or contrary statement is not evidence of consistency.
 A related passage is not necessarily relevant to the proposition being
-assessed. Use methodological_conflict only when the supplied guidance provides
+assessed. Use incompatible only when the supplied guidance provides
 clear contrary guidance about the same relevant proposition and context.
 
 A caution that a proposition is not necessarily, universally, or automatically
@@ -216,26 +246,26 @@ proposition asserted by the claim.
 
 A stronger claim is not established merely because the guidance supports a
 weaker version; unsupported strengthening is not by itself a methodological
-conflict. In that situation use methodological_consistency_not_established
+conflict. In that situation use insufficient
 unless the supplied guidance also establishes an incompatible proposition.
-methodological_conflict requires the guidance to establish an incompatible
+incompatible requires the guidance to establish an incompatible
 proposition about the same relevant concept, conditions, and context.
 
 Treat omitted conditions in the same way. Omitting a condition from a claim
 does not by itself establish conflict. An unconditional or more general claim
 is not established by guidance that supports the proposition only under a
-condition. Use methodological_conflict only if the supplied guidance establishes
+condition. Use incompatible only if the supplied guidance establishes
 that the claim is incompatible when the relevant condition is absent.
 
 OUTPUT DISCIPLINE
-Decide the status before writing the reason.
+Compare the propositions and choose the relationship before writing the reason.
 The reason must be one concise sentence of no more than 30 words.
-The reason must be consistent with the selected status.
+The reason must be consistent with the selected relationship.
 Do not show deliberation, self-correction, or reconsideration in the reason.
 
-Return only the required judgement fields: status and reason.
-Do not return the claim, guidance, note names, headings, retrieval scores, or
-any other provenance field."""
+Return only claim_proposition, guidance_proposition, relationship, and reason.
+Do not return an application status, claim object, guidance object, note names,
+headings, retrieval scores, or any other provenance field."""
 
 
 def build_methodological_consistency_prompt(
@@ -289,23 +319,33 @@ def build_methodological_consistency(
             "Methodological consistency assessor output must be an object."
         )
 
-    expected_fields = {"status", "reason"}
+    expected_fields = {
+        "claim_proposition", "guidance_proposition", "relationship", "reason",
+    }
     if set(assessor_output) != expected_fields:
         raise MethodologicalAssessmentOutputError(
             "Methodological consistency assessor output must contain exactly "
-            "'status' and 'reason'."
+            "'claim_proposition', 'guidance_proposition', 'relationship', "
+            "and 'reason'."
         )
 
-    status = assessor_output["status"]
+    for field in ("claim_proposition", "guidance_proposition"):
+        value = assessor_output[field]
+        if not isinstance(value, str) or not value.strip():
+            raise MethodologicalAssessmentOutputError(
+                f"Methodological consistency {field} must be non-empty text."
+            )
+
+    relationship = assessor_output["relationship"]
     reason = assessor_output["reason"]
 
     if (
-        not isinstance(status, str)
-        or status not in METHODOLOGICAL_STATUSES
+        not isinstance(relationship, str)
+        or relationship not in METHODOLOGICAL_RELATIONSHIP_STATUSES
     ):
         raise MethodologicalAssessmentOutputError(
             "Methodological consistency assessor output contains an invalid "
-            "status."
+            "relationship."
         )
 
     if not isinstance(reason, str) or not reason.strip():
@@ -320,7 +360,7 @@ def build_methodological_consistency(
         )
 
     return MethodologicalConsistencyResult(
-        status=status,
+        status=METHODOLOGICAL_RELATIONSHIP_STATUSES[relationship],
         claim=claim,
         passages=list(passages),
         reasons=[reason.strip()],

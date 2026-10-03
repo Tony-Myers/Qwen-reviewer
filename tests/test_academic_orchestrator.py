@@ -2391,7 +2391,9 @@ def synthetic_methodological_assessor(*, prompt, schema):
         }
     )
     return {
-        "status": "methodologically_consistent",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'supports',
         "reason": (
             "The supplied guidance directly addresses the same "
             "methodological proposition."
@@ -2511,7 +2513,9 @@ def claim_specific_methodological_assessor(*, prompt, schema):
         }
     )
     return {
-        "status": "methodologically_consistent",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'supports',
         "reason": "Claim-specific guidance directly addresses the proposition.",
     }
 
@@ -2605,7 +2609,9 @@ def independent_methodological_assessor(*, prompt, schema):
         }
     )
     return {
-        "status": "methodologically_consistent",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'supports',
         "reason": "Claim-specific guidance directly addresses the proposition.",
     }
 
@@ -2702,7 +2708,9 @@ print("\n[methodological release] conflict is reported without withholding")
 
 def conflicting_methodological_assessor(*, prompt, schema):
     return {
-        "status": "methodological_conflict",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'incompatible',
         "reason": (
             "The structured claim materially contradicts the supplied "
             "methodological guidance."
@@ -2744,7 +2752,9 @@ print("\n[methodological release] not established does not block")
 
 def unestablished_methodological_assessor(*, prompt, schema):
     return {
-        "status": "methodological_consistency_not_established",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'insufficient',
         "reason": (
             "The supplied guidance does not establish the same "
             "methodological proposition."
@@ -2971,7 +2981,9 @@ def fake_coverage_methodological_assessor(*, prompt, schema):
         }
     )
     return {
-        "status": "methodologically_consistent",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'supports',
         "reason": "The supplied guidance addresses this proposition.",
     }
 
@@ -3112,7 +3124,9 @@ def fake_atomic_methodological_assessor(*, prompt, schema):
 
     if atomic_mcar_claim.statement in prompt:
         return {
-            "status": "methodological_conflict",
+            "claim_proposition": "Synthetic claim proposition.",
+            "guidance_proposition": "Synthetic guidance proposition.",
+            "relationship": 'incompatible',
             "reason": (
                 "The supplied guidance states that MCAR is not universally "
                 "necessary for unbiased complete-case estimation."
@@ -3120,7 +3134,9 @@ def fake_atomic_methodological_assessor(*, prompt, schema):
         }
 
     return {
-        "status": "methodologically_consistent",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'supports',
         "reason": "Synthetic guidance is consistent with this proposition.",
     }
 
@@ -3308,7 +3324,9 @@ def fake_contextual_methodological_assessor(*, prompt, schema):
 
     if "BOUNDED ANSWER CONTEXT" in prompt:
         return {
-            "status": "methodologically_consistent",
+            "claim_proposition": "Synthetic claim proposition.",
+            "guidance_proposition": "Synthetic guidance proposition.",
+            "relationship": 'supports',
             "reason": (
                 "The context-qualified proposition is compatible with the "
                 "supplied guidance."
@@ -3316,7 +3334,9 @@ def fake_contextual_methodological_assessor(*, prompt, schema):
         }
 
     return {
-        "status": "methodological_consistency_not_established",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'insufficient',
         "reason": (
             "The standalone proposition is broader than the supplied guidance."
         ),
@@ -3410,7 +3430,9 @@ print(
 def fake_contextual_conflict_assessor(*, prompt, schema):
     if "BOUNDED ANSWER CONTEXT" in prompt:
         return {
-            "status": "methodological_conflict",
+            "claim_proposition": "Synthetic claim proposition.",
+            "guidance_proposition": "Synthetic guidance proposition.",
+            "relationship": 'incompatible',
             "reason": (
                 "The occurrence-specific proposition materially conflicts "
                 "with the supplied methodological guidance."
@@ -3418,7 +3440,9 @@ def fake_contextual_conflict_assessor(*, prompt, schema):
         }
 
     return {
-        "status": "methodological_consistency_not_established",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'insufficient',
         "reason": (
             "The standalone proposition is not established by the supplied "
             "guidance."
@@ -3702,12 +3726,16 @@ def fake_multi_contextual_retriever(query):
 def fake_multi_methodological_assessor(*, prompt, schema):
     if "BOUNDED ANSWER CONTEXT" in prompt:
         return {
-            "status": "methodologically_consistent",
+            "claim_proposition": "Synthetic claim proposition.",
+            "guidance_proposition": "Synthetic guidance proposition.",
+            "relationship": 'supports',
             "reason": "The occurrence is consistent in its verified context.",
         }
 
     return {
-        "status": "methodological_consistency_not_established",
+        "claim_proposition": "Synthetic claim proposition.",
+        "guidance_proposition": "Synthetic guidance proposition.",
+        "relationship": 'insufficient',
         "reason": "The standalone proposition lacks the contextual restriction.",
     }
 

@@ -149,9 +149,13 @@ def model_output(model, tokenizer, prompt, schema, *, max_tokens=512,
     elif schema == am.methodological_consistency_output_schema():
         standalone = "VERIFIED SOURCE SENTENCE" not in prompt
         output = (
-            {"status": am.METHODOLOGICAL_STATUS_CONFLICT, "reason": "Synthetic."}
+            {"claim_proposition": "Synthetic claim proposition.",
+             "guidance_proposition": "Synthetic guidance proposition.",
+             "relationship": 'incompatible', "reason": "Synthetic."}
             if case.get("standalone_conflict") and standalone and CLAIM_1 in prompt
-            else {"status": am.METHODOLOGICAL_STATUS_CONSISTENT, "reason": "Synthetic."})
+            else {"claim_proposition": "Synthetic claim proposition.",
+                  "guidance_proposition": "Synthetic guidance proposition.",
+                  "relationship": 'supports', "reason": "Synthetic."})
     elif schema == academic_claims.claim_assessment_output_schema():
         output = case["source"]
     else:
