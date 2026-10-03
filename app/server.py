@@ -908,6 +908,10 @@ async def academic_chat_first_stage(request: dict):
             status_code=502,
         )
     except RuntimeError as exc:
+        try:
+            traceback.print_exc()
+        except Exception:
+            pass  # Diagnostics must not change the existing HTTP response.
         return JSONResponse(
             {
                 "error": "Academic reference service unavailable.",

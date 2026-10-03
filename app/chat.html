@@ -854,12 +854,25 @@ function renderAcademicReference(reference, index) {
       'Bibliographic identity not independently established</div>';
   }
 
-  if (verification.corroboration_status === 'unavailable') {
+  const titleQuerySkipped = Array.isArray(verification.issues) &&
+    verification.issues.some(issue => issue && issue.service === 'openalex' &&
+      issue.stage === 'title_corroboration' && issue.outcome === 'skipped' &&
+      issue.code === 'unsafe_title_query');
+  if (verification.bibliographic_notice) {
+    h += '<div class="academic-reference-status">' +
+      esc(String(verification.bibliographic_notice)) + '</div>';
+  } else if (titleQuerySkipped) {
+    h += '<div class="academic-reference-status">';
+    h += '<strong>Title corroboration not attempted.</strong> ';
+    h += 'The title could not safely be represented in the supported OpenAlex ';
+    h += 'title query. Cross-database corroboration is incomplete, so source ';
+    h += 'retrieval was not attempted.';
+    h += '</div>';
+  } else if (verification.corroboration_status === 'unavailable') {
     h += '<div class="academic-reference-status">';
     h += '<strong>Independent corroboration unavailable.</strong> ';
-    h += 'OpenAlex was unavailable, so cross-database corroboration ';
-    h += 'and source retrieval were not completed. ';
-    h += 'Retry Academic Chat to attempt these checks again.';
+    h += 'Independent bibliographic corroboration could not be completed. ';
+    h += 'Source retrieval was not attempted.';
     h += '</div>';
   }
 
@@ -1539,6 +1552,15 @@ function renderAcademicCheckFurther(cf, referencesHtml, auditHtml) {
   h += '<div class="evidence-check-title">' + esc(String(cf.title || '')) + '</div>';
   h += '<div class="evidence-check-line">' + esc(String(cf.summary || '')) + '</div>';
   if (cf.secondary) h += '<div class="evidence-check-line evidence-check-muted">' + esc(String(cf.secondary)) + '</div>';
+
+  const bibliography = Array.isArray(cf.bibliographic_limitations)
+    ? cf.bibliographic_limitations : [];
+  for (const limitation of bibliography) {
+    h += '<div class="evidence-check-notice"><strong>Reference checking:</strong> ' +
+      esc(String(limitation.reference || '')) + ' — ' +
+      esc(String(limitation.message || '')) + ' ' +
+      esc(String(limitation.source_checking || '')) + '</div>';
+  }
 
   const worth = Array.isArray(cf.worth_checking) ? cf.worth_checking : [];
   for (const w of worth) {

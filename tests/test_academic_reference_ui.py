@@ -37,21 +37,21 @@ check(
 )
 
 check(
-    "OpenAlex was unavailable"
+    "verification.bibliographic_notice"
     in reference_function,
-    "warning identifies the unavailable external service",
+    "warning renders the application-owned bibliographic distinction",
 )
 
 check(
-    "source retrieval were not completed"
+    "Source retrieval was not attempted."
     in reference_function,
     "warning explains that source retrieval was not completed",
 )
 
 check(
     "Retry Academic Chat to attempt these checks again."
-    in reference_function,
-    "warning tells the user how to retry the omitted checks",
+    not in reference_function,
+    "warning does not misdescribe every failure as transient",
 )
 
 check(

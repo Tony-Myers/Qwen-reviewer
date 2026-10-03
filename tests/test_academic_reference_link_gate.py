@@ -152,11 +152,12 @@ check(d["citation_notice"] is None and d["diagnostics"]["unlinked_references"] =
 full = first_stage(ALL, CLAIMS)
 d_full = cf.assess_check_further(full, INDEX).to_dict()
 notice = d_full["citation_notice"] or {}
-check(notice.get("message", "").startswith(
-          "Some sources given in support of this answer could not be matched "
-          "to a published record."),
-      "C: linked, unverified references raise the notice, worded as sources "
-      "given in support of the answer")
+check("A related published record was found" in notice.get("message", "")
+      and "conflict with the published record" in notice.get("message", "")
+      and not notice.get("unmatched")
+      and len(notice.get("related_unverified", [])) == 1
+      and len(notice.get("conflicting", [])) == 1,
+      "C: linked related records and metadata conflicts have distinct notices")
 check("cited in this answer" not in notice.get("message", ""),
       "C: the notice does not claim the answer cites them")
 check(not any("chained equations" in x for x in notice.get("unmatched", [])),
@@ -234,7 +235,9 @@ else:
           "C: the linked, unverified reference is shown with its proposed details")
     check(reader_refs.count("Bibliographic identity not independently established") == 2,
           "C: unverified references carry their status")
-    check("Citation check:" in reader and "could not be matched" in reader,
+    check("Citation check:" in reader and "A related published record was found" in reader
+          and "conflict with the published record" in reader
+          and "could not be matched" not in reader,
           "C: the reader sees the citation notice")
 
     graham = reader_refs[reader_refs.find("How many imputations are really needed?"):]

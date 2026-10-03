@@ -219,11 +219,9 @@ if unavailable_academic is not None:
     )
 
     check(
-        "unavailable corroboration explains that OpenAlex was unavailable",
-        any(
-            "OpenAlex" in reason and "unavailable" in reason.lower()
-            for reason in unavailable_academic.reasons
-        ),
+        "unavailable corroboration identifies the failed OpenAlex operation",
+        any(issue.service == "openalex" and issue.outcome == "unavailable"
+            for issue in unavailable_academic.issues),
         unavailable_academic.reasons,
     )
 

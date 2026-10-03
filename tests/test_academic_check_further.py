@@ -329,8 +329,8 @@ check(d["state"] == "worth_checking"
 check([w["text"] for w in d["worth_checking"]] == ["The answer's sentence about C."],
       "the failed point is not presented as a point worth checking")
 
-check(cf.RULES_VERSION == "6" and d["rules_version"] == "6",
-      "rules version 6 marks the change in routing")
+check(cf.RULES_VERSION == "8" and d["rules_version"] == "8",
+      "rules version 8 distinguishes citation identity outcomes")
 
 # ===========================================================================
 print("\n[failed checks] dropped-condition and source checks that could not be completed")

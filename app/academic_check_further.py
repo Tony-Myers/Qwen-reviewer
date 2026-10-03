@@ -80,7 +80,9 @@ import reviewer_notes
 #    be completed; the incomplete wording covers any check.
 # 6: a revision withheld because it was not shown to resolve a source
 #    contradiction is reported as a reason for withholding.
-RULES_VERSION = "6"
+# 7: linked bibliographic-operation limitations disclose incomplete checking.
+# 8: citation notices distinguish related records, conflicts and completed no-match.
+RULES_VERSION = "8"
 
 STATE_NO_CONCERN = "no_specific_concern"
 STATE_FURTHER_READING = "further_reading"
@@ -192,6 +194,7 @@ class CheckFurtherAssessment:
     citation_notice: Optional[Dict[str, Any]]
     groups: List[ReadingGroup]
     diagnostics: Dict[str, Any]
+    bibliographic_limitations: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def title(self) -> str:
@@ -218,6 +221,8 @@ class CheckFurtherAssessment:
             "source_count": self.source_count,
             "about": ABOUT,
             "diagnostics": self.diagnostics,
+            **({"bibliographic_limitations": self.bibliographic_limitations}
+               if self.bibliographic_limitations else {}),
         }
 
 
@@ -484,8 +489,10 @@ def assess_check_further(
             "assessment_error": error,
         })
 
-    # ---- a source given in support that does not match a record ----------
+    # ---- citation identity, separate from bibliographic operations --------
     unmatched, conflicting, unlinked = [], [], []
+    related_unverified, identity_unestablished = [], []
+    bibliographic_limitations = []
     linked = linked_reference_indices(result)
     for position, proposal in enumerate(result.references or []):
         if position not in linked:
@@ -494,12 +501,36 @@ def assess_check_further(
         verification = proposal.verification
         status = getattr(verification.crossref_verification, "status", "")
         label = _citation_label(proposal.proposed_reference)
-        if verification.identity_conflict:
+        if (status == "unavailable" or
+                getattr(verification, "corroboration_status", "complete") != "complete"):
+            if hasattr(verification, "bibliographic_notice"):
+                message = verification.bibliographic_notice()
+            else:
+                message = ("Bibliographic verification could not be completed."
+                           if status == "unavailable" else
+                           "Independent bibliographic corroboration could not be completed.")
+            bibliographic_limitations.append({
+                "reference_index": position, "reference": label,
+                "message": message,
+                "source_checking": (
+                    "The source could not be checked against the claim because "
+                    "the required bibliographic identity was not established."),
+            })
+        if verification.identity_conflict or status == "metadata_conflict":
             conflicting.append(label)
-        elif status != "verified":
+        elif status in ("verified", "unavailable"):
+            pass
+        elif status in ("not_verified", "probable") and (
+                getattr(verification.crossref_verification, "candidate", None) is not None
+                or getattr(verification.crossref_verification, "related_candidate", None) is not None):
+            related_unverified.append(label)
+        elif status == "not_verified":
             unmatched.append(label)
+        else:
+            # Unknown states do not establish that a search completed without a match.
+            identity_unestablished.append(label)
     citation_notice = None
-    if unmatched or conflicting:
+    if unmatched or conflicting or related_unverified or identity_unestablished:
         parts = []
         if unmatched:
             parts.append(
@@ -513,11 +544,30 @@ def assess_check_further(
                 "conflict with the published record." if len(conflicting) == 1
                 else "The details of some sources given in support of this "
                 "answer conflict with the published record.")
+        if related_unverified:
+            parts.append(
+                "A related published record was found, but it did not establish "
+                "the bibliographic identity of the citation as given."
+                if len(related_unverified) == 1 else
+                "Related published records were found, but they did not establish "
+                "the bibliographic identities of the citations as given.")
+        if identity_unestablished:
+            parts.append(
+                "The available verification result does not establish the "
+                "bibliographic identity of a citation given in support of this answer."
+                if len(identity_unestablished) == 1 else
+                "The available verification results do not establish the "
+                "bibliographic identities of some citations given in support of this answer.")
+        count = sum(map(len, (unmatched, conflicting, related_unverified, identity_unestablished)))
+        advice = (" Check the citation before relying on it." if count == 1 else
+                  " Check the citations before relying on them.")
         citation_notice = {
             "title": "Citation check",
-            "message": " ".join(parts) + " Check the citation before relying on it.",
+            "message": " ".join(parts) + advice,
             "unmatched": unmatched,
             "conflicting": conflicting,
+            "related_unverified": related_unverified,
+            "identity_unestablished": identity_unestablished,
         }
 
     # ---- state ---------------------------------------------------------------
@@ -528,7 +578,8 @@ def assess_check_further(
     # when other checking was incomplete; incomplete checking on its own is
     # never presented as a concern.
     checking_incomplete = (release.status == "checking_incomplete" or bool(failed)
-                           or bool(failed_restrictions) or bool(failed_sources))
+                           or bool(failed_restrictions) or bool(failed_sources)
+                           or bool(bibliographic_limitations))
     source_note = (" " + SOURCE_INCOMPLETE_NOTE) if failed_sources else ""
     if release.status in _BLOCKED_SUMMARIES or conflicts:
         state = STATE_WORTH_CHECKING
@@ -647,6 +698,7 @@ def assess_check_further(
         citation_notice=citation_notice,
         groups=group_list,
         diagnostics=diagnostics,
+        bibliographic_limitations=bibliographic_limitations,
     )
 
 

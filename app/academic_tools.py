@@ -18,9 +18,10 @@ from difflib import SequenceMatcher
 import json
 import re
 import time
+import traceback
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -30,6 +31,118 @@ USER_AGENT = (
     "QwenReviewer/academic-reference-tools "
     "(https://github.com/Tony-Myers/Qwen-reviewer)"
 )
+
+
+# Distinct from a completed search that did not verify a reference.
+VERIFICATION_STATUS_UNAVAILABLE = "unavailable"
+
+
+class BibliographicLookupError(RuntimeError):
+    """An expected failure at the external metadata transport/response boundary."""
+
+    def __init__(self, message: str, *, service: str, operation: str,
+                 code: str, http_status: int | None = None):
+        super().__init__(message)
+        self.service = service
+        self.operation = operation
+        self.code = code
+        self.http_status = http_status
+
+
+@dataclass(frozen=True)
+class BibliographicIssue:
+    """Public issue metadata; never raw URLs, response bodies or tracebacks."""
+
+    stage: str
+    service: str
+    outcome: str
+    code: str
+    http_status: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        result = asdict(self)
+        if self.http_status is None:
+            result.pop("http_status")
+        return result
+
+
+def _lookup_operation(service: str, url: str) -> str:
+    """Identify the existing transport operation without exposing its URL."""
+    parsed = urlsplit(url)
+    if service == "crossref":
+        return "doi_lookup" if parsed.path.startswith("/works/") else "title_search"
+    filters = parse_qs(parsed.query).get("filter", [""])[0]
+    return "doi_lookup" if filters.startswith("doi:") else "title_search"
+
+
+def _lookup_failure(service: str, url: str, exc: Exception) -> BibliographicLookupError:
+    if isinstance(exc, HTTPError):
+        code = "http_error"
+    elif isinstance(exc, TimeoutError) or (
+        isinstance(exc, URLError) and isinstance(exc.reason, TimeoutError)
+    ):
+        code = "timeout"
+    elif isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+        code = "malformed_response"
+    else:
+        code = "network_error"
+    name = "Crossref" if service == "crossref" else "OpenAlex"
+    return BibliographicLookupError(
+        f"{name} request failed: {exc}", service=service,
+        operation=_lookup_operation(service, url), code=code,
+        http_status=exc.code if isinstance(exc, HTTPError) else None,
+    )
+
+
+def _validate_bibliographic_response(data: Any, service: str, url: str) -> dict[str, Any]:
+    """Validate external containers consumed by adapters, not application logic.
+
+    Optional metadata remains optional. Empty result arrays are successful
+    searches, whereas a missing/wrong envelope is not an empty search.
+    """
+    def require(condition: bool, field: str) -> None:
+        if not condition:
+            raise BibliographicLookupError(
+                f"{service} response has invalid {field} structure.",
+                service=service, operation=_lookup_operation(service, url),
+                code="malformed_response",
+            )
+
+    def optional_container(obj, key, kind):
+        value = obj.get(key)
+        require(value is None or isinstance(value, kind), key)
+        return value if value is not None else kind()
+
+    require(isinstance(data, dict), "root")
+    if service == "crossref":
+        require(isinstance(data.get("message"), dict), "message")
+        if _lookup_operation(service, url) == "doi_lookup":
+            items = [data["message"]]
+        else:
+            require(isinstance(data["message"].get("items"), list), "message.items")
+            items = data["message"]["items"]
+        for item in items:
+            require(isinstance(item, dict), "item")
+            for key in ("title", "subtitle", "container-title"):
+                values = optional_container(item, key, list)
+                require(all(isinstance(v, str) for v in values), key)
+            for author in optional_container(item, "author", list):
+                require(isinstance(author, dict), "author")
+            for key in ("published-print", "published-online", "published", "issued"):
+                date = item.get(key, {})
+                require(isinstance(date, dict), key)
+                parts = optional_container(date, "date-parts", list)
+                require(all(isinstance(part, list) for part in parts), "date-parts")
+    else:
+        require(isinstance(data.get("results"), list), "results")
+        for item in data["results"]:
+            require(isinstance(item, dict), "result")
+            for authorship in optional_container(item, "authorships", list):
+                require(isinstance(authorship, dict), "authorship")
+                optional_container(authorship, "author", dict)
+            location = optional_container(item, "primary_location", dict)
+            optional_container(location, "source", dict)
+    return data
 
 
 @dataclass
@@ -90,8 +203,30 @@ class AcademicReferenceResult:
     corroboration_status: str = "complete"
     claim_verified: bool = False
 
+    issues: list[BibliographicIssue] = field(default_factory=list)
+
+    def bibliographic_notice(self) -> str | None:
+        if self.crossref_verification.status == VERIFICATION_STATUS_UNAVAILABLE:
+            return "Bibliographic verification could not be completed."
+        if any(i.outcome == "skipped" and i.code == "unsafe_title_query"
+               for i in self.issues):
+            return ("Title corroboration not attempted. The title could not safely "
+                    "be represented in the supported OpenAlex title query. "
+                    "Independent bibliographic corroboration is incomplete.")
+        if self.corroboration_status != "complete":
+            return "Independent bibliographic corroboration could not be completed."
+        return None
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        if self.issues:
+            result["issues"] = [issue.to_dict() for issue in self.issues]
+        else:
+            result.pop("issues")
+        notice = self.bibliographic_notice()
+        if notice:
+            result["bibliographic_notice"] = notice
+        return result
 
 
 def _get_json(
@@ -116,13 +251,13 @@ def _get_json(
     for attempt in range(max_attempts):
         try:
             with urlopen(request, timeout=timeout) as response:
-                return json.load(response)
+                return _validate_bibliographic_response(
+                    json.load(response), "crossref", url
+                )
 
         except HTTPError as exc:
             if exc.code != 429 or attempt == max_attempts - 1:
-                raise RuntimeError(
-                    f"Crossref request failed: {exc}"
-                ) from exc
+                raise _lookup_failure("crossref", url, exc) from exc
 
             retry_after = exc.headers.get("Retry-After")
             try:
@@ -132,10 +267,8 @@ def _get_json(
 
             time.sleep(min(delay, 10.0))
 
-        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise RuntimeError(
-                f"Crossref request failed: {exc}"
-            ) from exc
+        except (URLError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise _lookup_failure("crossref", url, exc) from exc
 
     raise RuntimeError("Crossref request failed after retries.")
 
@@ -318,8 +451,13 @@ def _extract_candidate(
     return candidate
 
 
-class OpenAlexUnavailableError(RuntimeError):
+class OpenAlexUnavailableError(BibliographicLookupError):
     """OpenAlex remained unavailable after bounded transient retries."""
+
+    def __init__(self, message: str, *, operation: str = "lookup",
+                 http_status: int | None = None):
+        super().__init__(message, service="openalex", operation=operation,
+                         code="http_error", http_status=http_status)
 
 
 def _get_openalex_json(
@@ -339,17 +477,19 @@ def _get_openalex_json(
     for attempt in range(max_attempts):
         try:
             with urlopen(request, timeout=timeout) as response:
-                return json.load(response)
+                return _validate_bibliographic_response(
+                    json.load(response), "openalex", url
+                )
 
         except HTTPError as exc:
             if exc.code not in {429, 503}:
-                raise RuntimeError(
-                    f"OpenAlex request failed: {exc}"
-                ) from exc
+                raise _lookup_failure("openalex", url, exc) from exc
 
             if attempt == max_attempts - 1:
                 raise OpenAlexUnavailableError(
-                    f"OpenAlex request failed after transient retries: {exc}"
+                    f"OpenAlex request failed after transient retries: {exc}",
+                    operation=_lookup_operation("openalex", url),
+                    http_status=exc.code,
                 ) from exc
 
             retry_after = (
@@ -364,10 +504,8 @@ def _get_openalex_json(
 
             time.sleep(min(delay, 10.0))
 
-        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise RuntimeError(
-                f"OpenAlex request failed: {exc}"
-            ) from exc
+        except (URLError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise _lookup_failure("openalex", url, exc) from exc
 
     raise RuntimeError("OpenAlex request failed after retries.")
 
@@ -432,6 +570,36 @@ def _extract_openalex_candidate(
     )
 
 
+# Conservative application limit on the complete ASCII-encoded request URL.
+OPENALEX_TITLE_URL_MAX_BYTES = 2048
+
+
+class UnsafeOpenAlexTitleQuery(ValueError):
+    """Local preflight skip; not a lookup failure or an empty search result."""
+
+
+def _openalex_title_url(title: str, rows: int) -> str:
+    return f"{OPENALEX_API}/works?" + urlencode({
+        "filter": f"title.search:{title}",
+        "per-page": rows,
+    })
+
+
+def is_safe_openalex_title(title: str, *, rows: int = 5) -> bool:
+    """Allow only ASCII alphanumerics/spaces, without standalone operators.
+
+    Preserve internal text exactly. Only the existing surrounding trim is
+    permitted. The 2048-byte bound includes the URL and bounded page size.
+    """
+    cleaned = title.strip()
+    if not re.fullmatch(r"[A-Za-z0-9 ]+", cleaned):
+        return False
+    if any(word.upper() in {"AND", "OR", "NOT"} for word in cleaned.split(" ")):
+        return False
+    rows = max(1, min(int(rows), 25))
+    return len(_openalex_title_url(cleaned, rows).encode("ascii")) <= OPENALEX_TITLE_URL_MAX_BYTES
+
+
 def search_openalex(
     title: str,
     *,
@@ -439,16 +607,14 @@ def search_openalex(
 ) -> list[ReferenceCandidate]:
     """Search OpenAlex for works by bibliographic title."""
     cleaned_title = title.strip()
-    if not cleaned_title:
-        return []
-
     rows = max(1, min(int(rows), 25))
+    if not is_safe_openalex_title(cleaned_title, rows=rows):
+        raise UnsafeOpenAlexTitleQuery(
+            "OpenAlex title corroboration was skipped because the title "
+            "cannot safely be represented by the supported title query."
+        )
 
-    params = urlencode({
-        "filter": f"title.search:{cleaned_title}",
-        "per-page": rows,
-    })
-    url = f"{OPENALEX_API}/works?{params}"
+    url = _openalex_title_url(cleaned_title, rows)
 
     data = _get_openalex_json(url)
     results = data.get("results") or []
@@ -1312,37 +1478,45 @@ def verify_academic_reference(
 
     Bibliographic corroboration does not establish claim support.
     """
-    verification = verify_reference(
-        title=title,
-        author=author,
-        year=year,
-        venue=venue,
-        doi=doi,
-    )
-
+    verification = None
     doi_corroboration = None
     related_corroboration = None
     reasons = []
 
-    if doi:
-        crossref_doi = resolve_doi(doi)
-
+    def unavailable(exc: BibliographicLookupError, stage: str) -> AcademicReferenceResult:
+        # Diagnostics are server-side only and must not defeat containment.
         try:
+            traceback.print_exc()
+        except Exception:
+            pass
+        retained = verification if verification is not None else VerificationResult(
+            status=VERIFICATION_STATUS_UNAVAILABLE, candidate=None,
+            reasons=["Bibliographic verification could not be completed."],
+        )
+        return AcademicReferenceResult(
+            crossref_verification=retained,
+            doi_corroboration=doi_corroboration,
+            related_corroboration=related_corroboration,
+            identity_conflict=False,
+            reasons=reasons + ["Required bibliographic checking could not be completed."],
+            corroboration_status="unavailable",
+            issues=[BibliographicIssue(stage=stage, service=exc.service,
+                outcome="unavailable", code=exc.code, http_status=exc.http_status)],
+        )
+
+    try:
+        verification = verify_reference(
+            title=title, author=author, year=year, venue=venue, doi=doi,
+        )
+    except BibliographicLookupError as exc:
+        return unavailable(exc, "reference_verification")
+
+    if doi:
+        try:
+            crossref_doi = resolve_doi(doi)
             openalex_doi = resolve_openalex_doi(doi)
-        except OpenAlexUnavailableError:
-            reasons.append(
-                "OpenAlex corroboration was unavailable; Crossref "
-                "verification was preserved, but independent "
-                "cross-database corroboration was not completed."
-            )
-            return AcademicReferenceResult(
-                crossref_verification=verification,
-                doi_corroboration=None,
-                related_corroboration=None,
-                identity_conflict=False,
-                reasons=reasons,
-                corroboration_status="unavailable",
-            )
+        except BibliographicLookupError as exc:
+            return unavailable(exc, "doi_corroboration")
 
         doi_corroboration = corroborate_candidates(
             crossref_doi,
@@ -1355,23 +1529,11 @@ def verify_academic_reference(
         )
 
     if title:
-        crossref_results = _crossref_candidates(
-            title,
-            author=author,
-            rows=5,
-        )
         try:
-            openalex_results = search_openalex(
-                title,
-                rows=5,
-            )
-        except OpenAlexUnavailableError:
-            reasons.append(
-                "OpenAlex title corroboration was unavailable; "
-                "completed Crossref verification and any completed DOI "
-                "corroboration were preserved, but cross-database title "
-                "corroboration was not completed."
-            )
+            crossref_results = _crossref_candidates(title, author=author, rows=5)
+            openalex_results = search_openalex(title, rows=5)
+        except UnsafeOpenAlexTitleQuery as exc:
+            reasons.append(str(exc))
             return AcademicReferenceResult(
                 crossref_verification=verification,
                 doi_corroboration=doi_corroboration,
@@ -1379,7 +1541,13 @@ def verify_academic_reference(
                 identity_conflict=False,
                 reasons=reasons,
                 corroboration_status="unavailable",
+                issues=[BibliographicIssue(
+                    stage="title_corroboration", service="openalex",
+                    outcome="skipped", code="unsafe_title_query",
+                )],
             )
+        except BibliographicLookupError as exc:
+            return unavailable(exc, "title_corroboration")
 
         best_crossref = (
             max(
