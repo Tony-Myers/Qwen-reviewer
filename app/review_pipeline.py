@@ -3254,6 +3254,16 @@ Paper-specificity rule:
 - Do NOT suggest "verify whether interactions were tested" unless the paper's claims specifically depend on interaction effects.
 - Before including any "verify whether..." point, ask: does the extracted material provide specific evidence that this is a concern for THIS paper? If not, omit it.
 
+Issue ownership and context:
+- Before classifying a methodological issue as a concern with the current manuscript, establish its role using the supplied evidence: does the manuscript introduce or commit it, leave it unrecognised, explicitly acknowledge it, investigate it through sensitivity or robustness analysis, mitigate or qualify it, give an explicit warning or instruction about it, identify it in prior literature, or deliberately illustrate it as a pedagogical/example problem?
+- A problem in prior literature, a deliberately illustrated problem, or an issue the manuscript appropriately identifies is not by itself a concern with the current manuscript.
+- Acknowledgement is relevant context, not immunity from criticism. Preserve a concern where the evidence establishes a genuine residual problem after accounting for the manuscript's treatment; state both that treatment and what remains problematic.
+- Do not describe a sensitivity-tested assumption as reliance on one fixed assumption, or an explicitly qualified implementation setting as a silent universal recommendation.
+- If the supplied evidence does not settle whether a residual issue remains, retain a manuscript-specific investigative lead as a verification prompt rather than asserting a defect or suppressing the lead. The human reviewer decides what warrants criticism.
+
+Synopsis evidence boundary:
+- Do not mention a method, analysis, diagnostic, framework, limitation or feature in the manuscript synopsis merely because it appears in these review instructions or methodological expectations. Include it only when the supplied manuscript evidence establishes that it is present.
+
 Numeric provenance rule:
 - Academic papers frequently cite statistics from OTHER studies for context (e.g., "In a previous study by X et al., N=405 decisions were analysed").
 - Do NOT conflate numbers from cited/referenced studies with the current study's data.
@@ -5362,7 +5372,7 @@ Evidence must come from the manuscript:
 
 Register:
 - Describe a problem by its consequence, not with a verdict. Do not write "fundamental error", "fatal flaw", "invalid", "meaningless", "worthless" or "completely undermines". Write what follows from it: "may introduce optimistic bias because ...", "makes the reported comparison difficult to interpret because ...".
-- Where the manuscript itself acknowledges a limitation you are raising, say so in the same bullet. A concern that ignores the authors' own discussion of it reads as though the discussion was not consulted.
+- First determine whether a residual manuscript concern remains after accounting for the manuscript's acknowledgement, mitigation, sensitivity analysis, warning or qualification. If none remains, do not present the issue under "Directly supported concerns"; use a strength, neutral observation, evidence-motivated verification prompt, or omit it, as appropriate to the evidence. Where a residual concern remains, explain what remains problematic and describe the manuscript's treatment in the same bullet. Author acknowledgement alone does not dismiss a genuine residual concern.
 
 Claims must not outrun the evidence:
 - Do not assert in the synopsis or in a concern anything you are simultaneously asking to be checked under "Verification prompts". If you are unsure whether a feature exists (an interaction term, a covariate, a correction), say so once, in "Verification prompts" only.
@@ -5510,6 +5520,12 @@ Important correction rules:
 - If a model form appears in the evidence summaries, do not say the functional form is undefined.
 - If the evidence summaries refer to an equation, figure, table, appendix, or supplementary item, do not say the item is missing unless the evidence explicitly indicates absence.
 - Treat extraction failure as a review limitation rather than evidence that the manuscript omitted the item.
+
+Issue ownership and synopsis correction rules:
+- Reclassify or remove a concern when the supplied evidence shows that an author-recognised issue, sensitivity or robustness analysis, mitigation, qualification, explicit methodological warning or implementation instruction, pedagogical demonstration, or problem in cited/prior research has been mistaken for an unrecognised defect of the current manuscript.
+- First determine whether a genuine residual manuscript problem remains after that treatment. Preserve a concern where the evidence establishes one, explaining the residual problem and the manuscript's treatment in the same bullet. Author acknowledgement is not immunity from criticism.
+- If no residual concern remains, do not retain it under "Directly supported concerns"; classify it as a strength, neutral observation, evidence-motivated verification prompt, or remove it as appropriate. If the evidence leaves a genuine manuscript-specific uncertainty, preserve it as a verification prompt rather than a confirmed flaw; do not suppress worthwhile investigative leads.
+- Remove a method, analysis, diagnostic, framework, limitation or feature from the synopsis if it appears only in review instructions or methodological expectations rather than being established as present by the supplied manuscript evidence.
 
 Specificity and priority rules:
 - Remove generic boilerplate concerns that could apply to almost any paper unless they are clearly motivated by specific evidence.
