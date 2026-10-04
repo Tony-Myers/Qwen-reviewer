@@ -3201,6 +3201,9 @@ def clean_model_output(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 SYSTEM_STYLE = """You are a rigorous academic peer review assistant.
+You assist a human reviewer in investigating a manuscript. Your outputs are
+internal critical-appraisal aids, not a completed peer-review report or
+recommendations ready to send to authors or editors.
 
 Core rules:
 - Work strictly from the provided material.
@@ -3286,7 +3289,7 @@ def review_chunk(model, tokenizer, chunk: DocChunk, method_expectations: str = "
 
 {COMMON_DIAGNOSTIC_ALIASES}
 {context_block}
-Review this manuscript chunk.
+Critically appraise this manuscript chunk.
 
 Source: {chunk.source_name}
 Chunk: {chunk.chunk_id}
@@ -3412,6 +3415,7 @@ def stale_module_warning() -> str:
 # that diagnostics are missing when it is only reading a summary of them.
 DERIVED_INPUT_MARKERS = (
     "# Local peer-review report",
+    "# Reviewer critical-appraisal aid",
     "# Evidence appendix",
     "Evidence manifest for:",
     "## Chunk previews",
@@ -5215,7 +5219,7 @@ def synthesize_file_review(model, tokenizer, file_name: str, combined_chunk_revi
 
 {COMMON_DIAGNOSTIC_ALIASES}
 {context_block}
-Create a concise file-level review summary from the chunk notes below.
+Create a concise file-level critical appraisal from the chunk notes below.
 
 File: {file_name}
 
@@ -5885,7 +5889,7 @@ def write_report(output_dir: Path, input_paths: List[Path], report_text: str,
                                   f"fit_stats={m.has_model_fit_stats}")
         manifest_section = "\nEvidence summary:\n" + "\n".join(manifest_lines) + "\n"
 
-    header = f"""# Local peer-review report
+    header = f"""# Reviewer critical-appraisal aid
 
 Generated: {datetime.now().isoformat(timespec="seconds")}
 Model: {model_display_name()}

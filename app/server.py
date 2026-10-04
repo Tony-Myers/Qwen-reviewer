@@ -1756,7 +1756,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         # Add header
         from datetime import datetime
         header = (
-            f"# Local peer-review report\n\n"
+            f"# Reviewer critical-appraisal aid\n\n"
             f"Generated: {datetime.now().isoformat(timespec='seconds')}\n"
             + "".join(f"{line}\n" for line in _model_header_lines())
             + f"Pipeline: {rp.PIPELINE_VERSION}\n"
@@ -1876,7 +1876,7 @@ async def download_report(job_id: str):
 
     filename = job.get("filename", "document").rsplit(".", 1)[0]
     return JSONResponse(
-        content={"report": job["report"], "filename": f"{filename}_review.md"},
+        content={"report": job["report"], "filename": f"{filename}_appraisal.md"},
     )
 
 

@@ -106,6 +106,8 @@
   .report-content code { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 0.82rem; background: var(--surface-alt); padding: 1px 5px; border-radius: 3px; }
   .report-content pre code { background: none; padding: 0; }
   .report-content hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+  .review-aid-notice { max-width: 780px; margin: 0 auto 16px; padding: 12px 14px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-alt); font-size: 0.85rem; line-height: 1.5; }
+  .review-aid-notice p { margin: 6px 0 0; }
   .report-actions { max-width: 780px; margin: 16px auto 0; display: flex; gap: 10px; padding-bottom: 24px; }
   /* Academic Chat */
   #academic-container { flex: 1; overflow-y: auto; padding: 24px; }
@@ -1905,10 +1907,13 @@ function showReport(md, hasAppendix, jobId) {
   ra._raw = md;
   ra._rawAppendix = '';
   currentJobId = jobId || null;
-  let html = '<div class="report-content">' + renderMd(md) + '</div>'
+  let html = '<aside class="review-aid-notice" aria-label="Reviewer aid">'
+    + '<strong>Reviewer aid — not a final peer-review report</strong>'
+    + '<p>This analysis identifies manuscript-specific strengths, potential concerns and questions worth investigating. It is designed to support your judgement as a reviewer, not replace it. Check important findings against the manuscript and, where needed, methodological evidence before deciding whether they warrant a comment to the authors or editor.</p></aside>'
+    + '<div class="report-content">' + renderMd(md) + '</div>'
     + '<div class="report-actions">'
-    + '<button class="btn-secondary" onclick="dlReport()">Download review .md</button>'
-    + '<button class="btn-secondary" onclick="copyReport()">Copy review</button>';
+    + '<button class="btn-secondary" onclick="dlReport()">Download appraisal .md</button>'
+    + '<button class="btn-secondary" onclick="copyReport()">Copy appraisal</button>';
   if (hasAppendix) {
     html += '<button class="btn-secondary" id="appendixToggle" onclick="fetchAndToggleAppendix()">Show evidence appendix</button>'
       + '<button class="btn-secondary" id="appendixDownload" onclick="dlAppendix()">Download appendix .md</button>';
@@ -1919,7 +1924,8 @@ function showReport(md, hasAppendix, jobId) {
   // concern, and every answer is put through the same citation check as the
   // report, against the same extracted text.
   html += '<div class="ask-area" id="askArea" style="margin-top:20px; border-top:1px solid var(--border,#ddd); padding-top:14px;">'
-    + '<div style="font-weight:600; margin-bottom:6px;">Ask a question</div>'
+    + '<div style="font-weight:600; margin-bottom:6px;">Investigate a finding</div>'
+    + '<p style="font-size:13px; margin:0 0 10px;">Use the manuscript to check what the authors actually report, or the reviewer notes to explore relevant methodological guidance. These tools provide evidence for your judgement; they do not decide whether something belongs in your final review.</p>'
     + '<div id="askHelp" style="font-size:12px; opacity:.75; margin-bottom:8px;"></div>'
     + '<div style="display:flex; gap:8px;">'
     + '<select id="askMode" style="padding:7px 9px;" onchange="askModeChanged()">'
@@ -2080,13 +2086,13 @@ function dlReport() {
   const b = new Blob([md], { type: 'text/markdown' });
   const a = document.createElement('a');
   const name = selectedFile ? selectedFile.name.replace(/\.[^.]+$/, '') : 'review';
-  a.href = URL.createObjectURL(b); a.download = name + '_review.md'; a.click();
+  a.href = URL.createObjectURL(b); a.download = name + '_appraisal.md'; a.click();
 }
 function copyReport() {
   const md = document.getElementById('reportArea')._raw || '';
   navigator.clipboard.writeText(md).then(() => {
     const btns = document.querySelectorAll('.report-actions button');
-    const b = btns[1]; if (b) { b.textContent = 'Copied!'; setTimeout(() => b.textContent = 'Copy review', 1500); }
+    const b = btns[1]; if (b) { b.textContent = 'Copied!'; setTimeout(() => b.textContent = 'Copy appraisal', 1500); }
   });
 }
 

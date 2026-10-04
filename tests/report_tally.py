@@ -82,7 +82,9 @@ def main() -> int:
             return 2
         for path in sorted(folder.rglob("*.md")):
             text = path.read_text(encoding="utf-8", errors="replace")
-            if "# Local peer-review report" not in text:
+            if not any(title in text for title in (
+                "# Local peer-review report", "# Reviewer critical-appraisal aid"
+            )):
                 continue           # evidence appendices and anything else
             reports.append((path, text))
 
