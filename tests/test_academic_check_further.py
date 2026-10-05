@@ -448,6 +448,66 @@ check(set(samples[0]) == set(cf.incomplete_assessment("boom")),
       "a failed assessment has the same shape as a completed one")
 
 # ===========================================================================
+print("\n[relevant literature] completed checking, separate from targeted reading")
+d = run(result([tclaim("X", CONSISTENT, [P(A)])], guidance=(A, B)))
+check(d["state"] == cf.STATE_NO_CONCERN
+      and [g["heading"] for g in d["relevant_literature"]] == [A[1]],
+      "consistent completed judgement exposes only the section actually used")
+check(d["source_count"] == 0 and d["relevant_literature_count"] == 1,
+      "relevant literature does not change targeted source_count")
+check(d["relevant_literature"][0]["points"] == [],
+      "general literature is not presented as an unsettled point")
+check(run(result(guidance=(A,)))["relevant_literature"] == [],
+      "question retrieval alone supplies no relevant literature")
+check(run(result([tclaim("X", CONSISTENT, [P(B)])], guidance=(A,)))["relevant_literature"] == [],
+      "completed checking outside question sections does not qualify")
+check(run(result([tclaim("X", CONSISTENT, [P(BARE)])], guidance=(BARE,)))["relevant_literature"] == [],
+      "sections without curated references do not qualify")
+failed_claim = tclaim("Failed", NOT_EST, [P(B)])
+failed_claim.methodological_consistency.assessment_error = "Malformed output"
+d = run(result([failed_claim], guidance=(B,)))
+check(d["state"] == cf.STATE_INCOMPLETE and not d["relevant_literature"],
+      "failed methodology is not completed checking")
+d = run(result([tclaim("X", CONSISTENT, [P(A)]), failed_claim], guidance=(A, B)))
+check(d["state"] == cf.STATE_INCOMPLETE
+      and [g["heading"] for g in d["relevant_literature"]] == [A[1]],
+      "unrelated failure preserves literature from completed checking")
+for release in ("checking_incomplete", "blocked_technical_conflict"):
+    d = run(result([tclaim("X", CONSISTENT, [P(A)])], status=release))
+    check(d["relevant_literature_count"] == 1,
+          f"completed literature survives release state {release}")
+d = run(result([tclaim("X", NOT_EST, [P(A)]),
+                tclaim("Y", CONSISTENT, [P(A), P(B)])], guidance=(A, B)))
+check(d["state"] == cf.STATE_FURTHER_READING
+      and [g["heading"] for g in d["further_reading"]] == [A[1]]
+      and [g["heading"] for g in d["relevant_literature"]] == [B[1]]
+      and d["source_count"] == 1 and d["relevant_literature_count"] == 1,
+      "targeted reading wins for its section while other relevant literature remains")
+# Both B and this other section inherit the same note-level reference.
+C = (A[0], "Another section using note-level references")
+d = run(result([tclaim("X", CONSISTENT, [P(B), P(A), P(B), P(C)]),
+                tclaim("Y", CONSISTENT, [P(A)])], guidance=(A, B, C)))
+check([g["heading"] for g in d["relevant_literature"]] == [B[1], A[1]]
+      and d["relevant_literature_count"] == 2,
+      "sections and references deduplicate in judgement/passage first-occurrence order")
+check([r["doi"] for g in d["relevant_literature"] for r in g["references"]]
+      == ["10.1000/note", "10.1000/a"],
+      "note-level fallback uses existing reference lookup and identity semantics")
+d = run(result(contexts=[context("X", "Sentence X.", CONSISTENT, [P(A)])]))
+check(d["relevant_literature_count"] == 1,
+      "completed contextual judgements qualify too")
+standalone = tclaim("Restricted", NOT_EST, [P(A)])
+d = run(result([standalone], contexts=[context(
+    "Restricted", "Restricted in context.", CONSISTENT, [P(B)],
+    omitted=True, claim=standalone.claim)], guidance=(A, B)))
+check(not d["diagnostics"]["methodology_reconciliation"][0]["retain_standalone"]
+      and [g["heading"] for g in d["relevant_literature"]] == [A[1], B[1]]
+      and d["further_reading"] == [],
+      "completed superseded judgement still used guidance, without restoring its verdict")
+empty = cf.incomplete_assessment("boom")
+check(empty["relevant_literature"] == [] and empty["relevant_literature_count"] == 0
+      and set(empty) == set(d), "incomplete fallback preserves the expanded public shape")
+
 print("\n[real notes] the ETI/HDI answer of 30 September")
 real = rn.NotesIndex()
 check(real.reference_errors == [], "every curated reference in the notes parses")

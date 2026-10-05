@@ -1547,6 +1547,7 @@ function renderAcademicCheckFurther(cf, referencesHtml, auditHtml) {
   if (!cf || !cf.state) return (referencesHtml || '') + (auditHtml || '');
   const state = String(cf.state).replace(/[^a-z_]/g, '');
   const groups = Array.isArray(cf.further_reading) ? cf.further_reading : [];
+  const literature = Array.isArray(cf.relevant_literature) ? cf.relevant_literature : [];
 
   // ---- level 1: the compact evidence statement ------------------------------
   let h = '<section class="evidence-check state-' + state + '">';
@@ -1584,7 +1585,7 @@ function renderAcademicCheckFurther(cf, referencesHtml, auditHtml) {
 
   // ---- level 2: evidence and further reading ---------------------------------
   // Name the toggle after what it holds: sources only when there are some.
-  const hasSources = Boolean(referencesHtml) || groups.some(
+  const hasSources = Boolean(referencesHtml) || [...groups, ...literature].some(
     g => Array.isArray(g.references) && g.references.length);
   h += '<details class="evidence-detail"><summary>' +
     (hasSources ? 'View evidence and sources' : 'View checking details') +
@@ -1604,6 +1605,19 @@ function renderAcademicCheckFurther(cf, referencesHtml, auditHtml) {
       h += '<details><summary>Show points not established by the local guidance check</summary><ul class="evidence-points">';
       for (const p of points) h += checkFurtherPoint(p);
       h += '</ul></details>';
+    }
+    h += '</div>';
+  }
+  for (const g of literature) {
+    const refs = Array.isArray(g.references) ? g.references : [];
+    h += '<div class="evidence-topic">';
+    h += '<div class="evidence-topic-title">Relevant literature: ' + esc(String(g.topic || '')) + '</div>';
+    h += '<div class="evidence-check-muted">Curated sources associated with the methodological guidance used in checking this answer. They are provided for further reading, not as independent verification of the generated answer.</div>';
+    for (const r of refs) h += checkFurtherReference(r);
+    if (refs.length) {
+      h += '<details><summary>Show full references</summary>';
+      for (const r of refs) h += checkFurtherFullReference(r);
+      h += '</details>';
     }
     h += '</div>';
   }

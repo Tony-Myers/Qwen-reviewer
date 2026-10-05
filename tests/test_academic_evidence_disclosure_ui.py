@@ -101,6 +101,13 @@ else:
                                              "atomic_claim": "ATOMIC-CLAIM",
                                              "contextual_status": "s"}]},
     }
+    payload["relevant_literature_count"] = 987
+    payload["relevant_literature"] = [{
+        "topic": "LITERATURE-TOPIC", "references": [{
+            "author_year": "LITERATURE-AUTHOR", "short": "literature topic",
+            "cite": "LITERATURE-FULL-CITATION", "doi": "10.1000/literature",
+        }],
+    }]
     script = "\n".join(sources) + f"""
 const out = renderAcademicCheckFurther({json.dumps(payload)}, '<section>REFERENCES-HTML</section>',
   '<section>Evidence status: AUDIT-HTML</section>');
@@ -125,6 +132,16 @@ process.stdout.write(out);
           "level one shows no claim counts, no points and no references")
     check(html.find("Hyndman (1996)") > level2_at and html.find("Hyndman (1996)") < level3_at,
           "references appear at level two in compact form")
+    check("LITERATURE" not in level1 and "987" not in level1,
+          "relevant literature and its count never appear at level one")
+    for text in ("Relevant literature: LITERATURE-TOPIC", "LITERATURE-AUTHOR",
+                 "LITERATURE-FULL-CITATION", "not as independent verification of the generated answer"):
+        check(level2_at < html.find(text) < level3_at,
+              f"{text} appears at level two before technical details")
+    literature_at = html.find("Relevant literature: LITERATURE-TOPIC")
+    full_at = html.find("Show full references", literature_at)
+    check(literature_at < full_at < html.find("LITERATURE-FULL-CITATION"),
+          "relevant literature reuses the full-reference disclosure")
     check(html.find("POINT-SENTENCE") > points_at,
           "points appear only behind their own toggle")
     check("“POINT-SENTENCE”" in html,
@@ -175,6 +192,24 @@ else:
           "the coverage failure reason stays in the technical details")
     check("View checking details" in out and "View evidence and sources" not in out,
           "with no sources, level two is labelled 'View checking details'")
+
+    # Relevant literature alone also names the disclosure for sources, even
+    # when checking elsewhere was incomplete and targeted source_count is zero.
+    with_literature = dict(incomplete, check_further=dict(
+        incomplete["check_further"], relevant_literature=payload["relevant_literature"],
+        relevant_literature_count=987))
+    script = "\n".join(page_functions) + (
+        f"\nprocess.stdout.write(renderAcademicEvidence({json.dumps(with_literature)}));")
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(script)
+    run = subprocess.run([node, f.name], capture_output=True, text=True, timeout=30)
+    Path(f.name).unlink()
+    check(run.returncode == 0 and "View evidence and sources" in run.stdout
+          and "View checking details" not in run.stdout,
+          "relevant literature alone makes the level-two toggle mention sources")
+    first_level = run.stdout.split("View evidence and sources")[0]
+    check("LITERATURE" not in first_level and "987" not in first_level,
+          "incomplete level one remains compact with relevant literature present")
 
     # The same state with a source cited by the answer is labelled for sources.
     cited = dict(incomplete, references=[{"reference": {"author": "Altman", "year": 1995,

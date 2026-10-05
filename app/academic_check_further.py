@@ -23,6 +23,11 @@ judgements, contextual assessments and reference verification -- and applies
 fixed rules to it. The judge's prompt and schema, the release logic and the
 claim-assessment pipeline are untouched.
 
+Relevant literature lists curated sources associated with guidance actually
+used in completed checking. Further reading lists curated sources associated
+specifically with points the guidance did not establish. Neither is independent
+verification of the generated answer.
+
 Rules that matter, and why.
 
 ROUTING. An unsettled point is offered further reading only from a section
@@ -195,6 +200,7 @@ class CheckFurtherAssessment:
     groups: List[ReadingGroup]
     diagnostics: Dict[str, Any]
     bibliographic_limitations: List[Dict[str, Any]] = field(default_factory=list)
+    relevant_literature: List[ReadingGroup] = field(default_factory=list)
 
     @property
     def title(self) -> str:
@@ -208,6 +214,11 @@ class CheckFurtherAssessment:
                 seen.add(_reference_key(ref))
         return len(seen)
 
+    @property
+    def relevant_literature_count(self) -> int:
+        return len({_reference_key(ref) for group in self.relevant_literature
+                    for ref in group.references})
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "rules_version": RULES_VERSION,
@@ -219,6 +230,8 @@ class CheckFurtherAssessment:
             "citation_notice": self.citation_notice,
             "further_reading": [g.to_dict() for g in self.groups],
             "source_count": self.source_count,
+            "relevant_literature": [g.to_dict() for g in self.relevant_literature],
+            "relevant_literature_count": self.relevant_literature_count,
             "about": ABOUT,
             "diagnostics": self.diagnostics,
             **({"bibliographic_limitations": self.bibliographic_limitations}
@@ -436,6 +449,31 @@ def assess_check_further(
                         "reason": "judged against a curated section retrieved "
                                   "for the question"})
     group_list = [groups[s] for s in order]
+
+    # Literature records actual completed checking, including standalone
+    # judgements superseded during reconciliation. It does not route points
+    # or change any reconciled verdict. Targeted further reading takes priority.
+    methods = [item.methodological_consistency for item in result.technical_claims or []]
+    methods += [item.contextual_methodological_consistency for item in assessments]
+    relevant_literature = []
+    seen_sections = set(groups)
+    seen_references = set()
+    for method in methods:
+        if method is None or getattr(method, "assessment_error", ""):
+            continue
+        for passage in method.passages:
+            section = _section(passage)
+            if section not in sourced or section in seen_sections:
+                continue
+            seen_sections.add(section)
+            references = []
+            for ref in index.references_for(*section):
+                key = _reference_key(ref)
+                if key not in seen_references:
+                    seen_references.add(key)
+                    references.append(ref)
+            if references:
+                relevant_literature.append(ReadingGroup(*section, references))
 
     # ---- conditions lost when a claim was separated from the answer --------
     lost_conditions = []
@@ -697,6 +735,7 @@ def assess_check_further(
         worth_checking=worth_checking,
         citation_notice=citation_notice,
         groups=group_list,
+        relevant_literature=relevant_literature,
         diagnostics=diagnostics,
         bibliographic_limitations=bibliographic_limitations,
     )
@@ -714,6 +753,8 @@ def incomplete_assessment(error: str) -> Dict[str, Any]:
         "citation_notice": None,
         "further_reading": [],
         "source_count": 0,
+        "relevant_literature": [],
+        "relevant_literature_count": 0,
         "about": ABOUT,
         "diagnostics": {"rules_version": RULES_VERSION, "error": error},
     }
