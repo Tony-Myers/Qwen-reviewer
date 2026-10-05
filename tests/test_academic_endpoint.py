@@ -7,6 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
+from methodology_fixtures import methodology_output
+
 import academic_chat
 import academic_claim_coverage
 import academic_claims
@@ -559,12 +561,11 @@ try:
     malformed_methodology_cases = [
         (
             "31-word reason",
-            {
-                "claim_proposition": "Synthetic claim proposition.",
-                "guidance_proposition": "Synthetic guidance proposition.",
-                "relationship": 'supports',
-                "reason": " ".join(["word"] * 31),
-            },
+            methodology_output(
+                academic_methodology.methodological_coexistence_output_schema(),
+                academic_methodology.METHODOLOGICAL_STATUS_CONSISTENT,
+                " ".join(["word"] * 31),
+            ),
         ),
         (
             "invalid status",
@@ -584,6 +585,7 @@ try:
         )
 
         for case_name, malformed_output in malformed_methodology_cases:
+            methodology_calls = []
             def malformed_methodology_output(
                 model,
                 tokenizer,
@@ -593,6 +595,7 @@ try:
                 _output=malformed_output,
                 **kwargs,
             ):
+                methodology_calls.append(schema)
                 return _output
 
             server.academic_claim_assessor.generate_claim_assessor_output = (
@@ -605,6 +608,13 @@ try:
                 )
             )
             payload = response_payload(response)
+
+            check(
+                methodology_calls == [
+                    academic_methodology.methodological_coexistence_output_schema()
+                ],
+                f"{case_name} fails at coexistence without calling establishment",
+            )
 
             # Since 1 October 2026 an unusable judgement makes that claim
             # "not established" instead of failing the request; see
@@ -627,6 +637,13 @@ try:
                 in methodology.get("assessment_error", ""),
                 f"{case_name} is recorded as not established, with the error kept",
             )
+
+            if case_name == "31-word reason":
+                check(
+                    "Methodological reason must contain no more than 30 words."
+                    in methodology["assessment_error"],
+                    "otherwise valid coexistence output fails specifically on reason length",
+                )
 
         print(
             "\n[1e] unrelated methodology programming errors are not swallowed"

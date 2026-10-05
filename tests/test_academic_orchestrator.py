@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 import academic_chat
+from methodology_fixtures import methodology_output
 import academic_claim_coverage
 import academic_claims
 import academic_methodology
@@ -2390,15 +2391,8 @@ def synthetic_methodological_assessor(*, prompt, schema):
             "schema": schema,
         }
     )
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'supports',
-        "reason": (
-            "The supplied guidance directly addresses the same "
-            "methodological proposition."
-        ),
-    }
+    return methodology_output(schema, 'methodologically_consistent', "The supplied guidance directly addresses the same "
+            "methodological proposition.")
 
 
 assessed_context_result = academic_orchestrator.run_academic_first_stage(
@@ -2414,8 +2408,8 @@ assessed_context_result = academic_orchestrator.run_academic_first_stage(
 )
 
 check(
-    len(methodological_assessment_calls) == 1,
-    "retrieved guidance and a technical claim trigger one methodological assessment",
+    len(methodological_assessment_calls) == 2,
+    "retrieved guidance and a technical claim trigger two bounded methodological judgements",
 )
 
 assessment_call = methodological_assessment_calls[0]
@@ -2512,12 +2506,7 @@ def claim_specific_methodological_assessor(*, prompt, schema):
             "schema": schema,
         }
     )
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'supports',
-        "reason": "Claim-specific guidance directly addresses the proposition.",
-    }
+    return methodology_output(schema, 'methodologically_consistent', "Claim-specific guidance directly addresses the proposition.")
 
 
 claim_specific_result = academic_orchestrator.run_academic_first_stage(
@@ -2550,7 +2539,7 @@ check(
 )
 
 check(
-    len(claim_specific_assessment_calls) == 1
+    len(claim_specific_assessment_calls) == 2
     and CLAIM_METHOD_NOTE in claim_specific_assessment_calls[0]["prompt"],
     "methodological assessor receives claim-specific guidance",
 )
@@ -2608,12 +2597,7 @@ def independent_methodological_assessor(*, prompt, schema):
             "schema": schema,
         }
     )
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'supports',
-        "reason": "Claim-specific guidance directly addresses the proposition.",
-    }
+    return methodology_output(schema, 'methodologically_consistent', "Claim-specific guidance directly addresses the proposition.")
 
 
 independent_result = academic_orchestrator.run_academic_first_stage(
@@ -2644,7 +2628,7 @@ check(
 )
 
 check(
-    len(independent_assessment_calls) == 1
+    len(independent_assessment_calls) == 2
     and "INDEPENDENT-CLAIM-GUIDANCE-8D31"
     in independent_assessment_calls[0]["prompt"],
     "claim-specific guidance still reaches methodological assessment",
@@ -2707,15 +2691,8 @@ print("\n[methodological release] conflict is reported without withholding")
 
 
 def conflicting_methodological_assessor(*, prompt, schema):
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'incompatible',
-        "reason": (
-            "The structured claim materially contradicts the supplied "
-            "methodological guidance."
-        ),
-    }
+    return methodology_output(schema, 'methodological_conflict', "The structured claim materially contradicts the supplied "
+            "methodological guidance.")
 
 
 methodological_conflict_result = academic_orchestrator.run_academic_first_stage(
@@ -2751,15 +2728,8 @@ print("\n[methodological release] not established does not block")
 
 
 def unestablished_methodological_assessor(*, prompt, schema):
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'insufficient',
-        "reason": (
-            "The supplied guidance does not establish the same "
-            "methodological proposition."
-        ),
-    }
+    return methodology_output(schema, 'methodological_consistency_not_established', "The supplied guidance does not establish the same "
+            "methodological proposition.")
 
 
 not_established_result = academic_orchestrator.run_academic_first_stage(
@@ -2980,12 +2950,7 @@ def fake_coverage_methodological_assessor(*, prompt, schema):
             "schema": schema,
         }
     )
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'supports',
-        "reason": "The supplied guidance addresses this proposition.",
-    }
+    return methodology_output(schema, 'methodologically_consistent', "The supplied guidance addresses this proposition.")
 
 
 coverage_method_result = academic_orchestrator.assess_academic_draft(
@@ -2996,7 +2961,7 @@ coverage_method_result = academic_orchestrator.assess_academic_draft(
     coverage_assessor=fake_coverage_assessor,
 )
 
-assert len(coverage_method_calls) == 2
+assert len(coverage_method_calls) == 4
 
 assert (
     "The broad claim is represented already."
@@ -3004,11 +2969,11 @@ assert (
 )
 assert (
     "A second material proposition also appears in the answer."
-    in coverage_method_calls[1]["prompt"]
+    in coverage_method_calls[2]["prompt"]
 )
 
 assert coverage_method_note in coverage_method_calls[0]["prompt"]
-assert coverage_method_note in coverage_method_calls[1]["prompt"]
+assert coverage_method_note in coverage_method_calls[2]["prompt"]
 
 assert (
     coverage_method_result.technical_claims[0]
@@ -3123,22 +3088,10 @@ def fake_atomic_methodological_assessor(*, prompt, schema):
     atomic_method_calls.append(prompt)
 
     if atomic_mcar_claim.statement in prompt:
-        return {
-            "claim_proposition": "Synthetic claim proposition.",
-            "guidance_proposition": "Synthetic guidance proposition.",
-            "relationship": 'incompatible',
-            "reason": (
-                "The supplied guidance states that MCAR is not universally "
-                "necessary for unbiased complete-case estimation."
-            ),
-        }
+        return methodology_output(schema, 'methodological_conflict', "The supplied guidance states that MCAR is not universally "
+                "necessary for unbiased complete-case estimation.")
 
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'supports',
-        "reason": "Synthetic guidance is consistent with this proposition.",
-    }
+    return methodology_output(schema, 'methodologically_consistent', "Synthetic guidance is consistent with this proposition.")
 
 
 atomic_masking_result = academic_orchestrator.assess_academic_draft(
@@ -3158,7 +3111,7 @@ assert [
     atomic_mar_claim.statement,
 ]
 
-assert len(atomic_method_calls) == 3
+assert len(atomic_method_calls) == 6
 
 assert atomic_masking_result.release.status == (
     academic_orchestrator.RELEASE_STATUS_METHODOLOGICAL_CONFLICT
@@ -3323,24 +3276,10 @@ def fake_contextual_methodological_assessor(*, prompt, schema):
     contextual_methodology_prompts.append((prompt, schema))
 
     if "BOUNDED ANSWER CONTEXT" in prompt:
-        return {
-            "claim_proposition": "Synthetic claim proposition.",
-            "guidance_proposition": "Synthetic guidance proposition.",
-            "relationship": 'supports',
-            "reason": (
-                "The context-qualified proposition is compatible with the "
-                "supplied guidance."
-            ),
-        }
+        return methodology_output(schema, 'methodologically_consistent', "The context-qualified proposition is compatible with the "
+                "supplied guidance.")
 
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'insufficient',
-        "reason": (
-            "The standalone proposition is broader than the supplied guidance."
-        ),
-    }
+    return methodology_output(schema, 'methodological_consistency_not_established', "The standalone proposition is broader than the supplied guidance.")
 
 
 contextual_occurrence_result = academic_orchestrator.assess_academic_draft(
@@ -3396,7 +3335,7 @@ contextual_prompts = [
     if "BOUNDED ANSWER CONTEXT" in prompt
 ]
 
-assert len(contextual_prompts) == 1
+assert len(contextual_prompts) == 2
 assert duplicate_discovered.claim.statement in contextual_prompts[0]
 assert (
     contextual_occurrence.source_context.context_excerpt
@@ -3429,25 +3368,11 @@ print(
 
 def fake_contextual_conflict_assessor(*, prompt, schema):
     if "BOUNDED ANSWER CONTEXT" in prompt:
-        return {
-            "claim_proposition": "Synthetic claim proposition.",
-            "guidance_proposition": "Synthetic guidance proposition.",
-            "relationship": 'incompatible',
-            "reason": (
-                "The occurrence-specific proposition materially conflicts "
-                "with the supplied methodological guidance."
-            ),
-        }
+        return methodology_output(schema, 'methodological_conflict', "The occurrence-specific proposition materially conflicts "
+                "with the supplied methodological guidance.")
 
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'insufficient',
-        "reason": (
-            "The standalone proposition is not established by the supplied "
-            "guidance."
-        ),
-    }
+    return methodology_output(schema, 'methodological_consistency_not_established', "The standalone proposition is not established by the supplied "
+            "guidance.")
 
 
 contextual_conflict_result = academic_orchestrator.assess_academic_draft(
@@ -3725,19 +3650,9 @@ def fake_multi_contextual_retriever(query):
 
 def fake_multi_methodological_assessor(*, prompt, schema):
     if "BOUNDED ANSWER CONTEXT" in prompt:
-        return {
-            "claim_proposition": "Synthetic claim proposition.",
-            "guidance_proposition": "Synthetic guidance proposition.",
-            "relationship": 'supports',
-            "reason": "The occurrence is consistent in its verified context.",
-        }
+        return methodology_output(schema, 'methodologically_consistent', "The occurrence is consistent in its verified context.")
 
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'insufficient',
-        "reason": "The standalone proposition lacks the contextual restriction.",
-    }
+    return methodology_output(schema, 'methodological_consistency_not_established', "The standalone proposition lacks the contextual restriction.")
 
 
 multi_technical_calls = []

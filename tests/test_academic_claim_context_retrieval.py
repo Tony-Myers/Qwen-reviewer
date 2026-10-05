@@ -36,6 +36,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
+from methodology_fixtures import methodology_output
+
 import academic_chat                          # noqa: E402
 import academic_check_further as cf           # noqa: E402
 import academic_claim_coverage as coverage    # noqa: E402
@@ -185,13 +187,14 @@ def run(answer, discovered):
         return guidance
 
     prompts = []
+    method_schemas = []
 
     def judge(*, prompt, schema):
         prompts.append(prompt)
-        return {"claim_proposition": "Synthetic claim proposition.",
-                "guidance_proposition": "Synthetic guidance proposition.",
-                "relationship": 'insufficient',
-                "reason": "Synthetic deterministic judgement."}
+        method_schemas.append(schema)
+        return methodology_output(
+            schema, am.METHODOLOGICAL_STATUS_NOT_ESTABLISHED,
+            "Synthetic deterministic judgement.")
 
     question_guidance = orchestrator.retrieve_methodological_context(QUESTION)
     result = orchestrator.assess_academic_draft(
@@ -205,6 +208,15 @@ def run(answer, discovered):
         coverage_assessor=coverage_assessor,
         material_restriction_assessor=restriction_assessor,
     )
+    for assessed in result.technical_claims:
+        consistency = assessed.methodological_consistency
+        assert consistency is not None
+        assert consistency.status == am.METHODOLOGICAL_STATUS_NOT_ESTABLISHED
+        assert not consistency.assessment_error
+    assert method_schemas == [
+        am.methodological_coexistence_output_schema(),
+        am.methodological_establishment_output_schema(),
+    ] * len(result.technical_claims)
     return result, question_guidance, searches, prompts
 
 

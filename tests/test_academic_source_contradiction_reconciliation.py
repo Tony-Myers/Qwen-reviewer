@@ -41,6 +41,7 @@ sys.path.insert(0, str(ROOT / "app"))
 from fastapi.testclient import TestClient     # noqa: E402
 
 import academic_chat                          # noqa: E402
+from methodology_fixtures import methodology_output
 import academic_check_further as cf           # noqa: E402
 import academic_claim_assessor                # noqa: E402
 import academic_claim_coverage as coverage    # noqa: E402
@@ -171,10 +172,9 @@ def model_output(model, tokenizer, prompt, schema, *, max_tokens=512,
         return {"represented": False, "represented_by": None}
     if schema == coverage.material_restriction_output_schema():
         return {"material_restriction_omitted": False}
-    if schema == am.methodological_consistency_output_schema():
-        return {"claim_proposition": "Synthetic claim proposition.",
-                "guidance_proposition": "Synthetic guidance proposition.",
-                "relationship": 'supports', "reason": "Synthetic."}
+    if schema in (am.methodological_coexistence_output_schema(),
+                  am.methodological_establishment_output_schema()):
+        return methodology_output(schema, 'methodologically_consistent', "Synthetic.")
     if schema == academic_claims.claim_assessment_output_schema():
         verdicts = case["recheck"] if revisions else case["initial"]
         claim = next(c for c in (CLAIM_A, CLAIM_B, CHANGED_A) if c in prompt)

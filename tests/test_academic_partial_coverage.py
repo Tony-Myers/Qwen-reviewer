@@ -7,6 +7,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from methodology_fixtures import methodology_output
+
 import academic_chat as chat
 import academic_claim_coverage as coverage
 import academic_orchestrator as orchestrator
@@ -135,13 +137,14 @@ class PartialCoverageTests(unittest.TestCase):
 
     def checked_draft(self, result, *, answer=ANSWER):
         calls = []
+        method_schemas = []
         passage = reviewer_notes.Passage('test', 'test', 'Synthetic guidance.', 1.0)
         def method(*, prompt, schema):
             calls.append('methodology')
-            return {"claim_proposition": "Synthetic claim proposition.",
-                    "guidance_proposition": "Synthetic guidance proposition.",
-                    "relationship": 'supports',
-                    'reason': 'Synthetic compatible guidance.'}
+            method_schemas.append(schema)
+            return methodology_output(
+                schema, methodology.METHODOLOGICAL_STATUS_CONSISTENT,
+                'Synthetic compatible guidance.')
         def restriction(*, prompt, schema):
             calls.append('restriction')
             return {'material_restriction_omitted': True}
@@ -152,6 +155,17 @@ class PartialCoverageTests(unittest.TestCase):
             methodological_assessor=method,
             claim_methodological_retriever=lambda query: orchestrator.LocalGuidanceResult([passage]),
             material_restriction_assessor=restriction)
+        assessments = [x.methodological_consistency for x in checked.technical_claims]
+        assessments += [x.contextual_methodological_consistency
+                        for x in checked.discovered_claim_assessments]
+        for assessment in assessments:
+            self.assertIsNotNone(assessment)
+            self.assertEqual(assessment.status, methodology.METHODOLOGICAL_STATUS_CONSISTENT)
+            self.assertFalse(assessment.assessment_error)
+        self.assertEqual(method_schemas, [
+            methodology.methodological_coexistence_output_schema(),
+            methodology.methodological_establishment_output_schema(),
+        ] * len(assessments))
         return checked, calls
 
     def test_downstream_checks_and_presentation(self):
@@ -160,7 +174,7 @@ class PartialCoverageTests(unittest.TestCase):
         self.assertEqual(len(checked.technical_claims), 2)
         self.assertEqual(len(checked.discovered_claim_assessments), 2)
         self.assertEqual(calls.count('restriction'), 2)
-        self.assertEqual(calls.count('methodology'), 4)  # Contextual and standalone.
+        self.assertEqual(calls.count('methodology'), 8)  # Two stages, contextual and standalone.
         self.assertTrue(all(x.verification is not None for x in checked.technical_claims))
         self.assertEqual(checked.release.status, 'checking_incomplete')
         self.assertFalse(checked.release.safe_to_present)

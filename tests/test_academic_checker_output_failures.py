@@ -45,6 +45,7 @@ sys.path.insert(0, str(ROOT / "app"))
 from fastapi.testclient import TestClient     # noqa: E402
 
 import academic_chat                          # noqa: E402
+from methodology_fixtures import methodology_output
 import academic_check_further as cf           # noqa: E402
 import academic_claim_assessor                # noqa: E402
 import academic_claim_coverage as coverage    # noqa: E402
@@ -146,16 +147,13 @@ def model_output(model, tokenizer, prompt, schema, *, max_tokens=512,
         # The second occurrence always loses a condition, so its contextual
         # check runs and shows that checking continued past the first.
         output = case["restriction"] if CLAIM_1 in prompt else VALID_TRUE
-    elif schema == am.methodological_consistency_output_schema():
+    elif schema in (am.methodological_coexistence_output_schema(),
+                  am.methodological_establishment_output_schema()):
         standalone = "VERIFIED SOURCE SENTENCE" not in prompt
         output = (
-            {"claim_proposition": "Synthetic claim proposition.",
-             "guidance_proposition": "Synthetic guidance proposition.",
-             "relationship": 'incompatible', "reason": "Synthetic."}
+            methodology_output(schema, 'methodological_conflict', "Synthetic.")
             if case.get("standalone_conflict") and standalone and CLAIM_1 in prompt
-            else {"claim_proposition": "Synthetic claim proposition.",
-                  "guidance_proposition": "Synthetic guidance proposition.",
-                  "relationship": 'supports', "reason": "Synthetic."})
+            else methodology_output(schema, 'methodologically_consistent', "Synthetic."))
     elif schema == academic_claims.claim_assessment_output_schema():
         output = case["source"]
     else:

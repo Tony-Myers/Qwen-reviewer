@@ -10,6 +10,7 @@ if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
 import academic_chat
+from methodology_fixtures import methodology_output, methodology_outputs
 import academic_methodology as am
 import reviewer_notes
 
@@ -46,14 +47,14 @@ passages = [
 
 print("[1] schema is bounded")
 
-schema = am.methodological_consistency_output_schema()
-
-assert set(schema["properties"]["relationship"]["enum"]) == set(
-    am.METHODOLOGICAL_RELATIONSHIP_STATUSES
-)
-assert schema["additionalProperties"] is False
-
-print("PASS: schema exposes semantic relationships, not application statuses")
+schemas = [am.methodological_coexistence_output_schema(),
+           am.methodological_establishment_output_schema()]
+for schema, field in zip(schemas, ("can_both_be_true", "guidance_establishes_claim")):
+    assert set(schema["properties"]) == {"claim_proposition", "guidance_proposition", field, "reason"}
+    assert set(schema["required"]) == set(schema["properties"])
+    assert schema["properties"][field]["enum"] == ["yes", "no", "unclear"]
+    assert schema["additionalProperties"] is False
+print("PASS: two strict bounded schemas, no model-owned application status")
 
 
 print("\n[2] prompt preserves methodological boundary")
@@ -63,7 +64,7 @@ hdi_claim = claim(
     "than the ETI."
 )
 
-prompt = am.build_methodological_consistency_prompt(
+prompt = am.build_methodological_coexistence_prompt(
     hdi_claim,
     passages,
 )
@@ -72,7 +73,7 @@ assert hdi_claim.statement in prompt
 assert "should not be assumed to be narrower" in prompt
 assert "Do not use outside knowledge." in prompt
 assert (
-    "Absence of a warning or contrary statement is not evidence of consistency."
+    "Do not decide whether the guidance supports the claim."
     in prompt
 )
 
@@ -81,73 +82,20 @@ print("PASS: prompt forbids outside knowledge")
 print("PASS: silence is not treated as consistency")
 
 
-print("\n[2b] prompt preserves quantifiers and modality")
-
+print("\n[2b/c] independent rules preserve quantifiers and proposition strength")
 normalised_prompt = " ".join(prompt.split())
-
-assert (
-    "not necessarily, universally, or automatically true"
-    in normalised_prompt
-)
-assert (
-    "may, sometimes, often, or under some conditions be true"
-    in normalised_prompt
-)
-assert (
-    "frequency, modality, and quantifiers as material"
-    in normalised_prompt
-)
-
-assert (
-    "Distinguish a warning about inference from a contrary substantive "
-    "proposition" in normalised_prompt
-)
-assert (
-    '"should not be assumed", "cannot be inferred"' in normalised_prompt
-)
-assert (
-    "typically occur unless the guidance separately establishes an "
-    "incompatible proposition" in normalised_prompt
-)
-
-print("PASS: prompt prevents caution from becoming contradiction")
-print("PASS: prompt treats frequency, modality, and quantifiers as material")
-assert (
-    "Additional compatible detail in the guidance does not prevent "
-    "consistency" in normalised_prompt
-)
-assert (
-    "an added mechanism, explanation, example, or compatible detail as "
-    "material only when it restricts, qualifies, or changes the proposition"
-    in normalised_prompt
-)
-
-print("PASS: inferential warnings are distinguished from contrary propositions")
-print("PASS: compatible explanatory detail does not defeat consistency")
-
-
-print("\n[2c] prompt distinguishes non-establishment from contradiction")
-
-assert (
-    "A stronger claim is not established merely because the guidance supports "
-    "a weaker version" in normalised_prompt
-)
-assert (
-    "unsupported strengthening is not by itself a methodological conflict"
-    in normalised_prompt
-)
-assert (
-    "incompatible requires the guidance to establish an "
-    "incompatible proposition" in normalised_prompt
-)
-assert (
-    "Omitting a condition from a claim does not by itself establish conflict"
-    in normalised_prompt
-)
-
-print("PASS: unsupported strengthening maps to non-establishment")
-print("PASS: conflict requires an incompatible proposition")
-print("PASS: omitted conditions are not automatically contradictions")
+establishment_prompt = am.build_methodological_establishment_prompt(hdi_claim, passages)
+establishment_rules = " ".join(establishment_prompt.split())
+assert '"Typically X" and "not always/universally X" can both be true.' in normalised_prompt
+assert "frequency, quantifiers, modality, direction, degree, conditions and context" in normalised_prompt
+assert "A weaker proposition does not contradict a stronger proposition merely because the stronger proposition is not established." in normalised_prompt
+assert "A warning that an inference is not established does not by itself establish the contrary substantive proposition." in normalised_prompt
+assert "Do not decide whether the guidance supports the claim." in prompt
+assert "A weaker proposition does not establish a stronger proposition." in establishment_prompt
+assert "Compatibility alone is not support." in establishment_prompt
+assert "Do not decide whether the propositions conflict." in establishment_prompt
+assert "complete claim, including its important quantifiers, modality, frequency, direction, degree, conditions and context" in establishment_rules
+print("PASS: coexistence and establishment are bounded independently")
 
 
 print("\n[2d] methodology prompt ignores non-semantic claim metadata")
@@ -159,7 +107,7 @@ metadata_variant_claim = academic_chat.TechnicalClaim(
     parameterisation=hdi_claim.parameterisation,
 )
 
-metadata_variant_prompt = am.build_methodological_consistency_prompt(
+metadata_variant_prompt = am.build_methodological_coexistence_prompt(
     metadata_variant_claim,
     passages,
 )
@@ -185,15 +133,8 @@ print("\n[3] structurally valid conflict is representable")
 result = am.build_methodological_consistency(
     hdi_claim,
     passages,
-    {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'incompatible',
-        "reason": (
-            "The guidance explicitly warns against assuming that skewness "
-            "makes an HDI narrower than an ETI."
-        ),
-    },
+    *methodology_outputs('methodological_conflict', "The guidance explicitly warns against assuming that skewness "
+            "makes an HDI narrower than an ETI."),
 )
 
 assert result.status == am.METHODOLOGICAL_STATUS_CONFLICT
@@ -219,15 +160,8 @@ consistent = am.build_methodological_consistency(
         "A 95% ETI leaves equal posterior probability in each tail."
     ),
     passages,
-    {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'supports',
-        "reason": (
-            "The guidance directly describes an ETI as leaving equal "
-            "posterior probability in each tail."
-        ),
-    },
+    *methodology_outputs('methodologically_consistent', "The guidance directly describes an ETI as leaving equal "
+            "posterior probability in each tail."),
 )
 
 assert consistent.status == am.METHODOLOGICAL_STATUS_CONSISTENT
@@ -252,15 +186,8 @@ unrelated = [
 not_established = am.build_methodological_consistency(
     hdi_claim,
     unrelated,
-    {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'insufficient',
-        "reason": (
-            "The guidance concerns HMC divergences rather than ETI and HDI "
-            "interval width."
-        ),
-    },
+    *methodology_outputs('methodological_consistency_not_established', "The guidance concerns HMC divergences rather than ETI and HDI "
+            "interval width."),
 )
 
 assert (
@@ -273,18 +200,12 @@ print("PASS: irrelevant guidance remains not established")
 
 print("\n[6] injected assessor receives bounded prompt and schema")
 
-captured = {}
+captured = []
 
 
 def fake_assessor(*, prompt, schema):
-    captured["prompt"] = prompt
-    captured["schema"] = schema
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'incompatible',
-        "reason": "The supplied guidance directly conflicts with the claim.",
-    }
+    captured.append((prompt, schema))
+    return methodology_output(schema, 'methodological_conflict', "The supplied guidance directly conflicts with the claim.")
 
 
 assessed = am.assess_methodological_consistency(
@@ -294,57 +215,33 @@ assessed = am.assess_methodological_consistency(
 )
 
 assert assessed.status == am.METHODOLOGICAL_STATUS_CONFLICT
-assert captured["schema"] == am.methodological_consistency_output_schema()
+assert [schema for _, schema in captured] == schemas
+assert len(assessed.reasons) == 2
 
 print("PASS: injected assessor output becomes application-owned result")
 
 
 print("\n[7] malformed assessor output is rejected")
 
-bad_outputs = [
-    None,
-    [],
-    {},
-    {"claim_proposition": "Synthetic claim proposition.",
-     "guidance_proposition": "Synthetic guidance proposition.",
-     "relationship": 'incompatible', "reason": ""},
-    {"status": "verified", "reason": "Unsupported status."},
-    {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'incompatible',
-        "reason": "Conflict.",
-        "extra": True,
-    },
-    {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'incompatible',
-        "reason": " ".join(["word"] * 31),
-    },
-    {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'incompatible',
-        "reason": "Conflict.",
-        "note": "Model-supplied provenance must not be accepted.",
-    },
-]
-
-for output in bad_outputs:
-    try:
-        am.build_methodological_consistency(
-            hdi_claim,
-            passages,
-            output,
-        )
-    except am.MethodologicalAssessmentOutputError:
-        pass
-    else:
-        raise AssertionError(
-            "Malformed assessor output did not raise "
-            f"MethodologicalAssessmentOutputError: {output!r}"
-        )
+valid_pair = methodology_outputs(am.METHODOLOGICAL_STATUS_CONSISTENT)
+for stage, field in enumerate(("can_both_be_true", "guidance_establishes_claim")):
+    valid = valid_pair[stage]
+    bad_outputs = [None, [], {}, dict(valid, reason=""), dict(valid, **{field: "verified"}),
+                   dict(valid, extra=True), dict(valid, reason=" ".join(["word"] * 31)),
+                   dict(valid, note="Model-supplied provenance must not be accepted.")]
+    for key in valid:
+        missing = dict(valid)
+        del missing[key]
+        bad_outputs.append(missing)
+    for output in bad_outputs:
+        pair = list(valid_pair)
+        pair[stage] = output
+        try:
+            am.build_methodological_consistency(hdi_claim, passages, *pair)
+        except am.MethodologicalAssessmentOutputError:
+            pass
+        else:
+            raise AssertionError(f"Malformed stage {stage} output accepted: {output!r}")
 
 print("PASS: malformed assessor outputs raise the dedicated output error")
 
@@ -355,12 +252,7 @@ try:
     am.build_methodological_consistency(
         hdi_claim,
         [],
-        {
-            "claim_proposition": "Synthetic claim proposition.",
-            "guidance_proposition": "Synthetic guidance proposition.",
-            "relationship": 'supports',
-            "reason": "Synthetic valid assessor judgement.",
-        },
+        *methodology_outputs('methodologically_consistent', "Synthetic valid assessor judgement."),
     )
 except am.MethodologicalAssessmentOutputError:
     raise AssertionError(
@@ -419,7 +311,7 @@ rct_passages = [
     )
 ]
 
-contextual_prompt = am.build_contextual_methodological_consistency_prompt(
+contextual_prompt = am.build_contextual_methodological_coexistence_prompt(
     claim=rct_claim,
     source_context=rct_context,
     passages=rct_passages,
@@ -464,7 +356,7 @@ rct_metadata_variant = academic_chat.TechnicalClaim(
 )
 
 contextual_metadata_variant_prompt = (
-    am.build_contextual_methodological_consistency_prompt(
+    am.build_contextual_methodological_coexistence_prompt(
         claim=rct_metadata_variant,
         source_context=rct_context,
         passages=rct_passages,
@@ -482,15 +374,8 @@ contextual_result = am.build_contextual_methodological_consistency(
     claim=rct_claim,
     source_context=rct_context,
     passages=rct_passages,
-    assessor_output={
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'supports',
-        "reason": (
-            "The RCT-qualified proposition is directly compatible with the "
-            "supplied guidance."
-        ),
-    },
+    coexistence_output=methodology_outputs(am.METHODOLOGICAL_STATUS_CONSISTENT)[0],
+    establishment_output=methodology_outputs(am.METHODOLOGICAL_STATUS_CONSISTENT)[1],
 )
 
 assert isinstance(
@@ -508,18 +393,12 @@ print("PASS: claim, source context, and guidance provenance remain application-o
 
 print("\n[10] contextual assessor receives only bounded judgement authority")
 
-contextual_captured = {}
+contextual_captured = []
 
 
 def fake_contextual_assessor(*, prompt, schema):
-    contextual_captured["prompt"] = prompt
-    contextual_captured["schema"] = schema
-    return {
-        "claim_proposition": "Synthetic claim proposition.",
-        "guidance_proposition": "Synthetic guidance proposition.",
-        "relationship": 'supports',
-        "reason": "The context-qualified proposition matches the supplied guidance.",
-    }
+    contextual_captured.append((prompt, schema))
+    return methodology_output(schema, 'methodologically_consistent', "The context-qualified proposition matches the supplied guidance.")
 
 
 contextual_assessed = am.assess_contextual_methodological_consistency(
@@ -530,19 +409,28 @@ contextual_assessed = am.assess_contextual_methodological_consistency(
 )
 
 assert contextual_assessed.status == am.METHODOLOGICAL_STATUS_CONSISTENT
-assert (
-    contextual_captured["schema"]
-    == am.methodological_consistency_output_schema()
-)
-assert set(contextual_captured["schema"]["properties"]) == {
-    "claim_proposition",
-    "guidance_proposition",
-    "relationship",
-    "reason",
-}
-
-print("PASS: contextual assessment reuses the bounded proposition/relationship schema")
+assert [schema for _, schema in contextual_captured] == schemas
+assert len(contextual_assessed.reasons) == 2
+assert contextual_assessed.reasons == [
+    "The context-qualified proposition matches the supplied guidance.",
+    "The context-qualified proposition matches the supplied guidance.",
+]
+print("PASS: contextual assessment reuses both bounded schemas in order")
 print("PASS: model cannot supply claim, context, or guidance provenance")
 
+
+
+assert am.build_methodological_establishment_prompt(metadata_variant_claim, passages) == establishment_prompt
+assert passages[0].text in establishment_prompt
+assert passages[0].note not in establishment_prompt
+assert passages[0].heading not in establishment_prompt
+contextual_establishment = am.build_contextual_methodological_establishment_prompt(
+    claim=rct_claim, source_context=rct_context, passages=rct_passages)
+assert contextual_establishment == am.build_contextual_methodological_establishment_prompt(
+    claim=rct_metadata_variant, source_context=rct_context, passages=rct_passages)
+assert rct_context.source_sentence in contextual_establishment
+assert rct_context.context_excerpt in contextual_establishment
+assert "The answer context is not methodological guidance" in contextual_establishment
+assert "Do not rewrite, repair, strengthen, or weaken the generated claim." in contextual_establishment
 
 print("\nAll methodological-consistency checks passed.")

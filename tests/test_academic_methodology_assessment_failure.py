@@ -37,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 import academic_chat                          # noqa: E402
+from methodology_fixtures import methodology_output, methodology_outputs
 import academic_check_further as cf           # noqa: E402
 import academic_claim_assessor                # noqa: E402
 import academic_claim_coverage as coverage    # noqa: E402
@@ -114,9 +115,7 @@ def methodology_judge(*, prompt, schema):
     """The live failure: a reason over 30 words, or undecodable output."""
     judge_calls.append(prompt)
     if FORMULA in prompt:
-        return {"claim_proposition": "Synthetic claim proposition.",
-                "guidance_proposition": "Synthetic guidance proposition.",
-                "relationship": 'supports', "reason": LONG_REASON}
+        return methodology_output(schema, 'methodologically_consistent', LONG_REASON)
     raise academic_claim_assessor.ClaimAssessorOutputError(
         "Claim assessor did not return valid JSON.")
 
@@ -249,9 +248,7 @@ else:
 
 
 def fine(*, prompt, schema):
-    return {"claim_proposition": "Synthetic claim proposition.",
-            "guidance_proposition": "Synthetic guidance proposition.",
-            "relationship": 'supports', "reason": "Fine."}
+    return methodology_output(schema, 'methodologically_consistent', "Fine.")
 
 
 try:
@@ -266,10 +263,7 @@ else:
 
 try:
     am.build_methodological_consistency(
-        claim, passages, {"claim_proposition": "Synthetic claim proposition.",
-                          "guidance_proposition": "Synthetic guidance proposition.",
-                          "relationship": 'supports',
-                          "reason": LONG_REASON})
+        claim, passages, *methodology_outputs('methodologically_consistent', LONG_REASON))
 except am.MethodologicalAssessmentOutputError:
     check(True, "the validator itself is unchanged: it still rejects the output")
 else:
@@ -294,13 +288,7 @@ def judge_returning(standalone, contextual):
         if verdict is FAILS:
             raise academic_claim_assessor.ClaimAssessorOutputError(
                 "Claim assessor did not return valid JSON.")
-        return {"claim_proposition": "Synthetic claim proposition.",
-                "guidance_proposition": "Synthetic guidance proposition.",
-                "relationship": {
-                    "methodologically_consistent": "supports",
-                    "methodological_conflict": "incompatible",
-                    "methodological_consistency_not_established": "insufficient",
-                }[verdict], "reason": "Synthetic judgement."}
+        return methodology_output(schema, verdict, "Synthetic judgement.")
     return judge
 
 

@@ -42,6 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 import academic_chat                          # noqa: E402
+from methodology_fixtures import methodology_output
 import academic_check_further as cf           # noqa: E402
 import academic_claim_coverage as coverage    # noqa: E402
 import academic_claims                        # noqa: E402
@@ -117,15 +118,9 @@ judge_prompts = []
 def methodology_judge(*, prompt, schema):
     judge_prompts.append(prompt)
     if REJECTED in prompt:
-        return {"claim_proposition": "Synthetic claim proposition.",
-                "guidance_proposition": "Synthetic guidance proposition.",
-                "relationship": 'incompatible',
-                "reason": "The guidance says absence of evidence is not "
-                          "evidence of absence."}
-    return {"claim_proposition": "Synthetic claim proposition.",
-            "guidance_proposition": "Synthetic guidance proposition.",
-            "relationship": 'supports',
-            "reason": "The guidance states this directly."}
+        return methodology_output(schema, 'methodological_conflict', "The guidance says absence of evidence is not "
+                          "evidence of absence.")
+    return methodology_output(schema, 'methodologically_consistent', "The guidance states this directly.")
 
 
 def first_stage():

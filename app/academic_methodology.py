@@ -35,12 +35,10 @@ METHODOLOGICAL_STATUSES = (
 )
 
 
-# The model compares propositions; only the application assigns its status.
-METHODOLOGICAL_RELATIONSHIP_STATUSES = {
-    "supports": METHODOLOGICAL_STATUS_CONSISTENT,
-    "incompatible": METHODOLOGICAL_STATUS_CONFLICT,
-    "insufficient": METHODOLOGICAL_STATUS_NOT_ESTABLISHED,
-}
+# The semantic model supplies bounded proposition judgements; only the
+# application derives the methodological status.
+METHODOLOGICAL_COEXISTENCE_VALUES = ("yes", "no", "unclear")
+METHODOLOGICAL_ESTABLISHMENT_VALUES = ("yes", "no", "unclear")
 
 
 class MethodologicalAssessmentOutputError(ValueError):
@@ -97,24 +95,47 @@ class ContextualMethodologicalConsistencyResult:
     assessment_error: str = ""
 
 
-def methodological_consistency_output_schema() -> dict[str, Any]:
-    """Return the strict structured-output schema for consistency assessment."""
+def methodological_coexistence_output_schema() -> dict[str, Any]:
+    """Return the strict schema for proposition-coexistence assessment."""
     return {
         "type": "object",
         "properties": {
             "claim_proposition": {"type": "string", "minLength": 1},
             "guidance_proposition": {"type": "string", "minLength": 1},
-            "relationship": {
+            "can_both_be_true": {
                 "type": "string",
-                "enum": list(METHODOLOGICAL_RELATIONSHIP_STATUSES),
+                "enum": list(METHODOLOGICAL_COEXISTENCE_VALUES),
             },
-            "reason": {
-                "type": "string",
-                "minLength": 1,
-            },
+            "reason": {"type": "string", "minLength": 1},
         },
         "required": [
-            "claim_proposition", "guidance_proposition", "relationship", "reason",
+            "claim_proposition",
+            "guidance_proposition",
+            "can_both_be_true",
+            "reason",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def methodological_establishment_output_schema() -> dict[str, Any]:
+    """Return the strict schema for guidance-establishment assessment."""
+    return {
+        "type": "object",
+        "properties": {
+            "claim_proposition": {"type": "string", "minLength": 1},
+            "guidance_proposition": {"type": "string", "minLength": 1},
+            "guidance_establishes_claim": {
+                "type": "string",
+                "enum": list(METHODOLOGICAL_ESTABLISHMENT_VALUES),
+            },
+            "reason": {"type": "string", "minLength": 1},
+        },
+        "required": [
+            "claim_proposition",
+            "guidance_proposition",
+            "guidance_establishes_claim",
+            "reason",
         ],
         "additionalProperties": False,
     }
@@ -176,109 +197,113 @@ def _format_methodological_guidance(
     return "\n".join("\n" + block for block in guidance_blocks)
 
 
-def _methodological_consistency_rules() -> str:
-    """Return the shared methodological judgement and output rules."""
-    return """RULES
-Use only the supplied guidance when judging the claim.
+def _methodological_proposition_rules() -> str:
+    """Return shared proposition-extraction rules."""
+    return """Use only the supplied guidance.
 Do not use outside knowledge.
 Do not treat retrieval of a passage as evidence that it addresses the claim.
-Assess whether the guidance addresses the same methodological proposition,
-including important qualifiers, conditions, direction, and context.
 
-First state claim_proposition: the material proposition actually asserted,
-preserving frequency, quantifiers, modality, direction, conditions and context.
-Then state guidance_proposition: what the supplied guidance actually establishes
-about that proposition, preserving the same distinctions. If it establishes no
-relevant proposition, say so explicitly rather than inventing one.
-Keep each proposition concise. Do not strengthen or weaken either proposition.
+State claim_proposition: the material proposition actually asserted by the
+claim, preserving frequency, quantifiers, modality, direction, degree,
+conditions and context.
 
-Compare those propositions using exactly one relationship:
+State guidance_proposition: what the supplied guidance actually establishes,
+preserving the same distinctions. If it establishes no relevant proposition,
+say so explicitly rather than inventing one.
 
-supports
-The guidance establishes the claim's complete material proposition.
-Mere compatibility, shared topic or absence of contradiction is insufficient.
+Keep each proposition concise. Do not strengthen or weaken either proposition."""
 
-incompatible
-The guidance establishes a materially incompatible proposition about the same
-concept, conditions and context. Identify the actual incompatibility.
 
-insufficient
-The guidance establishes neither the claim's material proposition nor a
-materially incompatible proposition.
+def _methodological_coexistence_rules() -> str:
+    """Return rules for the bounded proposition-coexistence judgement."""
+    return _methodological_proposition_rules() + """
 
-Check whether both propositions could be true before selecting incompatible.
-"Typically X" and "not always/universally X" can both be true. The latter alone
-neither establishes nor contradicts typicality: select insufficient.
-Likewise, "may X" versus "not necessarily X", "often X" versus "not always X",
-"usually X" versus "exceptions exist", and "can improve X" versus "does not
-guarantee improvement" are not automatically incompatible. Association and a
-warning that causation does not necessarily follow are not contrary causal
-assertions. Compatibility alone still does not establish supports.
-A claim that an inference is established is incompatible with guidance that
-explicitly says that same inference is not established under the same conditions.
+Then answer one question only:
 
-Absence of a warning or contrary statement is not evidence of consistency.
-A related passage is not necessarily relevant to the proposition being
-assessed. Use incompatible only when the supplied guidance provides
-clear contrary guidance about the same relevant proposition and context.
+Can both material propositions be true at the same time under the same
+relevant conditions?
 
-A caution that a proposition is not necessarily, universally, or automatically
-true does not by itself conflict with a claim that it may, sometimes, often, or
-under some conditions be true. Conversely, guidance that something may or
-sometimes occurs does not establish that it generally, necessarily, or always
-occurs. Treat differences in frequency, modality, and quantifiers as material.
+yes
+The propositions can coexist.
 
-Distinguish a warning about inference from a contrary substantive proposition.
-Guidance saying that something "should not be assumed", "cannot be inferred",
-"does not necessarily follow", or is "not established" does not by itself
-establish that the proposition is false or generally false. Such guidance does
-not conflict with a claim that the proposition may, sometimes, often, or
-typically occur unless the guidance separately establishes an incompatible
-proposition at that frequency or strength.
+no
+The propositions cannot both be true under the same relevant conditions.
+Use no only for an actual incompatibility.
 
-Additional compatible detail in the guidance does not prevent consistency when
-the guidance still directly establishes the claim's complete material
-proposition. For example, guidance that establishes that X can improve Y and
-also explains how or why it can do so directly supports the claim that X can
-improve Y. Treat an added mechanism, explanation, example, or compatible
-detail as material only when it restricts, qualifies, or changes the
-proposition asserted by the claim.
+unclear
+The supplied text does not establish whether the propositions can coexist.
 
-A stronger claim is not established merely because the guidance supports a
-weaker version; unsupported strengthening is not by itself a methodological
-conflict. In that situation use insufficient
-unless the supplied guidance also establishes an incompatible proposition.
-incompatible requires the guidance to establish an incompatible
-proposition about the same relevant concept, conditions, and context.
+A weaker proposition does not contradict a stronger proposition merely because
+the stronger proposition is not established.
 
-Treat omitted conditions in the same way. Omitting a condition from a claim
-does not by itself establish conflict. An unconditional or more general claim
-is not established by guidance that supports the proposition only under a
-condition. Use incompatible only if the supplied guidance establishes
-that the claim is incompatible when the relevant condition is absent.
+Pay particular attention to modal terms such as necessarily, always, never,
+can, may, sometimes and possibly. A universal or necessary proposition cannot
+coexist with guidance that establishes a permitted counterexample under the
+same relevant conditions.
+
+"Typically X" and "not always/universally X" can both be true. Likewise,
+"may X" and "not necessarily X", "often X" and "not always X", and
+"can improve X" and "does not guarantee improvement" are not automatically
+incompatible.
+
+A warning that an inference is not established does not by itself establish
+the contrary substantive proposition.
+
+Do not decide whether the guidance supports the claim.
 
 OUTPUT DISCIPLINE
-Compare the propositions and choose the relationship before writing the reason.
 The reason must be one concise sentence of no more than 30 words.
-The reason must be consistent with the selected relationship.
-Do not show deliberation, self-correction, or reconsideration in the reason.
+Do not show deliberation, self-correction, or reconsideration.
 
-Return only claim_proposition, guidance_proposition, relationship, and reason.
-Do not return an application status, claim object, guidance object, note names,
-headings, retrieval scores, or any other provenance field."""
+Return only claim_proposition, guidance_proposition, can_both_be_true, and
+reason."""
 
 
-def build_methodological_consistency_prompt(
+def _methodological_establishment_rules() -> str:
+    """Return rules for the bounded guidance-establishment judgement."""
+    return _methodological_proposition_rules() + """
+
+Then answer one question only:
+
+Does the supplied guidance establish the claim's complete material
+proposition?
+
+yes
+The guidance establishes the complete claim, including its important
+quantifiers, modality, frequency, direction, degree, conditions and context.
+
+no
+The guidance does not establish the complete claim.
+
+unclear
+It cannot be determined from the supplied guidance whether the complete claim
+is established.
+
+A weaker proposition does not establish a stronger proposition.
+Compatibility alone is not support.
+Guidance about a different property does not establish the claim merely
+because both concern the same topic.
+
+Do not decide whether the propositions conflict.
+
+The reason must be one concise sentence of no more than 30 words.
+
+Return only claim_proposition, guidance_proposition,
+guidance_establishes_claim, and reason."""
+
+
+def _build_methodological_prompt(
     claim: academic_chat.TechnicalClaim,
     passages: list[reviewer_notes.Passage],
+    *,
+    rules: str,
+    task: str,
 ) -> str:
-    """Build a guidance-bounded methodological-consistency prompt."""
+    """Build one bounded methodological proposition-assessment prompt."""
     claim_block = _format_methodological_claim(claim)
     guidance_block = _format_methodological_guidance(passages)
-    rules = _methodological_consistency_rules()
 
-    return f"""Assess whether the generated methodological claim is consistent
-with the supplied curated methodological guidance.
+    return f"""{task}
 
 GENERATED CLAIM
 {claim_block}
@@ -290,12 +315,110 @@ CURATED METHODOLOGICAL GUIDANCE
 """
 
 
+def build_methodological_coexistence_prompt(
+    claim: academic_chat.TechnicalClaim,
+    passages: list[reviewer_notes.Passage],
+) -> str:
+    """Build a guidance-bounded proposition-coexistence prompt."""
+    return _build_methodological_prompt(
+        claim,
+        passages,
+        rules=_methodological_coexistence_rules(),
+        task=(
+            "Assess logical coexistence between the generated methodological "
+            "claim and the supplied curated methodological guidance."
+        ),
+    )
+
+
+def build_methodological_establishment_prompt(
+    claim: academic_chat.TechnicalClaim,
+    passages: list[reviewer_notes.Passage],
+) -> str:
+    """Build a guidance-bounded claim-establishment prompt."""
+    return _build_methodological_prompt(
+        claim,
+        passages,
+        rules=_methodological_establishment_rules(),
+        task=(
+            "Assess whether the supplied curated methodological guidance "
+            "establishes the generated methodological claim."
+        ),
+    )
+
+
+def _validate_methodological_output(
+    assessor_output: Any,
+    *,
+    judgement_field: str,
+    allowed_values: tuple[str, ...],
+) -> tuple[str, str]:
+    """Validate one bounded semantic judgement and return value and reason."""
+    if not isinstance(assessor_output, dict):
+        raise MethodologicalAssessmentOutputError(
+            "Methodological assessor output must be an object."
+        )
+
+    expected_fields = {
+        "claim_proposition",
+        "guidance_proposition",
+        judgement_field,
+        "reason",
+    }
+    if set(assessor_output) != expected_fields:
+        raise MethodologicalAssessmentOutputError(
+            "Methodological assessor output contains unexpected or missing "
+            "fields."
+        )
+
+    for field in ("claim_proposition", "guidance_proposition"):
+        value = assessor_output[field]
+        if not isinstance(value, str) or not value.strip():
+            raise MethodologicalAssessmentOutputError(
+                f"Methodological {field} must be non-empty text."
+            )
+
+    judgement = assessor_output[judgement_field]
+    if (
+        not isinstance(judgement, str)
+        or judgement not in allowed_values
+    ):
+        raise MethodologicalAssessmentOutputError(
+            f"Methodological {judgement_field} contains an invalid value."
+        )
+
+    reason = assessor_output["reason"]
+    if not isinstance(reason, str) or not reason.strip():
+        raise MethodologicalAssessmentOutputError(
+            "Methodological reason must be non-empty text."
+        )
+    if len(reason.split()) > 30:
+        raise MethodologicalAssessmentOutputError(
+            "Methodological reason must contain no more than 30 words."
+        )
+
+    return judgement, reason.strip()
+
+
+def _derive_methodological_status(
+    coexistence: str,
+    establishment: str,
+) -> str:
+    """Derive application-owned status from bounded semantic judgements."""
+    if coexistence == "no":
+        return METHODOLOGICAL_STATUS_CONFLICT
+    if coexistence == "yes" and establishment == "yes":
+        return METHODOLOGICAL_STATUS_CONSISTENT
+    return METHODOLOGICAL_STATUS_NOT_ESTABLISHED
+
+
 def build_methodological_consistency(
     claim: academic_chat.TechnicalClaim,
     passages: list[reviewer_notes.Passage],
-    assessor_output: Any,
+    coexistence_output: Any,
+    establishment_output: Any,
 ) -> MethodologicalConsistencyResult:
-    """Validate an assessor judgement and attach application-owned provenance."""
+    """Validate bounded judgements and attach application-owned provenance."""
     if not isinstance(claim, academic_chat.TechnicalClaim):
         raise TypeError(
             "Methodological consistency requires a TechnicalClaim."
@@ -314,66 +437,34 @@ def build_methodological_consistency(
             "passages."
         )
 
-    if not isinstance(assessor_output, dict):
-        raise MethodologicalAssessmentOutputError(
-            "Methodological consistency assessor output must be an object."
-        )
-
-    expected_fields = {
-        "claim_proposition", "guidance_proposition", "relationship", "reason",
-    }
-    if set(assessor_output) != expected_fields:
-        raise MethodologicalAssessmentOutputError(
-            "Methodological consistency assessor output must contain exactly "
-            "'claim_proposition', 'guidance_proposition', 'relationship', "
-            "and 'reason'."
-        )
-
-    for field in ("claim_proposition", "guidance_proposition"):
-        value = assessor_output[field]
-        if not isinstance(value, str) or not value.strip():
-            raise MethodologicalAssessmentOutputError(
-                f"Methodological consistency {field} must be non-empty text."
-            )
-
-    relationship = assessor_output["relationship"]
-    reason = assessor_output["reason"]
-
-    if (
-        not isinstance(relationship, str)
-        or relationship not in METHODOLOGICAL_RELATIONSHIP_STATUSES
-    ):
-        raise MethodologicalAssessmentOutputError(
-            "Methodological consistency assessor output contains an invalid "
-            "relationship."
-        )
-
-    if not isinstance(reason, str) or not reason.strip():
-        raise MethodologicalAssessmentOutputError(
-            "Methodological consistency reason must be non-empty text."
-        )
-
-    if len(reason.split()) > 30:
-        raise MethodologicalAssessmentOutputError(
-            "Methodological consistency reason must contain no more than "
-            "30 words."
-        )
+    coexistence, coexistence_reason = _validate_methodological_output(
+        coexistence_output,
+        judgement_field="can_both_be_true",
+        allowed_values=METHODOLOGICAL_COEXISTENCE_VALUES,
+    )
+    establishment, establishment_reason = _validate_methodological_output(
+        establishment_output,
+        judgement_field="guidance_establishes_claim",
+        allowed_values=METHODOLOGICAL_ESTABLISHMENT_VALUES,
+    )
 
     return MethodologicalConsistencyResult(
-        status=METHODOLOGICAL_RELATIONSHIP_STATUSES[relationship],
+        status=_derive_methodological_status(coexistence, establishment),
         claim=claim,
         passages=list(passages),
-        reasons=[reason.strip()],
+        reasons=[coexistence_reason, establishment_reason],
     )
 
 
-def build_contextual_methodological_consistency_prompt(
+def _build_contextual_methodological_prompt(
     *,
     claim: academic_chat.TechnicalClaim,
     source_context: academic_claim_coverage.ClaimSourceContext,
     passages: list[reviewer_notes.Passage],
+    rules: str,
+    task: str,
 ) -> str:
-    """Build an occurrence-aware methodological-consistency prompt."""
+    """Build one occurrence-aware bounded methodological prompt."""
     if not isinstance(
         source_context,
         academic_claim_coverage.ClaimSourceContext,
@@ -385,11 +476,8 @@ def build_contextual_methodological_consistency_prompt(
 
     claim_block = _format_methodological_claim(claim)
     guidance_block = _format_methodological_guidance(passages)
-    rules = _methodological_consistency_rules()
 
-    return f"""Assess whether the generated methodological claim, interpreted
-at its verified answer occurrence, is consistent with the supplied curated
-methodological guidance.
+    return f"""{task}
 
 GENERATED CLAIM
 {claim_block}
@@ -417,15 +505,55 @@ CURATED METHODOLOGICAL GUIDANCE
 """
 
 
+def build_contextual_methodological_coexistence_prompt(
+    *,
+    claim: academic_chat.TechnicalClaim,
+    source_context: academic_claim_coverage.ClaimSourceContext,
+    passages: list[reviewer_notes.Passage],
+) -> str:
+    """Build an occurrence-aware proposition-coexistence prompt."""
+    return _build_contextual_methodological_prompt(
+        claim=claim,
+        source_context=source_context,
+        passages=passages,
+        rules=_methodological_coexistence_rules(),
+        task=(
+            "Assess logical coexistence between the generated methodological "
+            "claim, interpreted at its verified answer occurrence, and the "
+            "supplied curated methodological guidance."
+        ),
+    )
+
+
+def build_contextual_methodological_establishment_prompt(
+    *,
+    claim: academic_chat.TechnicalClaim,
+    source_context: academic_claim_coverage.ClaimSourceContext,
+    passages: list[reviewer_notes.Passage],
+) -> str:
+    """Build an occurrence-aware guidance-establishment prompt."""
+    return _build_contextual_methodological_prompt(
+        claim=claim,
+        source_context=source_context,
+        passages=passages,
+        rules=_methodological_establishment_rules(),
+        task=(
+            "Assess whether the supplied curated methodological guidance "
+            "establishes the generated methodological claim, interpreted "
+            "at its verified answer occurrence."
+        ),
+    )
+
 
 def build_contextual_methodological_consistency(
     *,
     claim: academic_chat.TechnicalClaim,
     source_context: academic_claim_coverage.ClaimSourceContext,
     passages: list[reviewer_notes.Passage],
-    assessor_output: Any,
+    coexistence_output: Any,
+    establishment_output: Any,
 ) -> ContextualMethodologicalConsistencyResult:
-    """Validate a contextual judgement and attach application-owned provenance."""
+    """Validate contextual judgements and attach application-owned provenance."""
     if not isinstance(
         source_context,
         academic_claim_coverage.ClaimSourceContext,
@@ -438,7 +566,8 @@ def build_contextual_methodological_consistency(
     validated = build_methodological_consistency(
         claim=claim,
         passages=passages,
-        assessor_output=assessor_output,
+        coexistence_output=coexistence_output,
+        establishment_output=establishment_output,
     )
 
     return ContextualMethodologicalConsistencyResult(
@@ -457,24 +586,38 @@ def assess_contextual_methodological_consistency(
     passages: list[reviewer_notes.Passage],
     assessor,
 ) -> ContextualMethodologicalConsistencyResult:
-    """Assess one verified claim occurrence against local guidance."""
-    prompt = build_contextual_methodological_consistency_prompt(
+    """Assess one verified claim occurrence through two bounded judgements."""
+    coexistence_prompt = build_contextual_methodological_coexistence_prompt(
         claim=claim,
         source_context=source_context,
         passages=passages,
     )
-    schema = methodological_consistency_output_schema()
+    establishment_prompt = build_contextual_methodological_establishment_prompt(
+        claim=claim,
+        source_context=source_context,
+        passages=passages,
+    )
 
     try:
-        assessor_output = assessor(
-            prompt=prompt,
-            schema=schema,
+        coexistence_output = assessor(
+            prompt=coexistence_prompt,
+            schema=methodological_coexistence_output_schema(),
+        )
+        _validate_methodological_output(
+            coexistence_output,
+            judgement_field="can_both_be_true",
+            allowed_values=METHODOLOGICAL_COEXISTENCE_VALUES,
+        )
+        establishment_output = assessor(
+            prompt=establishment_prompt,
+            schema=methodological_establishment_output_schema(),
         )
         return build_contextual_methodological_consistency(
             claim=claim,
             source_context=source_context,
             passages=passages,
-            assessor_output=assessor_output,
+            coexistence_output=coexistence_output,
+            establishment_output=establishment_output,
         )
     except ValueError as exc:
         error = _assessment_not_completed(claim, passages, exc)
@@ -493,22 +636,35 @@ def assess_methodological_consistency(
     passages: list[reviewer_notes.Passage],
     assessor,
 ) -> MethodologicalConsistencyResult:
-    """Assess a claim against local guidance through an injected assessor."""
-    prompt = build_methodological_consistency_prompt(
+    """Assess one claim through independent bounded semantic judgements."""
+    coexistence_prompt = build_methodological_coexistence_prompt(
         claim=claim,
         passages=passages,
     )
-    schema = methodological_consistency_output_schema()
+    establishment_prompt = build_methodological_establishment_prompt(
+        claim=claim,
+        passages=passages,
+    )
 
     try:
-        assessor_output = assessor(
-            prompt=prompt,
-            schema=schema,
+        coexistence_output = assessor(
+            prompt=coexistence_prompt,
+            schema=methodological_coexistence_output_schema(),
+        )
+        _validate_methodological_output(
+            coexistence_output,
+            judgement_field="can_both_be_true",
+            allowed_values=METHODOLOGICAL_COEXISTENCE_VALUES,
+        )
+        establishment_output = assessor(
+            prompt=establishment_prompt,
+            schema=methodological_establishment_output_schema(),
         )
         return build_methodological_consistency(
             claim=claim,
             passages=passages,
-            assessor_output=assessor_output,
+            coexistence_output=coexistence_output,
+            establishment_output=establishment_output,
         )
     except ValueError as exc:
         error = _assessment_not_completed(claim, passages, exc)

@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 import academic_chat                          # noqa: E402
+from methodology_fixtures import methodology_output
 import academic_check_further as cf           # noqa: E402
 import academic_methodology as am             # noqa: E402
 import academic_orchestrator as orchestrator  # noqa: E402
@@ -68,11 +69,8 @@ prompts = {}
 
 def judge(*, prompt, schema):
     key = "off" if OFF_TOPIC.statement in prompt else "on"
-    prompts[key] = prompt
-    return {"claim_proposition": "Synthetic claim proposition.",
-            "guidance_proposition": "Synthetic guidance proposition.",
-            "relationship": 'insufficient',
-            "reason": "Synthetic deterministic judgement."}
+    prompts.setdefault(key, []).append((prompt, schema))
+    return methodology_output(schema, 'methodological_consistency_not_established', "Synthetic deterministic judgement.")
 
 
 question_guidance = orchestrator.retrieve_methodological_context(QUESTION)
@@ -104,8 +102,14 @@ check(off is not None and all(p.note != MISSING_DATA for p in off.passages),
       + "; ".join(f"{p.note} - {p.heading}" for p in (off.passages if off else [])))
 mi_text = next(p.text for p in question_guidance.passages
                if p.heading == "How does FMI affect relative efficiency?")
-check("off" in prompts and mi_text[:120] not in prompts["off"],
+check("off" in prompts and all(mi_text[:120] not in prompt for prompt, _ in prompts["off"]),
       "the judge's prompt for the HMC claim contains no Missing Data text")
+
+for calls in prompts.values():
+    assert [schema for _, schema in calls] == [
+        am.methodological_coexistence_output_schema(),
+        am.methodological_establishment_output_schema(),
+    ]
 
 print("\n[2] further reading is offered only where the point was judged")
 evidence = cf.assess_check_further(
