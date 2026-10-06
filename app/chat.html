@@ -361,6 +361,11 @@
         <div class="file-name" id="fileName" style="display:none"></div>
       </div>
       <div>
+        <label for="supplementInput">Supplementary material (optional)</label>
+        <input type="file" id="supplementInput" multiple accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.xlsm">
+        <p>Additional evidence for this manuscript. 100 MiB total across all files.</p>
+      </div>
+      <div>
         <button class="btn" id="reviewBtn" onclick="startReview()" disabled>Start review</button>
         <button class="btn-secondary" id="cancelReviewBtn" onclick="cancelReview()" style="display:none">Cancel review</button>
         <label class="reasoning-choice" for="reasoningMode" title="Thinking mode lets the model reason before writing. Slower. Untested against instruct mode -- alternate them and compare.">
@@ -1859,6 +1864,7 @@ async function startReview() {
   const ra = document.getElementById('reportArea'); ra.innerHTML = '';
 
   const fd = new FormData(); fd.append('file', selectedFile); fd.append('domain', 'general');
+  for (const supplement of document.getElementById('supplementInput').files) fd.append('supplements', supplement);
   // "" leaves the server's own default alone; "0"/"1" force one mode for this
   // review only. The chosen mode is recorded in the report header.
   fd.append('thinking', document.getElementById('reasoningMode').value);

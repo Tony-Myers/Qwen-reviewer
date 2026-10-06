@@ -242,6 +242,30 @@ chosen from a selector: this manuscript, or the reviewer notes. Every answer
 says which one it came from, so a reader never has to infer where a sentence
 originated.
 
+The Review upload accepts one required primary manuscript and optional multiple
+supplementary files in a separate control. The **100 MiB limit applies to the
+complete upload**, not to each file. All files use the existing supported types
+(PDF, DOCX, TXT, MD, CSV, XLSX and XLSM), generated storage paths in one temporary
+review directory, and the same cleanup/cancellation lifecycle. Repeated or
+path-like client filenames never determine storage paths.
+
+The primary manuscript remains the object of appraisal. Supplements provide
+additional evidence, not additional papers to review. With supplements, source
+labels distinguish the primary manuscript and each numbered supplement (even
+when filenames repeat) in chunk notes, manifests, synthesis, report input and
+evidence summaries, and the appendix. The final synthesis and validation are
+instructed to consider information appropriately supplied in supplements before
+criticising its absence from the main paper. Extraction or empty-text failures
+in any supplied file fail the review rather than silently dropping evidence.
+
+Manuscript Q&A searches all supplied sources using the existing BM25 passage
+scorer under one shared context budget. Quotations are checked within individual
+sources; a quotation assembled across different files does not count as a match.
+An application-owned quotation-location list records matching source names in
+multi-source reports and answers. This establishes textual provenance, not the
+scientific validity of a finding. With no supplements, the existing single-file
+processing, prompts and Q&A behaviour are retained. Reviewer-note Q&A is unchanged.
+
 The manuscript source answers from that paper's extracted text and nothing else,
 and every answer goes through the same citation check the report does, against
 the same text.

@@ -1154,7 +1154,7 @@ async def chat_completions(request: dict):
 SUPPORTED_REVIEW_SUFFIXES = {
     ".pdf", ".txt", ".md", ".docx", ".csv", ".xlsx", ".xlsm"
 }
-MAX_REVIEW_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MiB
+MAX_REVIEW_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MiB for the complete upload (primary + supplements)
 REVIEW_UPLOAD_CHUNK_BYTES = 1024 * 1024      # 1 MiB
 
 @app.post("/api/review")
@@ -1163,46 +1163,46 @@ async def start_review(
     domain: str = Form("general"),
     thinking: str = Form(""),
     vision: str = Form(""),
+    supplements: list[UploadFile] | None = File(None),
 ):
-    # Validate the extraction type before creating any server-side storage.
-    # The suffix is dispatch metadata only; the client-supplied basename never
-    # determines the filesystem destination.
-    suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in SUPPORTED_REVIEW_SUFFIXES:
-        supported = ", ".join(sorted(SUPPORTED_REVIEW_SUFFIXES))
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported manuscript file type. Supported types: {supported}.",
-        )
+    # Direct Python callers omit the optional FastAPI File parameter.
+    supplements = supplements if isinstance(supplements, list) else []
+    uploads = [file, *supplements]
+    for i, upload in enumerate(uploads):
+        suffix = Path(upload.filename or "").suffix.lower()
+        if suffix not in SUPPORTED_REVIEW_SUFFIXES:
+            supported = ", ".join(sorted(SUPPORTED_REVIEW_SUFFIXES))
+            kind = "manuscript" if i == 0 else "supplementary"
+            raise HTTPException(status_code=400, detail=(
+                f"Unsupported {kind} file type. Supported types: {supported}."))
 
     job_id = uuid.uuid4().hex[:12]
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"review_{job_id}_"))
-    file_path = tmp_dir / f"upload{suffix}"
-
-    # Do not trust Content-Length: stream the upload through an application
-    # limit so chunked/misreported requests cannot write without bound.
+    paths = []
+    # One aggregate limit, independent of Content-Length. No supplied filename
+    # is used as a storage path, even when two sources share a basename.
     written = 0
     try:
-        with open(file_path, "wb") as destination:
-            while True:
-                chunk = file.file.read(REVIEW_UPLOAD_CHUNK_BYTES)
-                if not chunk:
-                    break
-                written += len(chunk)
-                if written > MAX_REVIEW_UPLOAD_BYTES:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=(
-                            "Manuscript upload exceeds the "
-                            f"{MAX_REVIEW_UPLOAD_BYTES // (1024 * 1024)} MiB limit."
-                        ),
-                    )
-                destination.write(chunk)
-    except Exception:
-        # No background review owns this directory yet, so rejection must
-        # remove any partially written upload here.
+        for i, upload in enumerate(uploads):
+            suffix = Path(upload.filename or "").suffix.lower()
+            destination_path = tmp_dir / (f"supplement_{i}{suffix}" if i else f"upload{suffix}")
+            paths.append(destination_path)
+            with open(destination_path, "wb") as destination:
+                while True:
+                    chunk = upload.file.read(REVIEW_UPLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > MAX_REVIEW_UPLOAD_BYTES:
+                        label = "Manuscript upload" if not supplements else "Complete review upload"
+                        raise HTTPException(status_code=413, detail=(
+                            f"{label} exceeds the "
+                            f"{MAX_REVIEW_UPLOAD_BYTES // (1024 * 1024)} MiB limit."))
+                    destination.write(chunk)
+    except BaseException:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
+    file_path = paths[0]
 
     # "" leaves the process default alone; "1"/"0" force one mode for this
     # review only, so the two can be alternated over real use and compared.
@@ -1240,15 +1240,24 @@ async def start_review(
         "appendix": None,
         "error": None,
         "filename": file.filename,
+        "supplements": [
+            {"path": str(path), "name": Path((upload.filename or path.name).replace("\\", "/")).name}
+            for path, upload in zip(paths[1:], supplements)
+        ],
         "cancel_requested": False,
     }
 
     # Run review in background thread
-    thread = threading.Thread(
-        target=_run_review, args=(job_id, file_path, domain, tmp_dir),
-        daemon=True,
-    )
-    thread.start()
+    try:
+        thread = threading.Thread(
+            target=_run_review, args=(job_id, file_path, domain, tmp_dir),
+            daemon=True,
+        )
+        thread.start()
+    except BaseException:
+        review_jobs.pop(job_id, None)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
 
     return {"job_id": job_id, "status": "running"}
 
@@ -1293,8 +1302,8 @@ async def ask_about_review(job_id: str, request: dict):
     """
     Answer one question under a finished review, from one named source.
 
-    Two sources exist. `manuscript` answers from this paper's extracted text
-    and checks every quotation against it. `reviewer_notes` answers a general
+    Two modes exist. `manuscript` answers from this paper and its supplied
+    supplements, retaining source names and checking quotations within each source. `reviewer_notes` answers a general
     methodological question from the notes in resources/, and has not read the
     paper at all. Both return the same shape, and both say which they were, so
     a reader never has to infer where a sentence came from.
@@ -1342,17 +1351,24 @@ async def ask_about_review(job_id: str, request: dict):
         job["text"],
         report_text=job.get("report") or "",
         history=history,
+        **({"sources": job["sources"]} if job.get("sources") else {}),
     )
     found = len(rp.select_passages(question, job["text"]))
+    searched = [{"note": job.get("filename", "manuscript"),
+                 "heading": f"{found} passage(s) searched", "score": None}]
+    if job.get("sources"):
+        selected = rp.select_source_passages(question, job["sources"],
+                                             rp.qa_passage_budget(len(job.get("report") or "")))
+        found = len(selected)
+        searched = [{"note": name, "heading": f"Page {page}" if page else "Page unknown", "score": None}
+                    for name, page, _ in selected]
     return {
         "answer": answer,
         "check": rp.format_answer_check(answer, problems),
         "problems": problems,
         "passages": found,
         "provenance": provenance(SOURCE_MANUSCRIPT,
-                                 passages=[{"note": job.get("filename", "manuscript"),
-                                            "heading": f"{found} passage(s) searched",
-                                            "score": None}],
+                                 passages=searched,
                                  resolved=found > 0),
     }
 
@@ -1553,82 +1569,124 @@ def _chunk_reasoning(job_id: str):
 
 def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
     try:
-        _check_review_cancelled(job_id)
-        _add_progress(job_id, f"Reading {file_path.name}...")
-        text, table_blocks, extraction_notes = rp.load_document(file_path)
+        supplementary = review_jobs[job_id].get("supplements", [])
+        primary_name = Path(str(review_jobs[job_id].get("filename") or file_path.name).replace("\\", "/")).name
+        inputs = [(file_path, f"Primary manuscript: {primary_name}" if supplementary else file_path.name)]
+        inputs += [(Path(item["path"]), f"Supplement {i}: {item['name']}")
+                   for i, item in enumerate(supplementary, 1)]
+        file_summaries, all_manifests = [], []
+        per_file_text, per_file_tables, per_file_chunks = {}, {}, {}
+        all_extraction_notes = []
+        source_role = ("Appraise only the primary manuscript: " + primary_name + ". "
+                       "Other files are supplementary evidence, not separate manuscripts. "
+                       "Use supplements to support, qualify or challenge primary claims. "
+                       "Do not criticise information as missing from the manuscript when "
+                       "appropriately supplied in supplements. Attribute every quotation "
+                       "and finding to its exact source name; qualify absence claims until "
+                       "all supplied evidence has been considered.")
+        for source_index, (file_path, source_name) in enumerate(inputs):
+            _check_review_cancelled(job_id)
+            _add_progress(job_id, f"Reading {source_name}...")
+            text, table_blocks, extraction_notes = rp.load_document(file_path)
 
-        _check_review_cancelled(job_id)
-        _add_progress(job_id, "Structuring evidence...")
-        derived = rp.detect_derived_input(text)
-        if derived:
-            raise ValueError(
-                f"{file_path.name} looks like output from this pipeline rather "
-                f"than a manuscript (found {', '.join(repr(d) for d in derived[:3])}). "
-                "Reviewing a review produces a report that reads normally but "
-                "describes the wrong document. Upload the original manuscript."
+            _check_review_cancelled(job_id)
+            _add_progress(job_id, "Structuring evidence...")
+            derived = rp.detect_derived_input(text)
+            if derived:
+                raise ValueError(
+                    f"{source_name} looks like output from this pipeline rather "
+                    f"than a manuscript (found {', '.join(repr(d) for d in derived[:3])}). "
+                    "Reviewing a review produces a report that reads normally but "
+                    "describes the wrong document. Upload the original manuscript."
+                )
+
+            manifest = rp.structure_evidence(source_name, text, table_blocks)
+            tables_text = rp.tables_for_prompt(table_blocks)
+            mc = manifest.method_class
+            _add_progress(job_id, f"Method: {mc.value}")
+            if manifest.additional_method_classes:
+                extra = ", ".join(m.value for m in manifest.additional_method_classes)
+                _add_progress(job_id, f"Additional methods: {extra}")
+
+            if manifest.design_class is not None:
+                _add_progress(job_id, f"Design: {manifest.design_class.value}")
+                if (manifest.synthesis_method_class is not None
+                        and manifest.synthesis_method_class is not mc):
+                    _add_progress(
+                        job_id,
+                        "The review's own analysis reads as "
+                        f"{manifest.synthesis_method_class.value}, which differs "
+                        f"from the paper-level {mc.value}: method words elsewhere "
+                        "may belong to the included studies.")
+
+            method_expectations = rp.get_method_expectations(
+                mc, additional_classes=manifest.additional_method_classes,
+                design_class=manifest.design_class,
+            )
+            if source_index == 0:
+                primary_expectations = method_expectations
+            if supplementary:
+                method_expectations = primary_expectations + "\n" + source_role
+                if source_index:
+                    method_expectations += (
+                        "\nThis file supplies supplementary evidence. Extract findings relevant "
+                        "to the primary manuscript; do not assess it as a standalone paper.")
+            manifest_summary = manifest.summary_text()
+
+            chunks = rp.split_text(text)
+            if not chunks:
+                review_jobs[job_id]["status"] = "error"
+                review_jobs[job_id]["error"] = "No usable text extracted."
+                return
+
+            # Chunk review
+            chunk_outputs = []
+            for i, chunk_text in enumerate(chunks, start=1):
+                _check_review_cancelled(job_id)
+                _add_progress(job_id, f"Reviewing chunk {i}/{len(chunks)}...")
+                chunk = rp.DocChunk(source_name=source_name, chunk_id=i, text=chunk_text)
+                with _chunk_reasoning(job_id):
+                    reviewed = rp.review_chunk(
+                        model, tokenizer, chunk,
+                        method_expectations=method_expectations,
+                        manifest_summary=manifest_summary,
+                    )
+                chunk_outputs.append(reviewed)
+
+            combined = "\n\n".join(
+                f"### Chunk {i}\n{txt}" for i, txt in enumerate(chunk_outputs, start=1)
             )
 
-        manifest = rp.structure_evidence(file_path.name, text, table_blocks)
-        tables_text = rp.tables_for_prompt(table_blocks)
-        mc = manifest.method_class
-        _add_progress(job_id, f"Method: {mc.value}")
-        if manifest.additional_method_classes:
-            extra = ", ".join(m.value for m in manifest.additional_method_classes)
-            _add_progress(job_id, f"Additional methods: {extra}")
-
-        if manifest.design_class is not None:
-            _add_progress(job_id, f"Design: {manifest.design_class.value}")
-            if (manifest.synthesis_method_class is not None
-                    and manifest.synthesis_method_class is not mc):
-                _add_progress(
-                    job_id,
-                    "The review's own analysis reads as "
-                    f"{manifest.synthesis_method_class.value}, which differs "
-                    f"from the paper-level {mc.value}: method words elsewhere "
-                    "may belong to the included studies.")
-
-        method_expectations = rp.get_method_expectations(
-            mc, additional_classes=manifest.additional_method_classes,
-            design_class=manifest.design_class,
-        )
-        manifest_summary = manifest.summary_text()
-
-        chunks = rp.split_text(text)
-        if not chunks:
-            review_jobs[job_id]["status"] = "error"
-            review_jobs[job_id]["error"] = "No usable text extracted."
-            return
-
-        # Chunk review
-        chunk_outputs = []
-        for i, chunk_text in enumerate(chunks, start=1):
+            # File-level synthesis
             _check_review_cancelled(job_id)
-            _add_progress(job_id, f"Reviewing chunk {i}/{len(chunks)}...")
-            chunk = rp.DocChunk(source_name=file_path.name, chunk_id=i, text=chunk_text)
-            with _chunk_reasoning(job_id):
-                reviewed = rp.review_chunk(
-                    model, tokenizer, chunk,
-                    method_expectations=method_expectations,
-                    manifest_summary=manifest_summary,
-                )
-            chunk_outputs.append(reviewed)
+            _add_progress(job_id, "Synthesising file-level review...")
+            file_summary = rp.synthesize_file_review(
+                model, tokenizer, source_name, combined,
+                method_expectations=method_expectations,
+                manifest_summary=manifest_summary,
+                tables_text=tables_text,
+            )
 
-        combined = "\n\n".join(
-            f"### Chunk {i}\n{txt}" for i, txt in enumerate(chunk_outputs, start=1)
-        )
+            file_summaries.append((source_name, file_summary))
+            all_manifests.append(manifest)
+            per_file_text[source_name] = text
+            per_file_tables[source_name] = table_blocks
+            per_file_chunks[source_name] = chunks
+            all_extraction_notes.extend(f"{source_name}: {note}" for note in extraction_notes)
 
-        # File-level synthesis
-        _check_review_cancelled(job_id)
-        _add_progress(job_id, "Synthesising file-level review...")
-        file_summary = rp.synthesize_file_review(
-            model, tokenizer, file_path.name, combined,
-            method_expectations=method_expectations,
-            manifest_summary=manifest_summary,
-            tables_text=tables_text,
-        )
-
-        file_summaries = [(file_path.name, file_summary)]
-        all_manifests = [manifest]
+        # Retain the primary manuscript's design and identity for the appraisal.
+        file_path, source_name = inputs[0]
+        manifest = all_manifests[0]
+        mc = manifest.method_class
+        text = per_file_text[source_name]
+        table_blocks = per_file_tables[source_name]
+        chunks = per_file_chunks[source_name]
+        if supplementary:
+            tables_text = "\n\n".join(
+                f"## {name}\n{rp.tables_for_prompt(tables)}"
+                for name, tables in per_file_tables.items())
+            extraction_notes = all_extraction_notes
+        synthesis_options = {"primary_source": source_name} if supplementary else {}
 
         # Final synthesis. Findings rotate between passes, so REVIEW_PASSES>1
         # runs the synthesis repeatedly and unions the concerns and checks.
@@ -1667,9 +1725,14 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
                 all_manifests=all_manifests,
                 tables_text=tables_text,
                 temperature=temperature,
+                **synthesis_options,
             )
 
             corrections = rp.programmatic_post_checks(draft, manifest)
+            if supplementary:
+                for extra in all_manifests[1:]:
+                    corrections.extend(f"Evidence from {extra.source_name}: {c}"
+                                       for c in rp.programmatic_post_checks(draft, extra))
             all_corrections.extend(corrections)
             _check_review_cancelled(job_id)
             _add_progress(job_id, f"Validating report against evidence{label}...")
@@ -1677,6 +1740,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             draft = rp.validate_report_against_evidence(
                 model, tokenizer, draft, file_summaries,
                 programmatic_corrections=corrections if corrections else None,
+                **synthesis_options,
             )
             after = rp.count_report_items(draft)
             for index in (0, 1):
@@ -1701,8 +1765,8 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
 
         # Post-processing passes
         _add_progress(job_id, "Post-processing...")
-        all_text = "\n\n".join(t for _, t in file_summaries)
-        all_tables = [tbl for _, tbl in table_blocks]
+        all_text = "\n\n".join(f"## {name}\n{t}" for name, t in file_summaries) if supplementary else "\n\n".join(t for _, t in file_summaries)
+        all_tables = [tbl for tables in per_file_tables.values() for _, tbl in tables]
 
         # A safety net independent of cause. Every stage below handles an empty
         # string without complaint, so a review with nothing in it assembles
@@ -1734,14 +1798,18 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
 
         # Mechanical citation check: quotations must be findable in the
         # manuscript, and evidence must not cite the pipeline's own summary.
-        table_source = "\n".join(b for _, b in table_blocks)
+        table_source = "\n".join(all_tables)
         citation_source = text + "\n" + table_source
+        if supplementary:
+            citation_source = {name: body + "\n" + "\n".join(b for _, b in per_file_tables[name])
+                               for name, body in per_file_text.items()}
         final_report = rp.annotate_concern_confidence(
             final_report, citation_source, table_source
         )
         report_problems = (rp.verify_report_citations(final_report, citation_source)
                            + rp.evidence_echo_problems(final_report)
                            + rp.overclaim_problems(final_report))
+        quote_sources = rp.format_quote_sources(final_report, citation_source) if supplementary else ""
         # Both checks above read the quotation marks; strip only afterwards.
         final_report = rp.mark_unverified_quotations(final_report, citation_source)
         final_report = rp.report_reliability_banner(final_report) + final_report
@@ -1749,8 +1817,16 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         # resting on one has twice been the thing a reviewer attacked.
         final_report = de.annotate_self_report_strengths(final_report)
         final_report += rp.format_action_list(final_report)
-        final_report += rp.format_expected_elements(text, manifest.design_class)
-        final_report += rp.format_consistency_check(text, table_blocks)
+        expected_text = rp.named_source_text(per_file_text) if supplementary else text
+        final_report += rp.format_expected_elements(expected_text, manifest.design_class)
+        if supplementary:
+            for name, body in per_file_text.items():
+                check = rp.format_consistency_check(body, per_file_tables[name])
+                if check:
+                    final_report += f"\n\n### Consistency evidence: {name}\n" + check
+        else:
+            final_report += rp.format_consistency_check(text, table_blocks)
+        final_report += quote_sources
         final_report += rp.format_citation_check(report_problems, final_report)
 
         # Add header
@@ -1782,6 +1858,10 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
             f"variance_components={manifest.has_variance_components}, "
             f"fit_stats={manifest.has_model_fit_stats}\n\n---\n\n"
         )
+        if supplementary:
+            header = header[:header.index("Input files:")] + "Input files:\n" + "\n".join(
+                f"- {name}" for _, name in inputs) + "\n\nEvidence summary:\n" + "\n".join(
+                f"- **{m.source_name}**: {m.summary_text()}" for m in all_manifests) + "\n\n---\n\n"
         final_report = header + final_report
 
         # --- Generate evidence appendix (in-memory, not written to disk) ---
@@ -1789,6 +1869,18 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         appendix_lines = _build_appendix_text(
             file_path, manifest, table_blocks, chunks,
         )
+
+        if supplementary:
+            appendix_header = appendix_lines.split("## Input files", 1)[0]
+            sections = []
+            for m, (_, name) in zip(all_manifests, inputs):
+                section = _build_appendix_text(
+                    Path(name), m, per_file_tables[name], per_file_chunks[name])
+                sections.append(f"## Source: {name}\n\n## Evidence manifest" +
+                                section.split("## Evidence manifest", 1)[1])
+            appendix_lines = appendix_header + "## Input files\n" + "\n".join(
+                f"- {name}" for _, name in inputs) + "\n\n" + "\n\n".join(sections)
+            review_jobs[job_id]["sources"] = citation_source
 
         # Kept so the reviewer can ask where the paper says something. It is
         # the same extracted text the report was built from, so an answer and a

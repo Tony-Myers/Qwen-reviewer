@@ -4093,7 +4093,7 @@ def report_reliability_banner(report_text: str) -> str:
 
 def concern_confidence(
     group_text: str,
-    source_text: str,
+    source_text: str | Dict[str, str],
     table_text: str = "",
 ) -> Tuple[str, str]:
     """
@@ -4112,6 +4112,9 @@ def concern_confidence(
     if _SELF_CITATION_RE.search(group_text):
         return ("Low", "the evidence cites this pipeline's own summary rather "
                        "than the manuscript")
+    sources = source_text if isinstance(source_text, dict) else None
+    if sources is not None:
+        source_text = named_source_text(sources)
     haystack = _normalise_for_match(source_text)
     haystack_punct = _strip_punctuation(haystack)
     haystack_nospace = re.sub(r"\s+", "", haystack_punct)
@@ -4123,8 +4126,8 @@ def concern_confidence(
     # half a point per bout", which is in the abstract, alongside a fabricated
     # second quotation, and was reported as High.
     unverified = [q for q in quotes
-                  if _missing_fragment(q, haystack, haystack_punct,
-                                       haystack_nospace) is not None]
+                  if (not quotation_sources(q, sources) if sources is not None else
+                      _missing_fragment(q, haystack, haystack_punct, haystack_nospace) is not None)]
     if unverified and len(unverified) < len(quotes):
         return ("Low", "one quotation was located in the manuscript and "
                        "another could not be")
@@ -4142,6 +4145,9 @@ def concern_confidence(
         return ("Low", "the quoted evidence could not be located in the "
                        "extracted manuscript")
     if quotes:
+        if sources is not None:
+            names = list(dict.fromkeys(name for q in quotes for name in quotation_sources(q, sources)))
+            return ("High", "every quotation was located in supplied evidence: " + "; ".join(names))
         return ("High", "every quotation was located in the manuscript")
     # A matching decimal establishes less than a verified quotation. Even
     # within application-identified table evidence, the same value can occur
@@ -4162,7 +4168,7 @@ def concern_confidence(
 
 def annotate_concern_confidence(
     report_text: str,
-    source_text: str,
+    source_text: str | Dict[str, str],
     table_text: str = "",
 ) -> str:
     """Recompute an application-owned Evidence match line for every concern."""
@@ -4542,7 +4548,35 @@ def _missing_fragment(quoted: str, hay: str, hay_punct: str,
     return None
 
 
-def verify_report_citations(report_text: str, source_text: str) -> List[str]:
+def named_source_text(sources: Dict[str, str]) -> str:
+    """Render named evidence for context; never use this to match quotations."""
+    return "\n\n".join(f"## Source: {name}\n{body}" for name, body in sources.items())
+
+
+def quotation_sources(quote: str, sources: Dict[str, str]) -> List[str]:
+    """A quotation must resolve within one source, including all elided parts."""
+    found = []
+    for name, body in sources.items():
+        hay = _normalise_for_match(body)
+        punct = _strip_punctuation(hay)
+        if _missing_fragment(quote, hay, punct, re.sub(r"\s+", "", punct)) is None:
+            found.append(name)
+    return found
+
+
+def format_quote_sources(report: str, sources: Dict[str, str]) -> str:
+    """Application-owned provenance for quotations, independent of model labels."""
+    quotes = list(dict.fromkeys(list(_quoted_spans(report)) + list(_short_quoted_spans(report))))
+    lines = []
+    for quote in quotes:
+        if len(quote.split()) < 4 and not re.search(r"\d", quote):
+            continue
+        names = quotation_sources(quote, sources)
+        lines.append(f"- “{quote}” — " + ("; ".join(names) if names else "Not located in any supplied source"))
+    return "\n\n## Quotation source locations\n\n" + "\n".join(lines) if lines else ""
+
+
+def verify_report_citations(report_text: str, source_text: str | Dict[str, str]) -> List[str]:
     """
     Check the report's citations mechanically.
 
@@ -4552,6 +4586,9 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
     of hoped for. Nothing is rewritten; the findings are appended to the report
     so a reader can see which citations stand up.
     """
+    sources = source_text if isinstance(source_text, dict) else None
+    if sources is not None:
+        source_text = named_source_text(sources)
     problems: List[str] = []
     haystack = _normalise_for_match(source_text)
     # Precomputed once: these were rebuilt per quotation, which is O(n*m) over
@@ -4581,8 +4618,9 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
             continue
         # Tolerances live in _missing_fragment: punctuation, spacing (extraction
         # splits "strati fied" and fuses "i tw a sW C"), and elision with "...".
-        missing = _missing_fragment(quoted, haystack, haystack_punct,
-                                    haystack_nospace)
+        missing = ((None if quotation_sources(quoted, sources) else quoted)
+                   if sources is not None else
+                   _missing_fragment(quoted, haystack, haystack_punct, haystack_nospace))
         if missing is None:
             continue
         if missing.strip() != quoted.strip():
@@ -4616,7 +4654,9 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
     # \d*\. so that a manuscript writing ".001" is matched by a report writing
     # "0.001": on the basketball manuscript the model reported the gamma prior
     # faithfully and the check called the number absent.
-    source_digits = re.findall(r"\d*\.\d+", _normalise_numeric_artefacts(source_text))
+    numeric_texts = list(sources.values()) if sources is not None else [source_text]
+    source_digits = [number for body in numeric_texts
+                     for number in re.findall(r"\d*\.\d+", _normalise_numeric_artefacts(body))]
     source_numbers = set(source_digits)
     # A report that rounds an extracted value is not fabricating it. Saying
     # "approximately 0.13" of a table's 0.134, or calling 0.221 - 0.211 a
@@ -4635,8 +4675,9 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
     # conversion absent on the swimming manuscript. Collected as values only:
     # the literal strings differ, so this can suppress a finding but never add
     # one.
-    for token in re.findall(r"\d*\.?\d+[eE][-+]?\d+",
-                            _normalise_numeric_artefacts(source_text)):
+    for token in (number for body in numeric_texts
+                  for number in re.findall(r"\d*\.?\d+[eE][-+]?\d+",
+                                           _normalise_numeric_artefacts(body))):
         try:
             source_values.append(float(token))
         except ValueError:
@@ -4664,10 +4705,13 @@ def verify_report_citations(report_text: str, source_text: str) -> List[str]:
         if p not in seen:
             seen.add(p)
             unique.append(p)
+    if sources is not None:
+        unique = [problem.replace("the manuscript", "the supplied manuscript or supplements")
+                    for problem in unique]
     return unique
 
 
-def mark_unverified_quotations(report_text: str, source_text: str) -> str:
+def mark_unverified_quotations(report_text: str, source_text: str | Dict[str, str]) -> str:
     """
     Remove quotation marks from spans that are not in the manuscript.
 
@@ -4690,6 +4734,9 @@ def mark_unverified_quotations(report_text: str, source_text: str) -> str:
     """
     if not report_text:
         return report_text
+    sources = source_text if isinstance(source_text, dict) else None
+    if sources is not None:
+        source_text = named_source_text(sources)
     haystack = _normalise_for_match(source_text)
     haystack_punct = _strip_punctuation(haystack)
     haystack_nospace = re.sub(r"\s+", "", haystack_punct)
@@ -4709,8 +4756,8 @@ def mark_unverified_quotations(report_text: str, source_text: str) -> str:
             content = line[open_at + 1:close_at].strip()
             if not (12 <= len(content) <= 400) or len(content.split()) < 4:
                 continue
-            if _missing_fragment(content, haystack, haystack_punct,
-                                 haystack_nospace) is None:
+            if (quotation_sources(content, sources) if sources is not None else
+                    _missing_fragment(content, haystack, haystack_punct, haystack_nospace) is None):
                 continue
             drop.extend((open_at, close_at))
         if not drop:
@@ -4886,6 +4933,28 @@ def select_passages(question: str, text: str,
     return [(page, body) for _index, page, body in chosen]
 
 
+def select_source_passages(question: str, sources: Dict[str, str],
+                           budget: Optional[int] = None) -> List[Tuple[str, Optional[int], str]]:
+    """Use the existing passage scorer across sources under one context budget."""
+    if budget is None:
+        budget = qa_passage_budget()
+    blocks = [(name, page, body) for name, text in sources.items()
+              for page, body in _qa_blocks(text)]
+    if sum(len(body) + len(name) + 40 for name, _, body in blocks) <= budget:
+        return blocks
+    terms = _qa_terms(question)
+    scores = _bm25_scores(terms, [(page, body) for _, page, body in blocks]) if terms else [0] * len(blocks)
+    ranked = sorted(range(len(blocks)), key=lambda i: (-scores[i], i))
+    selected, used = [], 0
+    for i in ranked:
+        name, _, body = blocks[i]
+        cost = len(body) + len(name) + 40
+        if used + cost <= budget:
+            selected.append(i)
+            used += cost
+    return [blocks[i] for i in sorted(selected)]
+
+
 QA_SYSTEM_HEAD = """You answer questions about one manuscript, for a reviewer who is \
 checking it. You are a lookup instrument, not a second opinion.
 
@@ -4920,6 +4989,7 @@ QA_SYSTEM = QA_SYSTEM_PARTIAL          # kept for callers that want the default
 def answer_manuscript_question(model, tokenizer, question: str, text: str,
                                report_text: str = "",
                                history: Optional[List[dict]] = None,
+                               sources: Optional[Dict[str, str]] = None,
                                ) -> Tuple[str, List[str]]:
     """
     Answer one question about a reviewed manuscript, and check the answer.
@@ -4931,6 +5001,10 @@ def answer_manuscript_question(model, tokenizer, question: str, text: str,
     budget = qa_passage_budget(len(report_text or ""))
     passages = select_passages(question, text, budget)
     complete = len(text) <= budget
+    source_passages = select_source_passages(question, sources, budget) if sources else None
+    if sources:
+        passages = [(page, body) for _, page, body in source_passages]
+        complete = False  # Never infer absence from excerpts of a multi-file submission.
     if not passages:
         return ("No manuscript text is available for this review, so there is "
                 "nothing to look in.", [])
@@ -4940,6 +5014,9 @@ def answer_manuscript_question(model, tokenizer, question: str, text: str,
     for page, body in passages:
         where = f"[Page {page}]" if page is not None else "[Page unknown]"
         rendered.append(f"{where}\n{body}")
+    if sources:
+        rendered = [f"[Source: {name}; Page {page if page is not None else 'unknown'}]\n{body}"
+                    for name, page, body in source_passages]
     passage_block = "\n\n---\n\n".join(rendered)
 
     report_block = ""
@@ -4960,13 +5037,18 @@ Passages from the manuscript:
 
 Question: {question}"""
 
+    if sources:
+        user_text += ("\nThe named sources comprise one primary manuscript and its supplements. "
+                      "Supplements are evidence about that manuscript, not separate manuscripts. "
+                      "Give the exact source name with every quotation; do not infer absence "
+                      "from the main manuscript alone.")
     prompt = apply_chat_template_compat(tokenizer, user_text)
     sampler = make_default_sampler()
     out = generate(model, tokenizer, prompt=prompt, max_tokens=QA_MAX_TOKENS,
                    sampler=sampler, verbose=False)
     answer = clean_model_output(out)
 
-    problems = verify_report_citations(answer, text)
+    problems = verify_report_citations(answer, sources if sources else text)
     if report_text:
         # A quotation taken from the review is not a failed manuscript
         # quotation. Relabel rather than drop it: the reviewer still needs to
@@ -4982,6 +5064,8 @@ Question: {question}"""
             else:
                 kept.append(problem)
         problems = kept
+    if sources:
+        answer += format_quote_sources(answer, sources)
     return answer, problems
 
 
@@ -5275,6 +5359,17 @@ Chunk notes:
     return clean_model_output(out)
 
 
+def supplementary_review_role(primary_source: str) -> str:
+    if not primary_source:
+        return ""
+    return (f"\nThe sole manuscript being critically appraised is {primary_source}. "
+            "All other named files are supplementary evidence, not separate manuscripts. "
+            "Use them to support, qualify or challenge claims in the primary manuscript. "
+            "Do not criticise information for being absent from the main manuscript when "
+            "appropriately supplied in supplements. Attribute evidence and quotations to "
+            "their exact source names; distinguish conflicting sources explicitly.\n")
+
+
 def synthesize_report(
     model,
     tokenizer,
@@ -5282,6 +5377,7 @@ def synthesize_report(
     all_manifests: Optional[List[EvidenceManifest]] = None,
     tables_text: str = "",
     temperature: float = None,
+    primary_source: str = "",
 ) -> str:
     """
     Create one integrated internal critical-appraisal memo.
@@ -5319,7 +5415,7 @@ def synthesize_report(
         )
 
     user_text = f"""
-{SYSTEM_STYLE}
+{SYSTEM_STYLE}{supplementary_review_role(primary_source)}
 
 {COMMON_DIAGNOSTIC_ALIASES}
 {manifest_block}
@@ -5467,6 +5563,7 @@ def validate_report_against_evidence(
     report_text: str,
     file_summaries: List[Tuple[str, str]],
     programmatic_corrections: Optional[List[str]] = None,
+    primary_source: str = "",
 ) -> str:
     """
     Validate and recalibrate the integrated report against extracted evidence.
@@ -5491,7 +5588,7 @@ def validate_report_against_evidence(
 
     user_text = f"""
 You are checking an internal critical-appraisal memo for factual consistency,
-proportionality, specificity, and non-repetition against extracted evidence summaries.
+proportionality, specificity, and non-repetition against extracted evidence summaries.{supplementary_review_role(primary_source)}
 
 Task:
 Revise the report only where it:
