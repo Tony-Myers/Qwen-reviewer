@@ -1,0 +1,340 @@
+# Interpreting *p*-values and Non-significant Results
+
+#### Purpose
+
+This guide helps reviewers interpret frequentist hypothesis tests appropriately. It focuses on *p*-values, statistical significance, non-significant results (*p* > 0.05), confidence intervals, statistical power and common reporting errors. The emphasis is on avoiding over-interpretation and distinguishing **absence of evidence** from **evidence of absence**. 
+
+#### What reviewers should look for
+
+✓ The manuscript interprets the *p*-value as a measure of compatibility between the observed data and the statistical model under the null hypothesis, **not** as the probability that the null hypothesis is true. 
+
+✓ The manuscript interprets statistically non-significant results (*p* > 0.05) cautiously and avoids concluding that there is "no effect", "no association" or "no difference" without additional justification.
+
+✓ Confidence intervals are interpreted alongside *p*-values to assess both the estimated effect and the remaining uncertainty.
+
+✓ Conclusions distinguish statistical significance from scientific, clinical or practical importance.
+
+✓ If the goal is to demonstrate similarity or absence of a meaningful effect, the manuscript uses methods designed for that purpose (e.g., equivalence testing, non-inferiority designs or Bayes factors) rather than relying on a non-significant superiority test. 
+
+#### Common reviewer questions
+
+##### What does a *p*-value measure?
+
+A ***p*-value** is the probability of observing results at least as extreme as those obtained, **assuming the null hypothesis and all modelling assumptions are correct**.
+
+A *p*-value is **not**:
+
+- the probability that the null hypothesis is true;
+- the probability that the alternative hypothesis is true;
+- the probability that the observed result occurred "by chance";
+- the probability that the study will replicate. 
+
+##### What does statistical significance mean?
+
+A result described as **statistically significant** (for example, *p* < 0.05) indicates that the observed data would be relatively unusual if the null hypothesis were exactly true and all model assumptions correct.
+
+Statistical significance does **not** measure:
+
+- the magnitude of an effect;
+- the importance of an effect;
+- the certainty that the alternative hypothesis is correct. 
+
+##### What does a non-significant result mean?
+
+A **non-significant result** (*p* > 0.05) means that the observed data are **not sufficiently incompatible** with the null hypothesis, given the statistical model and assumptions.
+
+It does **not** demonstrate:
+
+- no effect;
+- no association;
+- no difference;
+- equivalence;
+- absence of a clinically important effect.
+
+Most non-significant results should be interpreted as **inconclusive** unless additional evidence supports stronger conclusions. 
+
+##### Why can an overall regression F-test be significant when individual predictor t-tests are non-significant?
+
+This situation is relatively common in multiple regression and is **not** a problem of p-value interpretation.
+
+It usually reflects characteristics of the regression model such as:
+
+- multicollinearity (correlated or collinear predictors);
+- suppression effects;
+- shared explanatory variance among predictors;
+- limited statistical power for individual regression coefficients.
+
+The overall **F-test** asks whether the regression model explains variation better than a model with no predictors.
+
+Individual **t-tests** ask whether each regression coefficient contributes independently after adjusting for the other predictors.
+
+A statistically significant **F-test** with non-significant **t-tests** therefore often reflects **multicollinearity** rather than contradictory statistical evidence.
+
+This guide explains the interpretation of p-values. Interpretation of regression coefficients, multicollinearity, variance inflation factors (VIFs) and regression diagnostics are covered in the companion note on multiple regression.
+
+##### What is the difference between "absence of evidence" and "evidence of absence"?
+
+These phrases are not equivalent.
+
+**Absence of evidence** means that the available data do not provide sufficiently strong evidence for an effect.
+
+**Evidence of absence** means that the available evidence supports the conclusion that any effect is absent or too small to be important.
+
+A non-significant *p*-value usually provides **absence of evidence**, **not evidence of absence**. Demonstrating evidence of absence generally requires methods specifically designed for that purpose, such as equivalence testing, the Two One-Sided Tests (TOST) procedure, non-inferiority testing, or Bayesian methods that directly quantify evidence for negligible effects. A non-significant superiority test (p > 0.05) is not evidence of equivalence.
+
+```references
+- cite: Altman, D. G., & Bland, J. M. (1995). Statistics notes: Absence of evidence is not evidence of absence. BMJ, 311(7003), 485.
+  doi: 10.1136/bmj.311.7003.485
+  supports: Why a non-significant result is not evidence that there is no effect.
+  short: absence of evidence is not evidence of absence
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read)
+  checked: 2026-09-30, Crossref
+- cite: Lakens, D., Scheel, A. M., & Isager, P. M. (2018). Equivalence testing for psychological research: A tutorial. Advances in Methods and Practices in Psychological Science, 1(2), 259–269.
+  doi: 10.1177/2515245918770963
+  supports: Equivalence testing (TOST) to show that an effect is smaller than a prespecified bound.
+  short: equivalence testing (TOST) for showing negligible effects
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
+  checked: 2026-09-30, Crossref
+```
+
+##### Can I conclude "there is no difference"?
+
+Usually **no**.
+
+A statement such as:
+
+> "There was no statistically significant difference between groups (*p* = 0.18)."
+
+is acceptable.
+
+A statement such as:
+
+> "There was no difference between groups."
+
+is usually **not** justified unless the study was specifically designed to demonstrate equivalence or the confidence interval excludes clinically important differences.  
+
+```references
+- cite: Altman, D. G., & Bland, J. M. (1995). Statistics notes: Absence of evidence is not evidence of absence. BMJ, 311(7003), 485.
+  doi: 10.1136/bmj.311.7003.485
+  supports: Why a non-significant result is not evidence that there is no effect.
+  short: absence of evidence is not evidence of absence
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read)
+  checked: 2026-09-30, Crossref
+- cite: Lakens, D., Scheel, A. M., & Isager, P. M. (2018). Equivalence testing for psychological research: A tutorial. Advances in Methods and Practices in Psychological Science, 1(2), 259–269.
+  doi: 10.1177/2515245918770963
+  supports: Equivalence testing (TOST) to show that an effect is smaller than a prespecified bound.
+  short: equivalence testing (TOST) for showing negligible effects
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
+  checked: 2026-09-30, Crossref
+```
+
+##### Should the significance threshold be justified?
+
+Yes, and it almost never is.
+
+0.05 is a convention, not a property of the world. Unlike a credible interval's width, it does have an operating characteristic -- it is a long-run rate of rejecting a true null hypothesis -- so "why 0.05?" has an answerable form: what rate of false positives is tolerable here, given what a false positive and a false negative each cost in this setting.
+
+Reviewers should not expect authors to depart from 0.05. What is reasonable to expect is that the choice appears as a choice: stated, and prespecified rather than settled once the p-values were in view. A threshold selected after the results are visible is not a threshold.
+
+Where several tests are reported, the threshold and the treatment of multiplicity belong together. A paper that applies 0.05 to twenty comparisons and corrects for none of them has made a decision about error rates whether or not it says so.
+
+The same question arises in Bayesian work without the error-rate meaning; see the note on Bayesian decision rules.
+
+```references
+- cite: Lakens, D., Adolfi, F. G., Albers, C. J., et al. (2018). Justify your alpha. Nature Human Behaviour, 2(3), 168–171.
+  doi: 10.1038/s41562-018-0311-x
+  supports: The case for justifying the significance threshold rather than defaulting to 0.05.
+  short: justifying the significance threshold rather than defaulting to 0.05
+  type: Journal article
+  access: repository
+  access_url: https://pure.eur.nl/en/publications/a51f8b58-977c-45cc-a977-f1c5839e5afe
+  access_checked: 2026-10-01, OpenAlex: green, repository copy
+  checked: 2026-09-30, Crossref
+```
+
+##### What does a 95% confidence interval mean, and how should it be interpreted?
+
+A 95% confidence interval gets its 95% interpretation from the **long-run coverage of the interval-generating procedure**: under repeated sampling and the assumptions of the procedure, 95% of intervals constructed in this way would contain the true parameter.
+
+This does **not** mean that there is a 95% probability that the fixed parameter lies within the particular interval observed. That interpretation treats a frequentist confidence interval as though it were a Bayesian credible interval.
+
+For the observed data, the interval can instead be interpreted as showing a range of parameter values reasonably compatible with the data and statistical model. The estimate and the width of the interval should therefore be considered when judging the magnitude of an effect and the uncertainty remaining around it.
+
+Reviewers should examine whether the interval includes:
+
+- clinically important benefit;
+- clinically important harm;
+- trivial effects;
+- the null value.
+
+Wide confidence intervals usually indicate considerable uncertainty, even when *p* > 0.05.
+
+The choice of 95% is **conventional rather than uniquely correct**, much like the conventional use of *p* < 0.05. Other confidence levels, such as 90% or 99%, can be used depending on the purpose and consequences of the analysis. Increasing the confidence level produces a wider interval, all else being equal. The confidence level should therefore be stated and interpreted as a choice rather than as a natural boundary between convincing and unconvincing evidence.
+
+```references
+- cite: Greenland, S., Senn, S. J., Rothman, K. J., Carlin, J. B., Poole, C., Goodman, S. N., & Altman, D. G. (2016). Statistical tests, P values, confidence intervals, and power: A guide to misinterpretations. European Journal of Epidemiology, 31(4), 337–350.
+  doi: 10.1007/s10654-016-0149-3
+  supports: Catalogue of common misinterpretations of p-values, confidence intervals and power.
+  short: common misinterpretations of p-values, intervals and power
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
+  checked: 2026-09-30, Crossref
+- cite: Morey, R. D., Hoekstra, R., Rouder, J. N., Lee, M. D., & Wagenmakers, E.-J. (2016). The fallacy of placing confidence in confidence intervals. Psychonomic Bulletin & Review, 23(1), 103–123.
+  doi: 10.3758/s13423-015-0947-8
+  supports: Common fallacies in interpreting a single observed confidence interval.
+  short: fallacies in interpreting a single confidence interval
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
+  checked: 2026-09-30, Crossref
+```
+
+##### What role does statistical power play?
+
+Low statistical power increases the chance of obtaining a non-significant result even when a meaningful effect exists.
+
+However, reviewers should avoid interpreting non-significant findings using post hoc or observed power calculations, which are generally discouraged. Instead, examine the estimated effect and its confidence interval.  
+
+```references
+- cite: Hoenig, J. M., & Heisey, D. M. (2001). The abuse of power: The pervasive fallacy of power calculations for data analysis. The American Statistician, 55(1), 19–24.
+  doi: 10.1198/000313001300339897
+  supports: Why post hoc (observed) power does not help interpret a non-significant result.
+  short: why post hoc power does not explain a non-significant result
+  type: Journal article
+  access: subscription
+  access_checked: 2026-10-01, OpenAlex: closed
+  checked: 2026-09-30, Crossref
+```
+
+#### Common misconceptions
+
+### "*p* > 0.05 means there is no effect."
+
+Incorrect.
+
+It means the study did not provide sufficiently strong evidence against the null hypothesis under the assumed model.
+
+##### "Non-significant means no difference."
+
+Incorrect.
+
+The data may remain compatible with both meaningful effects and no effect.
+
+##### "Absence of evidence is evidence of absence."
+
+Incorrect.
+
+Failure to obtain statistical significance usually indicates uncertainty rather than proof that no effect exists. 
+
+##### "A statistically significant result is an important result."
+
+Incorrect.
+
+Very small effects can become statistically significant in large samples, while important effects may fail to reach conventional significance in small samples. 
+
+##### "The confidence interval only matters when the *p*-value is non-significant."
+
+Incorrect.
+
+Confidence intervals should be interpreted for **all** estimated effects because they describe both the estimated magnitude and the remaining uncertainty.
+
+#### Common terminology
+
+**Statistically significant** – conventionally, a result with *p* below the chosen significance threshold (often 0.05). Statistical significance does not imply practical importance.
+
+**Non-significant** – a result with *p* above the chosen significance threshold. Non-significance usually indicates insufficient evidence against the null hypothesis, not proof that the null hypothesis is true.
+
+**Null hypothesis (H₀)** – the hypothesis tested by the statistical procedure, often representing no effect or no difference.
+
+**Alternative hypothesis (H₁)** – the competing hypothesis that an effect or difference exists.
+
+**Confidence interval (CI)** – an interval estimate describing values reasonably compatible with the observed data and statistical assumptions.
+
+**Type I error** – concluding that an effect exists when the null hypothesis is true.
+
+**Type II error** – failing to detect an effect that truly exists.
+
+**Equivalence testing** – methods designed to demonstrate that any effect is smaller than a prespecified practically important threshold.
+
+**Non-inferiority testing** – methods designed to show that a treatment is not unacceptably worse than a comparator by more than a predefined margin.
+
+#### **Key principles for interpreting p-values**
+
+- A *p*-value measures compatibility between the observed data and the assumed statistical model; it does not measure the probability that a hypothesis is true.
+- Scientific conclusions should never rely solely on whether a *p*-value crosses an arbitrary threshold such as 0.05.
+- Statistical significance does not imply scientific, clinical or practical importance.
+- Transparent reporting requires effect sizes, uncertainty measures and study design to be considered alongside *p*-values.
+- Selective reporting and multiple analyses can make *p*-values misleading.
+- A *p*-value alone is not a sufficient measure of evidence.
+
+#### Common reviewer red flags
+
+- "*p* > 0.05 therefore there was no effect."
+- "The treatments were equivalent because the result was non-significant."
+- "No statistically significant difference" used as evidence that treatments are identical.
+- Confidence intervals omitted from interpretation.
+- Statistical significance interpreted as practical or clinical importance.
+- Post hoc observed power used to explain a non-significant result.
+- Conclusions stronger than the evidence supported by the estimated effect and confidence interval.
+
+#### Quick reviewer checklist
+
+□ The *p*-value is interpreted correctly.
+
+□ Statistical significance is not confused with practical importance.
+
+□ Non-significant results are described as inconclusive rather than proving "no effect."
+
+□ Confidence intervals are interpreted alongside *p*-values.
+
+□ Conclusions acknowledge uncertainty.
+
+□ Claims of equivalence or "no difference" are supported by appropriate methodology rather than by a non-significant superiority test.
+
+□ The estimated effect size, confidence interval and scientific context are given greater emphasis than whether *p* is above or below 0.05.
+
+#### References
+
+Checked sources for this topic. A section with its own list shows that list instead. Each entry says what it supports; a source is listed for that purpose only, not as support for every sentence in the note.
+
+```references
+- cite: Wasserstein, R. L., & Lazar, N. A. (2016). The ASA statement on p-values: Context, process, and purpose. The American Statistician, 70(2), 129–133.
+  doi: 10.1080/00031305.2016.1154108
+  supports: The American Statistical Association's statement of what a p-value does and does not measure.
+  short: the ASA statement on what p-values do and do not measure
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read)
+  checked: 2026-09-30, Crossref
+- cite: Greenland, S., Senn, S. J., Rothman, K. J., Carlin, J. B., Poole, C., Goodman, S. N., & Altman, D. G. (2016). Statistical tests, P values, confidence intervals, and power: A guide to misinterpretations. European Journal of Epidemiology, 31(4), 337–350.
+  doi: 10.1007/s10654-016-0149-3
+  supports: Catalogue of common misinterpretations of p-values, confidence intervals and power.
+  short: common misinterpretations of p-values, intervals and power
+  type: Journal article
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (hybrid, CC BY)
+  checked: 2026-09-30, Crossref
+- cite: Amrhein, V., Greenland, S., & McShane, B. (2019). Scientists rise up against statistical significance. Nature, 567(7748), 305–307.
+  doi: 10.1038/d41586-019-00857-9
+  supports: The case against dichotomising results as significant or non-significant.
+  short: the case against dichotomising results as significant or not
+  type: Commentary
+  access: open
+  access_checked: 2026-10-01, OpenAlex: open (bronze, free to read)
+  checked: 2026-09-30, Crossref
+```
+
+---
+
+*Based on:* Wasserstein, R. L., & Lazar, N. A. (2016). The ASA statement on p-values. *The American Statistician*, 70, 129-133. https://doi.org/10.1080/00031305.2016.1154108; Greenland, S., et al. (2016). Statistical tests, P values, confidence intervals, and power: a guide to misinterpretations. *European Journal of Epidemiology*, 31, 337-350. https://doi.org/10.1007/s10654-016-0149-3
+
+*This note is original work by Tony Myers. It summarises and restates guidance from the sources above; it does not reproduce them.*

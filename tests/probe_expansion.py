@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""
+Why meta-section demotion ships, and why word-form folding and query expansion
+do not.
+
+Design note 5 in reviewer_notes.py rests on this comparison. It is kept so the
+comparison can be repeated: the notes change, and a conclusion drawn over
+fifteen of them is not automatically true over twenty.
+
+    python3 tests/probe_expansion.py
+
+Five arms over the labelled public probe questions:
+
+    A  no demotion                  what the module did before design note 5
+    B  no demotion + folding        suffix folding, notes and query alike
+    C  no demotion + folding + concept   B, and "sensitivity" also matches
+                                    "robust(ness)"
+    D  demotion                     what ships
+    E  demotion + folding
+
+The question is NOT whether the question about the prior on tau improves. That
+question motivated the change, so any expansion wide enough will fix it. What
+matters is the gap between the in-scope and out-of-scope medians, because the
+value of the notes rests on their not answering what they do not cover.
+"""
+
+import statistics
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import reviewer_notes as rn                       # noqa: E402
+from run_reviewer_notes import QUESTIONS          # noqa: E402
+
+# Folding these would merge distinctions the notes rely on: "consistency" is a
+# technical term in the network meta-analysis note, and prediction intervals,
+# predictive performance and posterior predictive checks are three different
+# things living in three different notes.
+PROTECTED = {"consistency", "consistent", "prediction", "predictions",
+             "predictive", "predict", "predicting"}
+
+# First match wins. Deliberately small: a hand rule set is what can stay in the
+# standard library, and its crudeness is part of what is being measured.
+RULES = [("ies", "y"), ("ness", ""), ("ity", ""), ("ing", ""),
+         ("ed", ""), ("es", ""), ("ly", ""), ("s", ""), ("e", "")]
+
+CONCEPT = {"sensitiv": "robust", "robust": "sensitiv"}
+
+
+def fold(tok: str) -> str:
+    if tok in PROTECTED or len(tok) < 5 or tok.endswith("ss"):
+        return tok
+    for suf, repl in RULES:
+        if tok.endswith(suf):
+            base = tok[: len(tok) - len(suf)] + repl
+            if len(base) >= 4:
+                return base
+    return tok
+
+
+def make_tokeniser(do_fold: bool, do_concept: bool, query_side: bool):
+    plain = rn._tokenise
+
+    def tok(text: str):
+        out = [fold(t) for t in plain(text)] if do_fold else list(plain(text))
+        if do_concept and query_side:
+            out += [CONCEPT[t] for t in set(out) if t in CONCEPT]
+        return out
+    return tok
+
+
+def build(do_fold: bool):
+    """An index whose documents are tokenised the way this arm requires."""
+    original = rn._tokenise
+    rn._tokenise = make_tokeniser(do_fold, False, query_side=False)
+    try:
+        return rn.NotesIndex()
+    finally:
+        rn._tokenise = original
+
+
+def run(index, do_fold: bool, do_concept: bool, meta_weight: float):
+    original_tok, original_w = rn._tokenise, rn.META_WEIGHT
+    rn._tokenise = make_tokeniser(do_fold, do_concept, query_side=True)
+    rn.META_WEIGHT = meta_weight
+    try:
+        scores = {}
+        for in_scope, q in QUESTIONS:
+            hits = index.search(q, k=1)
+            scores.setdefault(in_scope, []).append(hits[0].score if hits else 0.0)
+        return scores
+    finally:
+        rn._tokenise, rn.META_WEIGHT = original_tok, original_w
+
+
+
+ARMS = [("A  no demotion", False, False, 1.0),
+        ("B  no demotion + folding", True, False, 1.0),
+        ("C  no demotion + fold + concept", True, True, 1.0),
+        ("D  demotion  (ships)", False, False, rn.META_WEIGHT),
+        ("E  demotion + folding", True, False, rn.META_WEIGHT)]
+
+
+def main() -> int:
+    print(f"{'arm':<32}{'in-scope':>10}{'out':>8}{'gap':>8}{'terms':>8}")
+    print("-" * 66)
+    cache = {}
+    for label, do_fold, do_concept, weight in ARMS:
+        if do_fold not in cache:
+            cache[do_fold] = build(do_fold)
+        index = cache[do_fold]
+        scores = run(index, do_fold, do_concept, weight)
+        m_in = statistics.median(scores[1])
+        m_out = statistics.median(scores[0])
+        print(f"{label:<32}{m_in:>10.3f}{m_out:>8.3f}{m_in - m_out:>8.3f}{len(index._idf):>8}")
+
+    print("""
+in-scope and out are the median score of the best passage, over the 21 questions
+the notes are meant to cover and the 30 they are not; gap is the difference, and
+is the figure to read. terms is the vocabulary size, showing how much folding
+merged.
+
+Read across: on the public probe questions, demotion leaves the median-score
+gap essentially unchanged. Folding changes the scores but does not improve the
+shipped configuration on this measure. Adding "robust" to a question about
+sensitivity moves no ranking at all and lowers every score, because the extra
+word lengthens the query vector without matching the passages that should win.""")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,2130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local LLM</title>
+<style>
+  :root {
+    --bg: #f6f5f0; --surface: #ffffff; --surface-alt: #edece7;
+    --text: #1a1a18; --text-muted: #6b6962;
+    --accent: #2d5a27; --accent-light: #e8f0e6;
+    --user-bg: #2d5a27; --user-text: #ffffff;
+    --assistant-bg: #ffffff; --border: #d4d2cb;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06); --radius: 10px;
+    --error: #9b2c2c; --error-bg: #fef2f2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a18; --surface: #262622; --surface-alt: #2e2e2a;
+      --text: #e8e6df; --text-muted: #8a877e;
+      --accent: #6abf5e; --accent-light: #2a3d28;
+      --user-bg: #3a7a32; --user-text: #f0f0ec;
+      --assistant-bg: #262622; --border: #3a3a36;
+      --shadow: 0 1px 3px rgba(0,0,0,0.3);
+      --error: #f87171; --error-bg: #3b1c1c;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  header h1 { font-family: Georgia, 'Times New Roman', serif; font-size: 1.15rem; font-weight: 600; }
+  .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+  .status { font-size: 0.75rem; color: var(--text-muted); display: flex; align-items: center; gap: 5px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); transition: background 0.3s; }
+  .dot.connected { background: var(--accent); }
+  .field-label { font-size: 0.72rem; color: var(--text-muted); font-weight: 500; }
+  .compact-input, .model-select { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 0.72rem; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); outline: none; }
+  .compact-input { width: 70px; }
+  .model-select { width: min(280px, 42vw); }
+  .reasoning-choice { margin-left: 0.75rem; font-size: 0.78rem; color: var(--text-muted); }
+  .reasoning-choice select { font-size: 0.78rem; margin-left: 0.25rem; }
+  .restart-note { min-width: 92px; max-width: 220px; font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--surface-alt); flex-shrink: 0; }
+  .tab { padding: 9px 22px; font-size: 0.82rem; font-weight: 500; color: var(--text-muted); cursor: pointer; border: none; background: none; border-bottom: 2px solid transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; transition: all 0.15s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+  .panel.active { display: flex; }
+  #chat-container { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; scroll-behavior: smooth; }
+  .message { max-width: 720px; width: 100%; animation: fadeIn 0.25s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .message.user { align-self: flex-end; }
+  .message.assistant { align-self: flex-start; }
+  .message .role { font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; color: var(--text-muted); }
+  .message.user .role { text-align: right; }
+  .message .bubble { padding: 11px 15px; border-radius: var(--radius); line-height: 1.55; font-size: 0.9rem; box-shadow: var(--shadow); }
+  .message.user .bubble { background: var(--user-bg); color: var(--user-text); border-bottom-right-radius: 3px; }
+  .message.assistant .bubble { background: var(--assistant-bg); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+  .message .bubble pre { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 0.8rem; background: var(--surface-alt); padding: 10px 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; border: 1px solid var(--border); }
+  .message .bubble code { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 0.82rem; background: var(--surface-alt); padding: 1px 5px; border-radius: 3px; }
+  .message .bubble pre code { background: none; padding: 0; }
+  .message.error .bubble { background: var(--error-bg); border: 1px solid var(--error); color: var(--error); }
+  .typing-indicator { display: flex; gap: 4px; padding: 4px 0; }
+  .typing-indicator span { width: 6px; height: 6px; background: var(--text-muted); border-radius: 50%; animation: bounce 1.2s infinite; }
+  .typing-indicator span:nth-child(2) { animation-delay: 0.15s; }
+  .typing-indicator span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
+  #input-area { padding: 14px 24px; border-top: 1px solid var(--border); background: var(--surface); display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; }
+  #input-area textarea { flex: 1; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.9rem; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); resize: none; outline: none; min-height: 42px; max-height: 160px; line-height: 1.45; transition: border-color 0.15s; }
+  #input-area textarea:focus { border-color: var(--accent); }
+  .btn { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.85rem; font-weight: 600; padding: 10px 18px; border: none; border-radius: var(--radius); background: var(--accent); color: #fff; cursor: pointer; transition: opacity 0.15s; white-space: nowrap; }
+  .btn:hover { opacity: 0.88; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-secondary { background: var(--surface); color: var(--text-muted); border: 1px solid var(--border); font-weight: 500; font-size: 0.78rem; padding: 6px 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; cursor: pointer; border-radius: var(--radius); transition: all 0.15s; }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-muted); gap: 8px; }
+  .empty-state h2 { font-family: Georgia, 'Times New Roman', serif; font-size: 1.25rem; font-weight: 600; color: var(--text); }
+  .empty-state p { font-size: 0.86rem; }
+  .review-layout { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .upload-area { padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .drop-zone { width: 100%; max-width: 520px; border: 2px dashed var(--border); border-radius: 12px; padding: 32px 20px; text-align: center; cursor: pointer; transition: all 0.2s; position: relative; }
+  .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: var(--accent-light); }
+  .drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .drop-zone h3 { font-family: Georgia, 'Times New Roman', serif; font-size: 1rem; font-weight: 600; margin-bottom: 4px; }
+  .drop-zone p { font-size: 0.8rem; color: var(--text-muted); }
+  .drop-zone .file-name { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 0.82rem; color: var(--accent); margin-top: 6px; font-weight: 500; }
+  .progress-area { padding: 16px 24px; flex-shrink: 0; display: none; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
+  .progress-area.visible { display: block; }
+  .progress-bar-track { width: 100%; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-bottom: 10px; }
+  .progress-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; width: 0; }
+  .progress-bar-fill.indeterminate { width: 30%; animation: review-progress-indeterminate 1.4s ease-in-out infinite; }
+  .progress-bar-fill.completed { width: 100%; animation: none; }
+  @keyframes review-progress-indeterminate {
+    0% { transform: translateX(-110%); }
+    100% { transform: translateX(345%); }
+  }
+  .progress-log { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 0.75rem; color: var(--text-muted); max-height: 100px; overflow-y: auto; line-height: 1.6; }
+  .report-area { flex: 1; overflow-y: auto; padding: 24px; }
+  .report-content { max-width: 780px; margin: 0 auto; line-height: 1.65; font-size: 0.9rem; }
+  .report-content h1 { font-family: Georgia, 'Times New Roman', serif; font-size: 1.35rem; font-weight: 600; margin: 24px 0 10px; }
+  .report-content h2 { font-family: Georgia, 'Times New Roman', serif; font-size: 1.1rem; font-weight: 600; margin: 20px 0 8px; }
+  .report-content h3 { font-size: 0.95rem; font-weight: 600; margin: 16px 0 6px; }
+  .report-content ul { margin: 6px 0 6px 20px; }
+  .report-content li { margin-bottom: 4px; }
+  .report-content pre { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 0.8rem; background: var(--surface-alt); padding: 10px 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; border: 1px solid var(--border); }
+  .report-content code { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 0.82rem; background: var(--surface-alt); padding: 1px 5px; border-radius: 3px; }
+  .report-content pre code { background: none; padding: 0; }
+  .report-content hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+  .review-aid-notice { max-width: 780px; margin: 0 auto 16px; padding: 12px 14px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-alt); font-size: 0.85rem; line-height: 1.5; }
+  .review-aid-notice p { margin: 6px 0 0; }
+  .report-actions { max-width: 780px; margin: 16px auto 0; display: flex; gap: 10px; padding-bottom: 24px; }
+  /* Academic Chat */
+  #academic-container { flex: 1; overflow-y: auto; padding: 24px; }
+  .academic-content { max-width: 860px; margin: 0 auto; }
+  .academic-intro { margin-bottom: 18px; padding: 14px 16px; background: var(--accent-light); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.82rem; line-height: 1.55; color: var(--text-muted); }
+  .academic-intro strong { color: var(--text); }
+  .academic-result { display: none; margin-top: 20px; }
+  .academic-answer { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; line-height: 1.6; font-size: 0.9rem; box-shadow: var(--shadow); }
+  .academic-evidence { margin-top: 18px; }
+  .evidence-check { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius); background: var(--surface); font-size: 0.85rem; line-height: 1.55; }
+  .evidence-check.state-further_reading { border-left-color: #3b6ea8; }
+  .evidence-check.state-worth_checking { border-left-color: #b7791f; }
+  .evidence-check.state-outside_guidance, .evidence-check.state-incomplete { border-left-color: var(--text-muted); }
+  .evidence-check-kicker { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+  .evidence-check-title { font-weight: 600; margin: 2px 0 2px; }
+  .evidence-check-line { margin: 2px 0; }
+  .evidence-check-muted { color: var(--text-muted); }
+  .evidence-check-notice { margin: 8px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--error-bg); }
+  .evidence-check-quote { margin: 6px 0 0 0; padding-left: 10px; border-left: 2px solid var(--border); }
+  .evidence-check details { margin-top: 8px; }
+  .evidence-check summary { cursor: pointer; font-size: 0.8rem; color: var(--accent); }
+  .evidence-topic { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--border); }
+  .evidence-topic-title { font-weight: 600; }
+  .evidence-ref { margin: 5px 0; }
+  .evidence-ref-meta { color: var(--text-muted); font-size: 0.78rem; }
+  .evidence-full-ref { margin: 4px 0; font-size: 0.8rem; }
+  .evidence-points li { margin: 3px 0; }
+  .evidence-about { margin-top: 10px; font-size: 0.78rem; color: var(--text-muted); }
+  .technical-details { margin-top: 10px; }
+  .technical-details > summary { cursor: pointer; font-size: 0.78rem; color: var(--text-muted); }
+  .technical-diagnostics { font-size: 0.78rem; margin: 8px 0; }
+  .technical-diagnostics table { border-collapse: collapse; margin: 4px 0 8px; }
+  .technical-diagnostics td { padding: 1px 10px 1px 0; vertical-align: top; }
+  .academic-evidence h3 { font-family: Georgia, 'Times New Roman', serif; font-size: 1rem; margin-bottom: 10px; }
+
+  .academic-reference-section {
+    margin-top: 18px;
+  }
+  .academic-reference {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    line-height: 1.5;
+    font-size: 0.86rem;
+  }
+  .academic-reference:last-of-type {
+    border-bottom: none;
+  }
+  .academic-reference-meta {
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: 0.79rem;
+  }
+  .academic-reference-link {
+    margin-top: 3px;
+    font-size: 0.79rem;
+  }
+  .academic-reference-link a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .academic-reference-link a:hover {
+    text-decoration: underline;
+  }
+  .academic-reference-status {
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+  }
+  .academic-related-record {
+    margin-top: 7px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    line-height: 1.45;
+  }
+  .academic-status-good {
+    color: var(--accent);
+  }
+  .academic-reference-note {
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.45;
+  }
+
+  .academic-verification-summary {
+    margin-top: 20px;
+    padding: 11px 13px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-alt);
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+  .academic-verification-details {
+    margin-top: 7px;
+  }
+  .academic-verification-details > summary,
+  .academic-source-evidence > summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .academic-audit-content {
+    margin-top: 12px;
+  }
+  .academic-audit-content h4 {
+    margin: 15px 0 7px;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 0.92rem;
+  }
+  .academic-audit-card {
+    padding: 10px 12px;
+    margin: 8px 0;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    font-size: 0.79rem;
+    line-height: 1.5;
+  }
+  .academic-audit-grid {
+    margin-top: 7px;
+    color: var(--text-muted);
+  }
+  .academic-audit-reasons {
+    margin: 6px 0 0 18px;
+  }
+  .academic-source-evidence {
+    margin-top: 8px;
+  }
+  .academic-evidence-passage {
+    padding: 8px 10px;
+    margin: 6px 0;
+    background: var(--surface-alt);
+    border-radius: 6px;
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+  .academic-evidence-locator {
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  #academic-input-area { padding: 14px 24px; border-top: 1px solid var(--border); background: var(--surface); display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; }
+  #academicInput { flex: 1; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.9rem; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); resize: none; outline: none; min-height: 42px; max-height: 160px; line-height: 1.45; }
+  #academicInput:focus { border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Local LLM</h1>
+  <div class="header-right">
+    <label class="field-label" for="modelSelect">Model:</label>
+    <select class="model-select" id="modelSelect"></select>
+    <button class="btn-secondary" id="restartBtn" onclick="restartWithSelectedModel()">Restart</button>
+    <span class="restart-note" id="restartNote"></span>
+    <label class="field-label" for="maxTokens">Tokens:</label>
+    <input type="number" id="maxTokens" value="2400" min="200" max="8192" step="200"
+      class="compact-input">
+    <button class="btn-secondary" id="clearBtn" onclick="clearChat()">Clear</button>
+    <div class="status"><div class="dot" id="statusDot"></div><span id="statusText">Checking...</span></div>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('chat')">Chat</button>
+  <button class="tab" onclick="switchTab('academic')">Academic Chat</button>
+  <button class="tab" onclick="switchTab('review')">Review</button>
+</div>
+
+<div class="panel active" id="panel-chat">
+  <div id="chat-provenance" style="font-size:11px; opacity:.75; padding:6px 10px; border-bottom:1px solid var(--border,#ddd);">
+    <strong>Source: model reasoning</strong> &middot; not checked against a manuscript, the reviewer notes,
+    or any verified reference. <strong>Ask it how something works, not what the record says.</strong>
+    <details style="margin-top:4px;"><summary style="cursor:pointer; opacity:.8;">why, and what to avoid asking</summary>
+    <div style="margin-top:5px; line-height:1.45;">
+      Explanations are generated and have been reliable here. Particular facts have to be recalled, and this
+      has no way to look anything up, so the questions to avoid are the ones that require a fact rather than
+      an account:
+      <ul style="margin:5px 0 5px 16px; padding:0;">
+        <li><em>Which paper or study established X? Who proposed X?</em> Every such question in testing
+            produced a defective or invented reference.</li>
+        <li><em>What did study Y find?</em> Same, and the invention is harder to spot because the finding
+            is usually about right.</li>
+        <li><em>What is the threshold, the cut-off, the number?</em> The rule for how many imputations to
+            use came back inverted, twice, in opposite directions.</li>
+      </ul>
+      Where a term means different things in different fields, say which you mean: asked about the E-value
+      it described a Bayesian measure of evidence rather than the sensitivity measure used in observational
+      research, confidently and with an invented source.
+      <br><br>
+      Across eleven independent test questions it gave mostly sound explanations alongside invented papers
+      carrying real-looking DOIs, a four-author paper assembled from the initials of a method, a verbatim
+      quotation that does not exist in the book it was attributed to, and the wrong statistic under the
+      right name. Nothing from here belongs in a review unchecked.
+    </div></details>
+  </div>
+  <div id="chat-container">
+    <div class="empty-state" id="emptyState"><h2>Ready to chat</h2><p>Type a message below to start.</p></div>
+  </div>
+  <div id="input-area">
+    <textarea id="userInput" rows="1" placeholder="Type a message..." autofocus></textarea>
+    <label style="font-size:11px; opacity:.75; display:flex; align-items:center; gap:4px; white-space:nowrap;"
+           title="Send this question on its own, with none of the conversation above it.">
+      <input type="checkbox" id="askFresh"> fresh
+      <span id="turnCount" style="opacity:.6;"></span>
+    </label>
+    <button class="btn" id="sendBtn" onclick="sendMessage()">Send</button>
+  </div>
+</div>
+
+<div class="panel" id="panel-academic">
+  <div id="academic-container">
+    <div class="academic-content">
+      <div class="academic-intro">
+        <strong>Academic Chat</strong> separates model-generated academic reasoning from verification.
+        References may be checked for bibliographic identity, sources may be retrieved, and specific
+        claims may be assessed against located source evidence. A verified reference does not by
+        itself mean that the source supports a claim.
+      </div>
+
+      <div class="empty-state" id="academicEmptyState">
+        <h2>Ask an academic question</h2>
+        <p>Answers will distinguish generated reasoning from checked evidence.</p>
+      </div>
+
+      <div class="academic-result" id="academicResult">
+        <div class="academic-answer" id="academicAnswer"></div>
+        <div class="academic-evidence" id="academicEvidence">
+          <div id="academicEvidenceContent"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="academic-input-area">
+    <textarea id="academicInput" rows="1"
+      placeholder="Ask an academic or methodological question..."></textarea>
+    <button class="btn" id="academicSendBtn" onclick="sendAcademicMessage()">Ask</button>
+  </div>
+</div>
+
+<div class="panel" id="panel-review">
+  <div class="review-layout">
+    <div class="upload-area">
+      <div class="drop-zone" id="dropZone">
+        <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.md,.csv,.xlsx">
+        <h3>Upload manuscript</h3>
+        <p>PDF, DOCX, TXT, MD, CSV, or XLSX</p>
+        <div class="file-name" id="fileName" style="display:none"></div>
+      </div>
+      <div>
+        <label for="supplementInput">Supplementary material (optional)</label>
+        <input type="file" id="supplementInput" multiple accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.xlsm">
+        <p>Additional evidence for this manuscript. 100 MiB total across all files.</p>
+      </div>
+      <div>
+        <button class="btn" id="reviewBtn" onclick="startReview()" disabled>Start review</button>
+        <button class="btn-secondary" id="cancelReviewBtn" onclick="cancelReview()" style="display:none">Cancel review</button>
+        <label class="reasoning-choice" for="reasoningMode" title="Thinking mode lets the model reason before writing. Slower. Untested against instruct mode -- alternate them and compare.">
+          Reasoning:
+          <select id="reasoningMode">
+            <option value="">server default</option>
+            <option value="0">instruct</option>
+            <option value="1">thinking</option>
+            <option value="synthesis">thinking: synthesis only</option>
+          </select>
+        </label>
+        <label class="reasoning-choice" for="visionMode" title="Vision re-reads a table from its page image when the text layer looks damaged. Slower on papers with many tables. Was previously a server start-up flag.">
+          Vision
+          <select id="visionMode">
+            <option value="">server default</option>
+            <option value="1">on</option>
+            <option value="0">off</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div class="progress-area" id="progressArea">
+      <div class="progress-bar-track"><div class="progress-bar-fill" id="progressBar"></div></div>
+      <div class="progress-log" id="progressLog"></div>
+    </div>
+    <div class="report-area" id="reportArea">
+      <div class="empty-state"><h2>No review yet</h2><p>Upload a manuscript and press Start review.</p></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = window.location.origin;
+let chatHistory = [], isGenerating = false, selectedFile = null, isRestarting = false;
+// Set when the user picks a model themselves. checkServer() polls every 15
+// seconds and used to snap the dropdown back to whatever is loaded, so a
+// choice made and not acted on within 15 seconds silently reverted -- the
+// selector appeared to jump back to the previous model, and a review started
+// afterwards ran on it. A pending choice is now left alone until the user
+// restarts, or picks the loaded model again.
+let modelChoicePending = false;
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === name));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+  if (name === 'chat') document.getElementById('userInput').focus();
+  if (name === 'academic') document.getElementById('academicInput').focus();
+}
+
+async function checkServer() {
+  try {
+    const r = await fetch(BASE + '/v1/models', { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      const d = await r.json();
+      const currentModel = d?.data?.[0]?.id || 'connected';
+      const select = document.getElementById('modelSelect');
+      const match = [...select.options].find(o => o.dataset.model === currentModel);
+      const statusText = document.getElementById('statusText');
+
+      document.getElementById('statusDot').className = 'dot connected';
+      statusText.textContent = match?.textContent || currentModel;
+      statusText.title = currentModel;
+      syncSelectedModel(currentModel);
+      return currentModel;
+    }
+  } catch {}
+  document.getElementById('statusDot').className = 'dot'; document.getElementById('statusText').textContent = 'Server not reachable';
+  return '';
+}
+
+function setRestartNote(text, isError) {
+  const el = document.getElementById('restartNote');
+  el.textContent = text || '';
+  el.style.color = isError ? 'var(--error)' : 'var(--text-muted)';
+}
+
+function setControlsDisabled(disabled) {
+  document.getElementById('restartBtn').disabled = disabled;
+  document.getElementById('modelSelect').disabled = disabled;
+  document.getElementById('sendBtn').disabled = disabled || isGenerating;
+  refreshReviewButton(disabled);
+  document.getElementById('clearBtn').disabled = disabled;
+}
+
+// A review must not start on a model the user did not choose. The dropdown
+// holds a pending choice until Restart is pressed, so between the two the
+// selector names one model and llama-server serves another; a review begun in
+// that window runs on the loaded model, which cost an hour of generation and
+// one invalid arm of a model comparison. The button is disabled until the
+// choice is either loaded or given up.
+function refreshReviewButton(forceDisabled) {
+  const btn = document.getElementById('reviewBtn');
+  if (!btn) return;
+  const blocked = forceDisabled === undefined
+    ? (isRestarting || isGenerating)
+    : forceDisabled;
+  btn.disabled = !!blocked || !!activeReviewJobId || !selectedFile || modelChoicePending;
+  btn.title = modelChoicePending
+    ? 'Press Restart first: the selected model is not the one that is loaded'
+    : '';
+}
+
+function syncSelectedModel(currentModel) {
+  const select = document.getElementById('modelSelect');
+  if (!select.options.length) return;
+  select.dataset.currentModel = currentModel;
+  const match = [...select.options].find(o => o.dataset.model === currentModel);
+  if (!match || isRestarting) return;
+  if (select.value === match.value) {
+    if (modelChoicePending) {
+      modelChoicePending = false;
+      refreshReviewButton();
+    }
+    return;
+  }
+  if (modelChoicePending) {
+    setRestartNote('Press Restart to load ' + (select.selectedOptions[0]?.textContent || 'this model'));
+    return;
+  }
+  select.value = match.value;
+}
+
+async function loadModelChoices() {
+  const select = document.getElementById('modelSelect');
+  try {
+    const r = await fetch(BASE + '/api/models/aliases', { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    select.innerHTML = '';
+    for (const m of d.models || []) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.dataset.model = m.model;
+      opt.textContent = m.label;
+      select.appendChild(opt);
+    }
+    if (d.current_model && ![...select.options].some(o => o.dataset.model === d.current_model)) {
+      const opt = document.createElement('option');
+      opt.value = d.current_model;
+      opt.dataset.model = d.current_model;
+      opt.textContent = d.current_model;
+      select.appendChild(opt);
+    }
+    syncSelectedModel(d.current_model || '');
+  } catch (e) {
+    select.innerHTML = '<option value="">Model list unavailable</option>';
+    setRestartNote('No model list', true);
+  }
+}
+
+async function restartWithSelectedModel() {
+  const select = document.getElementById('modelSelect');
+  const opt = select.selectedOptions[0];
+  if (!opt || !select.value || isRestarting) return;
+  isRestarting = true;
+  setControlsDisabled(true);
+  setRestartNote('Restarting...');
+  chatHistory = [];
+
+  try {
+    const r = await fetch(BASE + '/api/server/restart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: select.value }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    await waitForRestart(d.model || opt.dataset.model);
+  } catch (e) {
+    setRestartNote(e.message, true);
+    isRestarting = false;
+    setControlsDisabled(false);
+  }
+}
+
+function invalidateCompletedReviewAfterRestart() {
+  if (!currentJobId) return;
+
+  currentJobId = null;
+
+  const askBtn = document.getElementById('askBtn');
+  const askInput = document.getElementById('askInput');
+  const askMode = document.getElementById('askMode');
+  const askHelp = document.getElementById('askHelp');
+
+  if (askBtn) askBtn.disabled = true;
+  if (askInput) askInput.disabled = true;
+  if (askMode) askMode.disabled = true;
+  if (askHelp) {
+    askHelp.textContent =
+      'Review questions are unavailable after a model restart. The completed review remains available locally.';
+  }
+
+  const ra = document.getElementById('reportArea');
+  const appendixCached = !!(ra && ra._rawAppendix);
+  if (!appendixCached) {
+    const appendixToggle = document.getElementById('appendixToggle');
+    const appendixDownload = document.getElementById('appendixDownload');
+    if (appendixToggle) {
+      appendixToggle.disabled = true;
+      appendixToggle.textContent = 'Evidence appendix unavailable after restart';
+    }
+    if (appendixDownload) appendixDownload.disabled = true;
+  }
+}
+
+async function waitForRestart(expectedModel) {
+  const deadline = Date.now() + 2700000;
+  let reached = false;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const current = await checkServer();
+    if (current && (!expectedModel || current === expectedModel)) {
+      reached = true;
+      break;
+    }
+  }
+
+  isRestarting = false;
+  modelChoicePending = false;
+  setControlsDisabled(false);
+  refreshReviewButton();
+  if (reached) {
+    clearChat();
+    invalidateCompletedReviewAfterRestart();
+    setRestartNote('Ready');
+    setTimeout(() => setRestartNote(''), 2500);
+    loadModelChoices();
+  } else {
+    setRestartNote('Still loading', true);
+  }
+}
+
+loadModelChoices();
+checkServer(); setInterval(() => { if (!isRestarting) checkServer(); }, 15000);
+
+const userInput = document.getElementById('userInput');
+userInput.addEventListener('input', () => { userInput.style.height = 'auto'; userInput.style.height = Math.min(userInput.scrollHeight, 160) + 'px'; });
+userInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtMd(t) {
+  // Chat content is untrusted: escape it before introducing controlled markup.
+  t = esc(t);
+  t = t.replace(/```(\w*)\n([\s\S]*?)```/g, (_,l,c) => '<pre><code>' + c.trim() + '</code></pre>');
+  t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+  t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  t = t.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  return t.replace(/\n/g, '<br>');
+}
+
+function addMsg(role, content, err) {
+  document.getElementById('emptyState')?.remove();
+  const d = document.createElement('div'); d.className = 'message ' + role + (err ? ' error' : '');
+  d.innerHTML = '<div class="role">' + (role === 'user' ? 'You' : 'Assistant') + '</div><div class="bubble">' + fmtMd(content) + '</div>';
+  const c = document.getElementById('chat-container'); c.appendChild(d); c.scrollTop = c.scrollHeight;
+}
+function addTyping() {
+  document.getElementById('emptyState')?.remove();
+  const d = document.createElement('div'); d.className = 'message assistant'; d.id = 'typing';
+  d.innerHTML = '<div class="role">Assistant</div><div class="bubble"><div class="typing-indicator"><span></span><span></span><span></span></div></div>';
+  const c = document.getElementById('chat-container'); c.appendChild(d); c.scrollTop = c.scrollHeight;
+}
+function rmTyping() { document.getElementById('typing')?.remove(); }
+
+async function sendMessage() {
+  const t = userInput.value.trim(); if (!t || isGenerating) return;
+  isGenerating = true; document.getElementById('sendBtn').disabled = true;
+  addMsg('user', t); userInput.value = ''; userInput.style.height = 'auto';
+  chatHistory.push({ role: 'user', content: t }); addTyping();
+  try {
+    const r = await fetch(BASE + '/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: outgoingMessages(), max_tokens: parseInt(document.getElementById('maxTokens').value) || 1200, temperature: 0.4, top_p: 0.9 }) });
+    rmTyping();
+    if (!r.ok) { addMsg('assistant', 'Server error ' + r.status, true); chatHistory.pop(); }
+    else { const d = await r.json(); const reply = d.choices?.[0]?.message?.content || '(empty)'; addMsg('assistant', reply); chatHistory.push({ role: 'assistant', content: reply }); updateTurnCount(); }
+  } catch (e) { rmTyping(); addMsg('assistant', 'Could not reach server: ' + e.message, true); chatHistory.pop(); }
+  isGenerating = false; document.getElementById('sendBtn').disabled = false; userInput.focus();
+}
+
+// Every turn is re-sent with the next question, so the model answers in the
+// presence of everything it has already said -- including anything it got
+// wrong. A reference invented in turn three is treated as established by turn
+// seven. "Fresh" sends the current question alone, which is what an
+// independent methodological question usually wants; leave it off for
+// follow-ups, where the history is the point.
+function outgoingMessages() {
+  const fresh = document.getElementById('askFresh');
+  if (fresh && fresh.checked && chatHistory.length) {
+    return [chatHistory[chatHistory.length - 1]];
+  }
+  return chatHistory;
+}
+
+function updateTurnCount() {
+  const el = document.getElementById('turnCount');
+  if (!el) return;
+  const turns = Math.floor(chatHistory.length / 2);
+  el.textContent = turns ? '(' + turns + ' turn' + (turns === 1 ? '' : 's') + ' in context)' : '';
+}
+
+function clearChat() {
+  chatHistory = [];
+  updateTurnCount();
+  document.getElementById('chat-container').innerHTML = '<div class="empty-state" id="emptyState"><h2>Ready to chat</h2><p>Type a message below to start.</p></div>';
+}
+
+// --- Academic Chat ---
+const academicInput = document.getElementById('academicInput');
+const academicSendBtn = document.getElementById('academicSendBtn');
+let academicGenerating = false;
+
+academicInput.addEventListener('input', () => {
+  academicInput.style.height = 'auto';
+  academicInput.style.height = Math.min(academicInput.scrollHeight, 160) + 'px';
+});
+
+academicInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendAcademicMessage();
+  }
+});
+
+function setAcademicRunning(running) {
+  academicGenerating = running;
+  academicInput.disabled = running;
+  academicSendBtn.disabled = running;
+  academicSendBtn.textContent = running ? 'Checking...' : 'Ask';
+}
+
+function renderAcademicRelease(release) {
+  // Release state remains available in the detailed audit trail rather than
+  // competing visually with the substantive answer.
+  return '';
+}
+
+function academicStatusLabel(status) {
+  const labels = {
+    verified: 'Verified bibliographic identity',
+    corroborated: 'Corroborated',
+    eligible: 'Eligible for source retrieval',
+    not_eligible: 'Not eligible for source retrieval',
+    attempted: 'Source discovery attempted',
+    not_attempted: 'Source discovery not attempted',
+    location_found: 'Source located',
+    location_not_found: 'Source not located',
+    retrieved: 'Source retrieved',
+    not_retrieved: 'Source not retrieved',
+    claim_supported: 'Claim supported',
+    claim_partially_supported: 'Claim partially supported',
+    claim_not_supported: 'Claim not supported',
+    claim_contradicted: 'Claim contradicted',
+    technically_verified: 'Technically verified',
+    technical_conflict: 'Technical conflict',
+    not_verified: 'Not verified',
+    methodologically_consistent: 'Methodologically consistent',
+    methodological_conflict: 'Methodological conflict',
+    methodological_consistency_not_established: 'Methodological consistency not established',
+    coverage_assessment_unavailable: 'Coverage assessment unavailable',
+    coverage_not_attempted: 'Coverage assessment not attempted',
+    missing_claims_found: 'Additional claims found for checking',
+    no_missing_claims_proposed: 'No additional claims proposed',
+    checking_incomplete: 'Checking incomplete'
+  };
+  return labels[status] || String(status || 'unknown').replace(/_/g, ' ');
+}
+
+// A methodological judgement that could not be completed carries an
+// assessment_error. Its status reads "not established", but it is not a
+// judgement about the guidance, so it is labelled for what happened.
+function academicMethodologyLabel(methodology) {
+  if (methodology?.assessment_error) return 'Methodological check not completed';
+  return academicStatusLabel(methodology?.status);
+}
+
+function academicReasons(reasons) {
+  if (!Array.isArray(reasons) || !reasons.length) return '';
+  let h = '<ul class="academic-audit-reasons">';
+  for (const reason of reasons) h += '<li>' + esc(String(reason)) + '</li>';
+  return h + '</ul>';
+}
+
+function academicReferenceCandidate(reference) {
+  const verification = reference?.verification || {};
+  const crossref = verification.crossref_verification || {};
+
+  // A strict verification may have an accepted candidate; otherwise retain
+  // the best related Crossref result as an explicitly non-verified candidate.
+  return crossref.candidate || crossref.related_candidate || null;
+}
+
+function academicReferenceDoi(reference) {
+  const proposed = reference?.proposed_reference || {};
+  const candidate = academicReferenceCandidate(reference);
+  return proposed.doi || candidate?.doi || '';
+}
+
+// Positions of the proposed references that a source claim points to
+// (claim.reference_index). Only those are shown to the reader as the answer's
+// references; the rest are model proposals not given in support of any claim
+// and stay in the technical details. Mirrors linked_reference_indices() in
+// academic_check_further.py, which applies the same rule to the citation notice.
+function academicLinkedReferenceIndices(data) {
+  const linked = new Set();
+  const sourceClaims = Array.isArray(data?.source_claims) ? data.source_claims : [];
+  for (const item of sourceClaims) {
+    const index = item?.claim?.reference_index;
+    if (Number.isInteger(index)) linked.add(index);
+  }
+  return linked;
+}
+
+// The full title of a verified record from its own structured fields.
+// Crossref often splits a book's title ("Causality") from its subtitle
+// ("Models, Reasoning, and Inference"); the reader should see both. The
+// subtitle is not repeated when the title already contains it.
+function academicVerifiedTitle(record) {
+  const title = String(record?.title || '').trim();
+  const subtitle = String(record?.subtitle || '').trim();
+  if (!title || !subtitle) return title;
+  const plain = s => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  if (plain(title).includes(plain(subtitle))) return title;
+  return /[:?!.]$/.test(title) ? title + ' ' + subtitle : title + ': ' + subtitle;
+}
+
+function academicReferenceRecord(record) {
+  const authors = Array.isArray(record.authors) ? record.authors.join(', ') : '';
+  const details = [];
+  if (authors) details.push(authors);
+  if (record.year) details.push(String(record.year));
+  if (record.venue) details.push(record.venue);
+  let h = '<div>' + esc(record.title || 'Untitled record') + '</div>';
+  if (details.length) {
+    h += '<div class="academic-reference-meta">' + esc(details.join(' · ')) + '</div>';
+  }
+  if (record.doi) {
+    const url = 'https://doi.org/' + encodeURIComponent(record.doi);
+    h += '<div class="academic-reference-link">' +
+      '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' +
+      'doi:' + esc(record.doi) + '</a></div>';
+  }
+  return h;
+}
+
+function renderAcademicReference(reference, index) {
+  const proposed = reference?.proposed_reference || {};
+  const verification = reference?.verification || {};
+  const crossref = verification.crossref_verification || {};
+  // Only a verified match is accepted as the same bibliographic identity.
+  // Verification also attaches a record when it is merely probable, or when
+  // a proposed DOI resolves to a record whose details conflict with the
+  // proposal; such a record is shown separately and never takes the place of
+  // the proposed reference.
+  const accepted = crossref.status === 'verified' ? (crossref.candidate || null) : null;
+  const resolved = accepted ? null : (crossref.candidate || null);
+  const related = accepted ? null : (crossref.related_candidate || null);
+
+  const title = (accepted ? academicVerifiedTitle(accepted) : proposed.title) || 'Untitled reference';
+  const author = accepted
+    ? (Array.isArray(accepted.authors) ? accepted.authors.join(', ') : '')
+    : (proposed.author || '');
+  const year = (accepted ? accepted.year : proposed.year) || '';
+  const venue = (accepted ? accepted.venue : proposed.venue) || '';
+
+  let h = '<div class="academic-reference">';
+  h += '<div><strong>' + (index + 1) + '. ' + esc(title) + '</strong></div>';
+
+  const details = [];
+  if (author) details.push(author);
+  if (year) details.push(String(year));
+  if (venue) details.push(venue);
+
+  if (details.length) {
+    h += '<div class="academic-reference-meta">' +
+      esc(details.join(' · ')) + '</div>';
+  }
+
+  if (accepted && accepted.doi) {
+    const doiUrl = 'https://doi.org/' + encodeURIComponent(accepted.doi);
+    h += '<div class="academic-reference-link">' +
+      '<a href="' + doiUrl + '" target="_blank" rel="noopener noreferrer">' +
+      'doi:' + esc(accepted.doi) + '</a></div>';
+  } else if (proposed.doi) {
+    // Not linked: unverified, the DOI may lead to a different publication.
+    h += '<div class="academic-reference-meta">DOI given: ' + esc(proposed.doi) + '</div>';
+  }
+
+  if (accepted) {
+    h += '<div class="academic-reference-status academic-status-good">' +
+      'Bibliographic identity verified</div>';
+  } else {
+    h += '<div class="academic-reference-status">' +
+      'Bibliographic identity not independently established</div>';
+  }
+
+  const titleQuerySkipped = Array.isArray(verification.issues) &&
+    verification.issues.some(issue => issue && issue.service === 'openalex' &&
+      issue.stage === 'title_corroboration' && issue.outcome === 'skipped' &&
+      issue.code === 'unsafe_title_query');
+  if (verification.bibliographic_notice) {
+    h += '<div class="academic-reference-status">' +
+      esc(String(verification.bibliographic_notice)) + '</div>';
+  } else if (titleQuerySkipped) {
+    h += '<div class="academic-reference-status">';
+    h += '<strong>Title corroboration not attempted.</strong> ';
+    h += 'The title could not safely be represented in the supported OpenAlex ';
+    h += 'title query. Cross-database corroboration is incomplete, so source ';
+    h += 'retrieval was not attempted.';
+    h += '</div>';
+  } else if (verification.corroboration_status === 'unavailable') {
+    h += '<div class="academic-reference-status">';
+    h += '<strong>Independent corroboration unavailable.</strong> ';
+    h += 'Independent bibliographic corroboration could not be completed. ';
+    h += 'Source retrieval was not attempted.';
+    h += '</div>';
+  }
+
+  // A record verification attached without accepting it: kept visibly
+  // separate from the proposed reference, and labelled for what it is.
+  if (resolved) {
+    const sameDoi = Boolean(proposed.doi && resolved.doi) &&
+      String(proposed.doi).trim().toLowerCase() === String(resolved.doi).trim().toLowerCase();
+    let label;
+    if (crossref.status === 'metadata_conflict') {
+      label = 'The DOI given resolves to a different publication:';
+    } else if (sameDoi) {
+      label = 'The DOI given resolves to a record not established as the same reference:';
+    } else {
+      label = 'Closest Crossref record, not established as the same reference:';
+    }
+    h += '<div class="academic-related-record">';
+    h += '<div><strong>' + esc(label) + '</strong></div>';
+    h += academicReferenceRecord(resolved);
+    h += '</div>';
+  }
+
+  if (related && !(resolved && related.doi && resolved.doi &&
+      String(related.doi).toLowerCase() === String(resolved.doi).toLowerCase())) {
+    h += '<div class="academic-related-record">';
+    h += '<div><strong>Related Crossref record:</strong></div>';
+    h += academicReferenceRecord(related);
+    h += '</div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderAcademicSourceClaim(item, index) {
+  const claim = item?.claim?.claim || '';
+  const retrieval = item?.retrieval_identity || {};
+  const discovery = item?.source_discovery || {};
+  const location = discovery.location || null;
+  const source = item?.source_retrieval || null;
+  const located = item?.claim_location || null;
+  const assessment = item?.claim_assessment || null;
+
+  let h = '<div class="academic-audit-card">';
+  h += '<div><strong>Claim ' + (index + 1) + ':</strong> ' +
+    esc(claim || '(empty claim)') + '</div>';
+
+  h += '<div class="academic-audit-grid">';
+  h += '<div><strong>Retrieval identity:</strong> ' +
+    esc(academicStatusLabel(retrieval.status));
+  if (retrieval.doi) h += ' · <code>' + esc(retrieval.doi) + '</code>';
+  h += '</div>';
+
+  h += '<div><strong>Source discovery:</strong> ' +
+    esc(academicStatusLabel(discovery.status));
+  if (location?.status) h += ' · ' + esc(academicStatusLabel(location.status));
+  h += '</div>';
+
+  h += '<div><strong>Source retrieval:</strong> ' +
+    (source ? esc(academicStatusLabel(source.status)) : 'not reached') +
+    '</div>';
+
+  h += '<div><strong>Relevant evidence:</strong> ' +
+    (located
+      ? esc(academicStatusLabel(located.claim_status || located.status))
+      : 'not located') +
+    '</div>';
+
+  // A located claim whose assessment output could not be used is "not
+  // completed": it is neither support nor contradiction, and the located
+  // evidence below stays available for inspection.
+  h += '<div><strong>Claim assessment:</strong> ' +
+    (assessment
+      ? esc(academicStatusLabel(assessment.status))
+      : (item?.claim_assessment_error ? 'not completed' : 'not performed')) +
+    '</div>';
+  h += '</div>';
+
+  if (assessment) h += academicReasons(assessment.reasons);
+  else if (located) h += academicReasons(located.reasons);
+  else if (source) h += academicReasons(source.reasons);
+  else h += academicReasons(discovery.reasons);
+
+  const evidence = assessment?.evidence || located?.evidence || [];
+  if (Array.isArray(evidence) && evidence.length) {
+    h += '<details class="academic-source-evidence">';
+    h += '<summary>Show located source evidence (' + evidence.length + ')</summary>';
+
+    for (const ev of evidence) {
+      h += '<div class="academic-evidence-passage">';
+      const where = [];
+      if (ev.page_number != null) where.push('page ' + ev.page_number);
+      if (ev.source) where.push(ev.source);
+
+      if (where.length) {
+        h += '<div class="academic-evidence-locator">' +
+          esc(where.join(' · ')) + '</div>';
+      }
+
+      h += esc(ev.text || '');
+      h += '</div>';
+    }
+
+    h += '</details>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderAcademicTechnicalClaim(item, index) {
+  const claim = item?.claim || {};
+  const verification = item?.verification || {};
+  const methodology = item?.methodological_consistency || null;
+
+  let h = '<div class="academic-audit-card">';
+  h += '<div><strong>Technical claim ' + (index + 1) + ':</strong> ' +
+    esc(claim.statement || '(empty claim)') + '</div>';
+
+  if (claim.concept) {
+    h += '<div class="academic-reference-meta">' +
+      '<strong>Generated category:</strong> ' +
+      esc(claim.concept) + '</div>';
+  }
+
+  h += '<div class="academic-audit-grid">';
+  h += '<div><strong>Technical check:</strong> ' +
+    esc(academicStatusLabel(verification.status)) + '</div>';
+
+  if (verification.canonical_claim) {
+    h += '<div><strong>Canonical form:</strong> <code>' +
+      esc(verification.canonical_claim) + '</code></div>';
+  }
+
+  h += '</div>';
+  h += academicReasons(verification.reasons);
+
+  if (methodology) {
+    h += '<div class="academic-audit-grid" style="margin-top:8px;">';
+    h += '<div><strong>Methodological check:</strong> ' +
+      esc(academicMethodologyLabel(methodology)) + '</div>';
+    h += '</div>';
+    h += academicReasons(methodology.reasons);
+
+    const passages = Array.isArray(methodology.passages)
+      ? methodology.passages
+      : [];
+
+    if (passages.length) {
+      h += '<details style="margin-top:8px;">';
+      h += '<summary>Guidance considered for this claim</summary>';
+
+      for (const passage of passages) {
+        const note = passage?.note || 'Reviewer note';
+        const heading = passage?.heading || '';
+
+        h += '<div style="margin-top:8px;">';
+        h += '<strong>' + esc(note) + '</strong>';
+
+        if (heading) {
+          h += '<div class="academic-reference-meta">' +
+            esc(heading) + '</div>';
+        }
+
+        h += '</div>';
+      }
+
+      h += '</details>';
+    }
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderAcademicClaimContext(item, index) {
+  const methodology =
+    item?.contextual_methodological_consistency || null;
+  const restriction = item?.material_restriction_omitted;
+
+  let h = '<div class="academic-audit-card">';
+  h += '<div><strong>Claim context ' + (index + 1) + ':</strong> ' +
+    esc(item?.claim_statement || '(empty claim)') + '</div>';
+
+  h += '<div class="academic-audit-grid" style="margin-top:8px;">';
+
+  if (item?.material_restriction_assessment_error) {
+    // Attempted, but the output could not be used: neither "a condition was
+    // lost" nor "no omission detected" is known.
+    h += '<div><strong>Context check:</strong> ' +
+      'Context check not completed.</div>';
+  } else if (restriction === true) {
+    h += '<div><strong>Context check:</strong> ' +
+      'Material restriction omitted from the atomic claim.</div>';
+  } else if (restriction === false) {
+    h += '<div><strong>Context check:</strong> ' +
+      'No material restriction omission detected.</div>';
+  } else {
+    h += '<div><strong>Context check:</strong> ' +
+      'Context restriction not assessed.</div>';
+  }
+
+  h += '</div>';
+
+  if (item?.source_sentence) {
+    h += '<div style="margin-top:8px;"><strong>Verified source sentence:</strong> ' +
+      esc(item.source_sentence) + '</div>';
+  }
+
+  if (item?.context_excerpt) {
+    h += '<div style="margin-top:8px;"><strong>Bounded answer context:</strong> ' +
+      esc(item.context_excerpt) + '</div>';
+  }
+
+  if (methodology) {
+    h += '<div class="academic-audit-grid" style="margin-top:8px;">';
+    h += '<div><strong>Contextual methodological check:</strong> ' +
+      esc(academicMethodologyLabel(methodology)) + '</div>';
+    h += '</div>';
+
+    h += academicReasons(methodology.reasons);
+
+    const passages = Array.isArray(methodology.passages)
+      ? methodology.passages
+      : [];
+
+    if (passages.length) {
+      h += '<details style="margin-top:8px;">';
+      h += '<summary>Guidance considered in this context</summary>';
+
+      for (const passage of passages) {
+        const note = passage?.note || 'Reviewer note';
+        const heading = passage?.heading || '';
+
+        h += '<div style="margin-top:8px;">';
+        h += '<strong>' + esc(note) + '</strong>';
+
+        if (heading) {
+          h += '<div class="academic-reference-meta">' +
+            esc(heading) + '</div>';
+        }
+
+        h += '</div>';
+      }
+
+      h += '</details>';
+    }
+  } else if (restriction === true) {
+    h += '<div class="academic-reference-meta" style="margin-top:8px;">' +
+      'No contextual methodological conclusion was established.' +
+      '</div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function academicVerificationSummary(data) {
+  const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
+  const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
+
+  let supported = 0;
+  let partial = 0;
+  let unsupported = 0;
+  let contradicted = 0;
+  let unassessed = 0;
+
+  for (const item of sourceClaims) {
+    const status = item?.claim_assessment?.status;
+    if (status === 'claim_supported') supported++;
+    else if (status === 'claim_partially_supported') partial++;
+    else if (status === 'claim_not_supported') unsupported++;
+    else if (status === 'claim_contradicted') contradicted++;
+    else unassessed++;
+  }
+
+  let technicalVerified = 0;
+  let technicalConflict = 0;
+  let technicalUnverified = 0;
+
+  for (const item of technicalClaims) {
+    const status = item?.verification?.status;
+    if (status === 'technically_verified') technicalVerified++;
+    else if (status === 'technical_conflict') technicalConflict++;
+    else technicalUnverified++;
+  }
+
+  const parts = [];
+
+  if (sourceClaims.length) {
+    if (supported) parts.push(supported + ' source claim' +
+      (supported === 1 ? '' : 's') + ' supported');
+    if (partial) parts.push(partial + ' partially supported');
+    if (unsupported) parts.push(unsupported + ' not supported');
+    if (contradicted) parts.push(contradicted + ' contradicted');
+    if (unassessed) parts.push(unassessed + ' not independently assessed');
+  }
+
+  if (technicalClaims.length) {
+    if (technicalVerified) parts.push(technicalVerified + ' technical claim' +
+      (technicalVerified === 1 ? '' : 's') + ' verified');
+    if (technicalConflict) parts.push(technicalConflict + ' technical conflict' +
+      (technicalConflict === 1 ? '' : 's'));
+    if (technicalUnverified) parts.push(technicalUnverified +
+      ' technical claim' + (technicalUnverified === 1 ? '' : 's') +
+      ' outside current deterministic checks');
+  }
+
+  return parts.length
+    ? parts.join(' · ')
+    : 'No claim-level verification was available for this answer.';
+}
+
+function renderAcademicLocalGuidance(localGuidance) {
+  const passages = Array.isArray(localGuidance?.passages)
+    ? localGuidance.passages
+    : [];
+
+  if (!passages.length) return '';
+
+  let h = '<h4>Local methodological guidance</h4>';
+  h += '<div class="academic-audit-card">';
+  h += '<div class="academic-reference-meta">' +
+    'Relevant sections were retrieved from the local reviewer-note collection ' +
+    'to inform answer generation. Retrieval does not mean that every section ' +
+    'was used, and local guidance is not external source verification.' +
+    '</div>';
+
+  for (const passage of passages) {
+    const note = passage?.note || 'Reviewer note';
+    const heading = passage?.heading || '';
+
+    h += '<div style="margin-top:8px;">';
+    h += '<strong>' + esc(note) + '</strong>';
+    if (heading) {
+      h += '<div class="academic-reference-meta">' + esc(heading) + '</div>';
+    }
+    h += '</div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+// How a revision fared against each source that contradicted the first
+// attempt: the original claim and its contradicting passages, and every
+// revised claim citing the same DOI with its re-check state.
+function renderAcademicSourceResolution(resolution) {
+  if (!resolution || !Array.isArray(resolution.sources)) return '';
+  const ACADEMIC_RESOLUTION_LABELS = {
+    positively_cleared: 'Positively cleared',
+    still_contradicted: 'Still contradicted',
+    resolution_not_established: 'Resolution not established'
+  };
+  let h = '<h4>Source contradiction reconciliation</h4>';
+  h += '<div class="academic-audit-card"><div><strong>Outcome:</strong> ' +
+    esc(ACADEMIC_RESOLUTION_LABELS[resolution.status] || String(resolution.status || '')) +
+    '</div></div>';
+  for (const source of resolution.sources) {
+    h += '<div class="academic-audit-card">';
+    h += '<div><strong>Source:</strong> ' +
+      (source.doi ? '<code>' + esc(String(source.doi)) + '</code>' : 'no DOI') + ' · ' +
+      esc(ACADEMIC_RESOLUTION_LABELS[source.outcome] || String(source.outcome || '')) + '</div>';
+    for (const original of (source.original_claims || [])) {
+      h += '<div style="margin-top:8px;"><strong>Original contradicted claim:</strong> ' +
+        esc(String(original.claim || '')) + '</div>';
+      const evidence = Array.isArray(original.evidence) ? original.evidence : [];
+      if (evidence.length) {
+        h += '<details class="academic-source-evidence"><summary>Contradicting passages (' +
+          evidence.length + ')</summary>';
+        for (const ev of evidence) {
+          h += '<div class="academic-evidence-passage">';
+          if (ev.page_number != null) {
+            h += '<div class="academic-evidence-locator">page ' + esc(String(ev.page_number)) + '</div>';
+          }
+          h += esc(String(ev.text || '')) + '</div>';
+        }
+        h += '</details>';
+      }
+    }
+    const revised = Array.isArray(source.revised_claims) ? source.revised_claims : [];
+    if (!revised.length) {
+      h += '<div class="academic-reference-meta" style="margin-top:8px;">' +
+        'The revised answer has no claim citing this source.</div>';
+    }
+    for (const claim of revised) {
+      h += '<div style="margin-top:8px;"><strong>Revised claim:</strong> ' +
+        esc(String(claim.claim || '')) + '</div>';
+      h += '<div class="academic-reference-meta">Retrieval identity: ' +
+        esc(String(claim.retrieval_identity || 'not reached')) + ' · source: ' +
+        esc(String(claim.source_retrieval || 'not reached')) + ' · location: ' +
+        esc(String(claim.claim_location || 'not reached')) + ' · assessment: ' +
+        esc(claim.claim_assessment ? String(claim.claim_assessment)
+          : (claim.claim_assessment_error ? 'not completed' : 'not performed')) +
+        '</div>';
+    }
+    h += '</div>';
+  }
+  return h;
+}
+
+function renderAcademicAudit(data) {
+  const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
+  const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
+  const claimContexts = Array.isArray(data.claim_context_assessments)
+    ? data.claim_context_assessments
+    : [];
+  const claimCoverage = data.claim_coverage || null;
+  const release = data.release || null;
+
+  let h = '';
+
+  h += renderAcademicLocalGuidance(data.local_guidance);
+
+  h += renderAcademicSourceResolution(data.reconciliation?.source_contradiction_resolution);
+
+  if (claimCoverage) {
+    h += '<div class="academic-audit-card">';
+    h += '<div><strong>Claim coverage:</strong> ' +
+      esc(academicStatusLabel(claimCoverage.status)) + '</div>';
+    h += academicReasons(claimCoverage.reasons);
+    h += '</div>';
+  }
+
+  if (release) {
+    h += '<div class="academic-audit-card">';
+    h += '<div><strong>Release assessment:</strong> ' +
+      esc(academicStatusLabel(release.status)) + '</div>';
+    h += '<div class="academic-reference-meta">safe_to_present: ' +
+      esc(String(release.safe_to_present === true)) + '</div>';
+    if (data.presentation) {
+      h += '<div class="academic-reference-meta">presentation: ' +
+        esc(String(data.presentation.mode || '')) + ' (' +
+        esc(String(data.presentation.reason || '')) + ')</div>';
+    }
+    h += academicReasons(release.reasons);
+    h += '</div>';
+  }
+
+  const references = Array.isArray(data.references) ? data.references : [];
+  const linkedReferences = academicLinkedReferenceIndices(data);
+  const unlinkedReferences = references.filter((_, i) => !linkedReferences.has(i));
+  if (unlinkedReferences.length) {
+    h += '<h4>Proposed references not linked to any claim</h4>';
+    h += '<div class="academic-reference-meta">The model proposed these, but no ' +
+      'claim in the answer was linked to them, so they are not listed as the ' +
+      'answer\'s references.</div>';
+    for (let i = 0; i < unlinkedReferences.length; i++) {
+      h += renderAcademicReference(unlinkedReferences[i], i);
+    }
+  }
+
+  if (sourceClaims.length) {
+    h += '<h4>Source-backed claims</h4>';
+    for (let i = 0; i < sourceClaims.length; i++) {
+      h += renderAcademicSourceClaim(sourceClaims[i], i);
+    }
+  }
+
+  if (technicalClaims.length) {
+    h += '<h4>Technical claims</h4>';
+    for (let i = 0; i < technicalClaims.length; i++) {
+      h += renderAcademicTechnicalClaim(technicalClaims[i], i);
+    }
+  }
+
+  if (claimContexts.length) {
+    h += '<h4>Claim context</h4>';
+    for (let i = 0; i < claimContexts.length; i++) {
+      h += renderAcademicClaimContext(claimContexts[i], i);
+    }
+  }
+
+  return h;
+}
+
+function renderAcademicEvidence(data) {
+  const references = Array.isArray(data.references) ? data.references : [];
+  const sourceClaims = Array.isArray(data.source_claims) ? data.source_claims : [];
+  const technicalClaims = Array.isArray(data.technical_claims) ? data.technical_claims : [];
+  const claimContexts = Array.isArray(data.claim_context_assessments)
+    ? data.claim_context_assessments
+    : [];
+  const localGuidancePassages = Array.isArray(data.local_guidance?.passages)
+    ? data.local_guidance.passages
+    : [];
+
+  let referencesHtml = '';
+  const linkedReferences = academicLinkedReferenceIndices(data);
+  const readerReferences = references.filter((_, i) => linkedReferences.has(i));
+  const unlinkedReferences = references.filter((_, i) => !linkedReferences.has(i));
+
+  if (readerReferences.length) {
+    referencesHtml += '<section class="academic-reference-section">';
+    referencesHtml += '<h3>References</h3>';
+
+    for (let i = 0; i < readerReferences.length; i++) {
+      referencesHtml += renderAcademicReference(readerReferences[i], i);
+    }
+
+    referencesHtml += '<div class="academic-reference-note">' +
+      'Reference matching establishes bibliographic identity only. ' +
+      'It does not by itself establish that a source supports a claim.' +
+      '</div>';
+    referencesHtml += '</section>';
+  }
+
+  let auditHtml = '';
+
+  if (
+    localGuidancePassages.length ||
+    unlinkedReferences.length ||
+    sourceClaims.length ||
+    technicalClaims.length ||
+    claimContexts.length ||
+    data.claim_coverage ||
+    data.release
+  ) {
+    auditHtml += '<section class="academic-verification-summary">';
+    if (data.check_further && data.release?.status === 'checking_incomplete') {
+      auditHtml += '<div class="academic-incomplete-detail"><strong>Checking incomplete.</strong> ' +
+        academicIncompleteExplanation() + '</div>';
+    }
+    auditHtml += '<div><strong>Evidence status:</strong> ' +
+      esc(academicVerificationSummary(data)) + '</div>';
+    auditHtml += '<div class="academic-audit-content">' +
+      renderAcademicAudit(data) + '</div>';
+    auditHtml += '</section>';
+  }
+
+  // Without a check_further assessment (the draft endpoint, or an older
+  // server) keep the previous layout rather than show an empty evidence box.
+  if (!data.check_further) {
+    let h = referencesHtml;
+    if (auditHtml) {
+      h += '<details class="academic-verification-details">';
+      h += '<summary>Show verification details</summary>' + auditHtml + '</details>';
+    }
+    return h;
+  }
+
+  return renderAcademicCheckFurther(data.check_further, referencesHtml, auditHtml);
+}
+
+// ---------------------------------------------------------------------------
+// Evidence for the academic reader, at three levels of detail.
+//
+// 1. The compact evidence statement, always visible: a state worded for the
+//    reader, never for whoever maintains the guidance, with no counts, scores
+//    or per-claim statuses.
+// 2. Evidence and further reading, behind one toggle: curated references by
+//    topic in a compact form, full citations and the points the guidance did
+//    not settle behind further toggles, and a short note on what the checks do.
+// 3. Technical checking details, behind a separate toggle: the diagnostics of
+//    the evidence layer and the existing verification panel, unchanged.
+//
+// Everything comes from the server's check_further assessment, which applies
+// fixed rules to verdicts already reached and makes no judgement of its own.
+// ---------------------------------------------------------------------------
+function checkFurtherAttr(value) {
+  return esc(String(value == null ? '' : value)).replace(/"/g, '&quot;');
+}
+
+function checkFurtherLink(url, label) {
+  const link = String(url || '');
+  if (!/^https?:\/\//i.test(link)) return '';
+  return '<a href="' + checkFurtherAttr(link) + '" target="_blank" rel="noopener noreferrer">' +
+    esc(String(label)) + '</a>';
+}
+
+function checkFurtherReference(ref) {
+  if (!ref) return '';
+  let h = '<div class="evidence-ref">';
+  h += '<strong>' + esc(String(ref.author_year || '')) + '</strong>';
+  if (ref.short) h += ' — ' + esc(String(ref.short));
+  const meta = [];
+  if (ref.type) meta.push(esc(String(ref.type)));
+  if (ref.access_label) meta.push(esc(String(ref.access_label)));
+  const read = checkFurtherLink(ref.read_link, ref.access_url ? 'Read the free copy' : 'View source');
+  if (read) meta.push(read);
+  if (meta.length) h += '<div class="evidence-ref-meta">' + meta.join(' · ') + '</div>';
+  h += '</div>';
+  return h;
+}
+
+function checkFurtherFullReference(ref) {
+  if (!ref) return '';
+  let h = '<div class="evidence-full-ref">' + esc(String(ref.cite || ''));
+  if (ref.doi) h += ' ' + checkFurtherLink(ref.link, 'doi:' + String(ref.doi));
+  else if (ref.link) h += ' ' + checkFurtherLink(ref.link, String(ref.link));
+  if (ref.isbn) h += ' ISBN ' + esc(String(ref.isbn));
+  if (ref.access_url && ref.access_url !== ref.link) {
+    h += ' (' + checkFurtherLink(ref.access_url, 'free copy') + ')';
+  }
+  return h + '</div>';
+}
+
+function checkFurtherPoint(point) {
+  if (!point) return '';
+  const text = esc(String(point.text || ''));
+  return point.kind === 'answer_sentence'
+    ? '<li>“' + text + '”</li>'
+    : '<li>' + text + ' <span class="evidence-check-muted">(summarised point)</span></li>';
+}
+
+function renderCheckFurtherDiagnostics(d) {
+  if (!d) return '';
+  let h = '<div class="technical-diagnostics">';
+  h += '<div><strong>Evidence layer diagnostics</strong> (rules version ' +
+    esc(String(d.rules_version || '')) + ')</div>';
+  if (d.error) h += '<div>Error: ' + esc(String(d.error)) + '</div>';
+  if (d.release_status) h += '<div>Release status: ' + esc(String(d.release_status)) + '</div>';
+  const counts = d.counts || {};
+  const names = Object.keys(counts);
+  if (names.length) {
+    h += '<table>';
+    for (const k of names) {
+      h += '<tr><td>' + esc(k.replace(/_/g, ' ')) + '</td><td>' + esc(String(counts[k])) + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  const list = (title, items, render) => {
+    if (!Array.isArray(items) || !items.length) return '';
+    let out = '<div><em>' + esc(title) + '</em></div><ul>';
+    for (const item of items) out += '<li>' + render(item) + '</li>';
+    return out + '</ul>';
+  };
+  h += list('Sections retrieved for the question', d.question_sections, x => esc(String(x)));
+  h += list('Of those, sections with curated references', d.sourced_question_sections, x => esc(String(x)));
+  h += list('Routing of unsettled statements', d.routing, x =>
+    esc(String(x.statement || '')) + ' → ' +
+    esc(String(x.routed_to || 'not routed')) + ' <span class="evidence-check-muted">(' +
+    esc(String(x.reason || '')) + ')</span>');
+  h += list('Points not routed to further reading', d.unrouted, x =>
+    '“' + esc(String(x.point || '')) + '” <span class="evidence-check-muted">nearest: ' +
+    esc(String(x.nearest_section || 'none')) + '</span>');
+  h += list('Methodological reconciliation', d.methodology_reconciliation, x =>
+    esc(String(x.statement || '')) + ': ' +
+    esc(String(x.outcome || '').replace(/_/g, ' ')) +
+    ' <span class="evidence-check-muted">(standalone: ' +
+    esc(String(x.standalone_status || 'none')) + '; contextual: ' +
+    esc((x.contextual_statuses || []).map(s => s || 'not completed').join(', ')) +
+    ')</span>');
+  h += list('Conditions lost when claims were separated from the answer', d.lost_conditions, x =>
+    'Answer sentence: “' + esc(String(x.answer_sentence || '')) + '”<br>' +
+    '<span class="evidence-check-muted">Atomic claim generated for checking: ' +
+    esc(String(x.atomic_claim || '')) + '<br>Contextual status: ' +
+    esc(x.contextual_assessment_error ? 'check not completed'
+      : String(x.contextual_status || 'not assessed')) + '</span>');
+  h += list('Proposed references not linked to any claim (not shown as references)',
+    d.unlinked_references, x => esc(String(x)));
+  h += list('Methodological checks not completed', d.failed_methodology_checks, x =>
+    esc(String(x.answer_text || x.statement || '')) + ' <span class="evidence-check-muted">' +
+    (x.contextual ? 'contextual; ' : '') + esc(String(x.assessment_error || '')) + '</span>');
+  h += list('Context checks not completed', d.failed_restriction_checks, x =>
+    'Answer sentence: “' + esc(String(x.answer_sentence || '')) + '”<br>' +
+    '<span class="evidence-check-muted">Atomic claim: ' + esc(String(x.atomic_claim || '')) +
+    '<br>' + esc(String(x.assessment_error || '')) + '</span>');
+  h += list('Source assessments not completed', d.failed_source_assessments, x =>
+    esc(String(x.claim || '')) + ' <span class="evidence-check-muted">' +
+    esc(String(x.reference || '')) + '; located passages: ' +
+    esc(String(x.located_passages ?? 0)) + '; ' + esc(String(x.assessment_error || '')) + '</span>');
+  h += list('Conflicts reported by the methodology judge', d.conflicts, x =>
+    esc(String(x.answer_text || x.statement || '')) + ' <span class="evidence-check-muted">' +
+    esc((x.reasons || []).join(' ')) + '</span>');
+  return h + '</div>';
+}
+
+function renderAcademicCheckFurther(cf, referencesHtml, auditHtml) {
+  if (!cf || !cf.state) return (referencesHtml || '') + (auditHtml || '');
+  const state = String(cf.state).replace(/[^a-z_]/g, '');
+  const groups = Array.isArray(cf.further_reading) ? cf.further_reading : [];
+  const literature = Array.isArray(cf.relevant_literature) ? cf.relevant_literature : [];
+
+  // ---- level 1: the compact evidence statement ------------------------------
+  let h = '<section class="evidence-check state-' + state + '">';
+  h += '<div class="evidence-check-kicker">Evidence check</div>';
+  h += '<div class="evidence-check-title">' + esc(String(cf.title || '')) + '</div>';
+  h += '<div class="evidence-check-line">' + esc(String(cf.summary || '')) + '</div>';
+  if (cf.secondary) h += '<div class="evidence-check-line evidence-check-muted">' + esc(String(cf.secondary)) + '</div>';
+
+  const bibliography = Array.isArray(cf.bibliographic_limitations)
+    ? cf.bibliographic_limitations : [];
+  for (const limitation of bibliography) {
+    h += '<div class="evidence-check-notice"><strong>Reference checking:</strong> ' +
+      esc(String(limitation.reference || '')) + ' — ' +
+      esc(String(limitation.message || '')) + ' ' +
+      esc(String(limitation.source_checking || '')) + '</div>';
+  }
+
+  const worth = Array.isArray(cf.worth_checking) ? cf.worth_checking : [];
+  for (const w of worth) {
+    h += '<div class="evidence-check-quote">' +
+      (w.kind === 'answer_sentence' ? '“' + esc(String(w.text || '')) + '”' : esc(String(w.text || ''))) +
+      (w.topic ? '<div class="evidence-check-muted">Related topic in the local guidance: ' +
+        esc(String(w.topic)) + '</div>' : '') + '</div>';
+  }
+
+  if (cf.citation_notice) {
+    h += '<div class="evidence-check-notice"><strong>' + esc(String(cf.citation_notice.title || 'Citation check')) +
+      ':</strong> ' + esc(String(cf.citation_notice.message || '')) + '</div>';
+  }
+
+  if (groups.length && cf.source_count) {
+    h += '<div class="evidence-check-line">Further reading: ' + esc(String(cf.source_count)) +
+      (cf.source_count === 1 ? ' relevant source available.' : ' relevant sources available.') + '</div>';
+  }
+
+  // ---- level 2: evidence and further reading ---------------------------------
+  // Name the toggle after what it holds: sources only when there are some.
+  const hasSources = Boolean(referencesHtml) || [...groups, ...literature].some(
+    g => Array.isArray(g.references) && g.references.length);
+  h += '<details class="evidence-detail"><summary>' +
+    (hasSources ? 'View evidence and sources' : 'View checking details') +
+    '</summary>';
+  for (const g of groups) {
+    const refs = Array.isArray(g.references) ? g.references : [];
+    const points = Array.isArray(g.points) ? g.points : [];
+    h += '<div class="evidence-topic">';
+    h += '<div class="evidence-topic-title">Further reading: ' + esc(String(g.topic || '')) + '</div>';
+    for (const r of refs) h += checkFurtherReference(r);
+    if (refs.length) {
+      h += '<details><summary>Show full references</summary>';
+      for (const r of refs) h += checkFurtherFullReference(r);
+      h += '</details>';
+    }
+    if (points.length) {
+      h += '<details><summary>Show points not established by the local guidance check</summary><ul class="evidence-points">';
+      for (const p of points) h += checkFurtherPoint(p);
+      h += '</ul></details>';
+    }
+    h += '</div>';
+  }
+  for (const g of literature) {
+    const refs = Array.isArray(g.references) ? g.references : [];
+    h += '<div class="evidence-topic">';
+    h += '<div class="evidence-topic-title">Relevant literature: ' + esc(String(g.topic || '')) + '</div>';
+    h += '<div class="evidence-check-muted">Curated sources associated with the methodological guidance used in checking this answer. They are provided for further reading, not as independent verification of the generated answer.</div>';
+    for (const r of refs) h += checkFurtherReference(r);
+    if (refs.length) {
+      h += '<details><summary>Show full references</summary>';
+      for (const r of refs) h += checkFurtherFullReference(r);
+      h += '</details>';
+    }
+    h += '</div>';
+  }
+  if (referencesHtml) h += '<div class="evidence-topic">' + referencesHtml + '</div>';
+  h += '<div class="evidence-about"><strong>About these checks.</strong> ' + esc(String(cf.about || '')) + '</div>';
+  h += '</details>';
+  h += '</section>';
+
+  // ---- level 3: technical checking details -----------------------------------
+  h += '<details class="technical-details"><summary>Technical checking details</summary>';
+  h += renderCheckFurtherDiagnostics(cf.diagnostics);
+  h += auditHtml || '';
+  h += '</details>';
+  return h;
+}
+
+// What the reader is told when Academic Chat fails without a user-safe
+// message of its own. The HTTP status and any diagnostic detail go to the
+// browser console (and the server log), never into the reader's view.
+const ACADEMIC_INTERNAL_ERROR =
+  'Academic Chat could not complete this request because of an internal error. ' +
+  'Please try again.';
+const ACADEMIC_UNREACHABLE_ERROR =
+  'Academic Chat could not reach the local server. ' +
+  'Please check that it is running and try again.';
+
+// A failure whose message is already fit for the reader.
+class AcademicUserError extends Error {}
+
+// The older notice for incomplete checking, now shown beside the answer only
+// when the response has no evidence check of its own; otherwise it sits under
+// Technical checking details and the evidence check tells the reader once.
+function academicIncompleteExplanation() {
+  return 'Independent technical-claim coverage checking could not be completed. ' +
+    'This does not establish that the answer is wrong.';
+}
+
+// What the reader is told when the server withholds the answer. The reason
+// only chooses the words; it does not decide whether the answer is shown.
+function academicWithheldMessage(reason) {
+  let text;
+  if (reason === 'blocked_unresolved_source_contradiction') {
+    text = '<strong>Answer withheld.</strong> ' +
+      'A source given in support of the original answer appeared to contradict it. ' +
+      'A revised answer was prepared, but it could not be confirmed against that ' +
+      'source, so it is not shown.';
+  } else if (reason === 'checking_incomplete') {
+    // Only a revision is withheld for incomplete checking: a first answer
+    // with incomplete checking is shown qualified instead.
+    text = '<strong>Answer withheld.</strong> ' +
+      'A problem was found in the original answer. A revised answer was prepared, ' +
+      'but checking of it could not be completed, so it is not shown. ' +
+      'Trying again may help.';
+  } else {
+    text = '<strong>Answer withheld after checking.</strong> ' +
+      'The generated draft contains a conflict identified during verification. ' +
+      'See the verification details below.';
+  }
+  return '<div style="color:var(--error);">' + text + '</div>';
+}
+
+async function sendAcademicMessage() {
+  const question = academicInput.value.trim();
+  if (!question || academicGenerating) return;
+
+  setAcademicRunning(true);
+
+  document.getElementById('academicEmptyState').style.display = 'none';
+  const result = document.getElementById('academicResult');
+  const answer = document.getElementById('academicAnswer');
+  const evidence = document.getElementById('academicEvidence');
+
+  result.style.display = 'block';
+  answer.innerHTML =
+    '<div class="typing-indicator"><span></span><span></span><span></span></div>' +
+    '<div style="margin-top:8px; color:var(--text-muted); font-size:.8rem;">' +
+    'Generating locally and checking proposed academic claims...' +
+    '</div>';
+  evidence.style.display = 'none';
+
+  try {
+    let r;
+    try {
+      r = await fetch(BASE + '/api/chat/academic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question })
+      });
+    } catch (networkError) {
+      console.error('Academic Chat request did not reach the server:', networkError);
+      throw new AcademicUserError(ACADEMIC_UNREACHABLE_ERROR);
+    }
+
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok) {
+      console.error('Academic Chat request failed: HTTP ' + r.status +
+        (data.detail ? ' - ' + data.detail : ''));
+      throw new AcademicUserError(data.error || ACADEMIC_INTERNAL_ERROR);
+    }
+
+    // Whether the answer is shown is decided by the server (presentation.mode);
+    // the page renders that decision and derives none of its own. A response
+    // without one is treated as withheld.
+    const presentation = data.presentation || {};
+    if (presentation.mode === 'release') {
+      answer.innerHTML =
+        '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
+        renderAcademicRelease(data.release);
+    } else if (presentation.mode === 'qualified') {
+      answer.innerHTML =
+        '<div>' + fmtMd(data.answer_draft || '(empty answer)') + '</div>' +
+        (data.check_further ? '' :
+          '<div style="margin-top:10px; color:var(--text-muted);">' +
+          '<strong>Checking incomplete.</strong> ' +
+          academicIncompleteExplanation() + ' ' +
+          'See the verification details below.' +
+          '</div>');
+    } else {
+      answer.innerHTML = academicWithheldMessage(presentation.reason);
+    }
+
+    document.getElementById('academicEvidenceContent').innerHTML =
+      renderAcademicEvidence(data);
+    evidence.style.display = 'block';
+  } catch (e) {
+    if (!(e instanceof AcademicUserError)) {
+      console.error('Academic Chat failure:', e);
+    }
+    const message = e instanceof AcademicUserError
+      ? e.message
+      : ACADEMIC_INTERNAL_ERROR;
+    answer.innerHTML =
+      '<div style="color:var(--error);">' + esc(message) + '</div>';
+    evidence.style.display = 'none';
+  } finally {
+    setAcademicRunning(false);
+    academicInput.focus();
+  }
+}
+
+// --- File upload ---
+const fileInput = document.getElementById('fileInput');
+const dropZone = document.getElementById('dropZone');
+document.getElementById('modelSelect').addEventListener('change', () => {
+  const select = document.getElementById('modelSelect');
+  const opt = select.selectedOptions[0];
+  modelChoicePending = !!opt && opt.dataset.model !== select.dataset.currentModel;
+  setRestartNote(modelChoicePending
+    ? 'Press Restart to load ' + opt.textContent
+    : '');
+  refreshReviewButton();
+});
+
+fileInput.addEventListener('change', () => { if (fileInput.files.length) pickFile(fileInput.files[0]); });
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); if (e.dataTransfer.files.length) { fileInput.files = e.dataTransfer.files; pickFile(e.dataTransfer.files[0]); } });
+
+function pickFile(f) {
+  selectedFile = f;
+  const el = document.getElementById('fileName'); el.textContent = f.name; el.style.display = 'block';
+  refreshReviewButton();
+}
+
+// --- Review ---
+let activeReviewJobId = null;
+
+function setReviewRunning(running, completed = false) {
+  const btn = document.getElementById('reviewBtn');
+  const cancelBtn = document.getElementById('cancelReviewBtn');
+  const progressBar = document.getElementById('progressBar');
+  progressBar.classList.toggle('indeterminate', running);
+  progressBar.classList.toggle('completed', completed);
+  if (running) {
+    btn.disabled = true;
+    cancelBtn.style.display = '';
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'Cancel review';
+  } else {
+    activeReviewJobId = null;
+    cancelBtn.style.display = 'none';
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'Cancel review';
+    refreshReviewButton();
+  }
+}
+
+function appendReviewProgress(message) {
+  const pl = document.getElementById('progressLog');
+  const line = document.createElement('div');
+  line.textContent = message;
+  pl.appendChild(line);
+  pl.scrollTop = pl.scrollHeight;
+}
+
+async function cancelReview() {
+  if (!activeReviewJobId) return;
+  const jobId = activeReviewJobId;
+  const cancelBtn = document.getElementById('cancelReviewBtn');
+  cancelBtn.disabled = true;
+  cancelBtn.textContent = 'Cancelling…';
+
+  try {
+    const r = await fetch(
+      BASE + '/api/review/' + encodeURIComponent(jobId) + '/cancel',
+      { method: 'POST' }
+    );
+    if (!r.ok) {
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = 'Cancel review';
+      appendReviewProgress(
+        'Cancellation request failed (' + r.status + '); review is still running.'
+      );
+    }
+  } catch (e) {
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'Cancel review';
+    appendReviewProgress(
+      'Cancellation request failed (' + e.message + '); review is still running.'
+    );
+  }
+}
+
+async function startReview() {
+  if (!selectedFile || activeReviewJobId) return;
+  if (modelChoicePending) {
+    const opt = document.getElementById('modelSelect').selectedOptions[0];
+    setRestartNote('Press Restart to load '
+      + (opt ? opt.textContent : 'the selected model')
+      + ' before starting a review', true);
+    return;
+  }
+
+  const btn = document.getElementById('reviewBtn');
+  btn.disabled = true;
+  const pa = document.getElementById('progressArea'); pa.classList.add('visible');
+  const pl = document.getElementById('progressLog'); pl.innerHTML = '';
+  const ra = document.getElementById('reportArea'); ra.innerHTML = '';
+
+  const fd = new FormData(); fd.append('file', selectedFile); fd.append('domain', 'general');
+  for (const supplement of document.getElementById('supplementInput').files) fd.append('supplements', supplement);
+  // "" leaves the server's own default alone; "0"/"1" force one mode for this
+  // review only. The chosen mode is recorded in the report header.
+  fd.append('thinking', document.getElementById('reasoningMode').value);
+  fd.append('vision', document.getElementById('visionMode').value);
+
+  try {
+    const r = await fetch(BASE + '/api/review', { method: 'POST', body: fd });
+    if (!r.ok) {
+      showErr('Upload failed: ' + r.status);
+      setReviewRunning(false);
+      return;
+    }
+
+    const { job_id } = await r.json();
+    activeReviewJobId = job_id;
+    setReviewRunning(true);
+
+    const es = new EventSource(BASE + '/api/review/status/' + job_id);
+    es.onmessage = ev => {
+      const d = JSON.parse(ev.data);
+      if (d.type === 'progress') {
+        appendReviewProgress(d.message);
+      }
+      if (d.type === 'complete') {
+        es.close();
+        activeReviewJobId = null;
+        setReviewRunning(false, true);
+        showReport(d.report, d.has_appendix, job_id);
+      }
+      if (d.type === 'cancelled') {
+        es.close();
+        activeReviewJobId = null;
+        setReviewRunning(false);
+        appendReviewProgress(d.message || 'Review cancelled.');
+      }
+      if (d.type === 'error') {
+        es.close();
+        activeReviewJobId = null;
+        setReviewRunning(false);
+        showErr(d.message);
+      }
+    };
+    es.onerror = () => {
+      es.close();
+      activeReviewJobId = null;
+      setReviewRunning(false);
+      showErr('Connection to the server was lost. This review cannot be resumed. When the server is available, start the review again.');
+    };
+  } catch (e) {
+    activeReviewJobId = null;
+    setReviewRunning(false);
+    showErr('Request failed: ' + e.message);
+  }
+}
+
+let currentJobId = null;
+
+function showReport(md, hasAppendix, jobId) {
+  const ra = document.getElementById('reportArea');
+  ra._raw = md;
+  ra._rawAppendix = '';
+  currentJobId = jobId || null;
+  let html = '<aside class="review-aid-notice" aria-label="Reviewer aid">'
+    + '<strong>Reviewer aid — not a final peer-review report</strong>'
+    + '<p>This analysis identifies manuscript-specific strengths, potential concerns and questions worth investigating. It is designed to support your judgement as a reviewer, not replace it. Check important findings against the manuscript and, where needed, methodological evidence before deciding whether they warrant a comment to the authors or editor.</p></aside>'
+    + '<div class="report-content">' + renderMd(md) + '</div>'
+    + '<div class="report-actions">'
+    + '<button class="btn-secondary" onclick="dlReport()">Download appraisal .md</button>'
+    + '<button class="btn-secondary" onclick="copyReport()">Copy appraisal</button>';
+  if (hasAppendix) {
+    html += '<button class="btn-secondary" id="appendixToggle" onclick="fetchAndToggleAppendix()">Show evidence appendix</button>'
+      + '<button class="btn-secondary" id="appendixDownload" onclick="dlAppendix()">Download appendix .md</button>';
+  }
+  html += '</div>';
+  html += '<div id="appendixSection" style="display:none; margin-top: 16px;"></div>';
+  // Asking where the paper says something is the cheapest way to check a
+  // concern, and every answer is put through the same citation check as the
+  // report, against the same extracted text.
+  html += '<div class="ask-area" id="askArea" style="margin-top:20px; border-top:1px solid var(--border,#ddd); padding-top:14px;">'
+    + '<div style="font-weight:600; margin-bottom:6px;">Investigate a finding</div>'
+    + '<p style="font-size:13px; margin:0 0 10px;">Use the manuscript to check what the authors actually report, or the reviewer notes to explore relevant methodological guidance. These tools provide evidence for your judgement; they do not decide whether something belongs in your final review.</p>'
+    + '<div id="askHelp" style="font-size:12px; opacity:.75; margin-bottom:8px;"></div>'
+    + '<div style="display:flex; gap:8px;">'
+    + '<select id="askMode" style="padding:7px 9px;" onchange="askModeChanged()">'
+    + '<option value="manuscript">This manuscript</option>'
+    + '<option value="reviewer_notes">Reviewer notes</option>'
+    + '</select>'
+    + '<input id="askInput" type="text" style="flex:1; padding:7px 9px;" '
+    + 'onkeydown="if(event.key===\'Enter\')askReview()">'
+    + '<button class="btn-secondary" id="askBtn" onclick="askReview()">Ask</button>'
+    + '</div><div id="askLog" style="margin-top:12px;"></div></div>';
+  ra.innerHTML = html;
+  askModeChanged();
+}
+
+// The two sources answer different questions and one of them has not read the
+// paper, so the box says which it is before the question is typed as well as
+// after the answer arrives.
+const ASK_MODES = {
+  manuscript: {
+    help: 'Answers come only from this paper\'s extracted text and are checked against it. '
+        + 'It will not judge the paper or answer from outside the document.',
+    placeholder: 'e.g. where does it say how convergence was checked?'
+  },
+  reviewer_notes: {
+    help: 'Answers come only from the reviewer notes in resources/, which are general '
+        + 'statistical guidance. This mode has not read the manuscript, so it will not say '
+        + 'what these authors did.',
+    placeholder: 'e.g. is an R-hat of 1.05 acceptable?'
+  }
+};
+
+function askModeChanged() {
+  const sel = document.getElementById('askMode');
+  const cfg = ASK_MODES[sel ? sel.value : 'manuscript'] || ASK_MODES.manuscript;
+  const help = document.getElementById('askHelp');
+  const input = document.getElementById('askInput');
+  if (help) help.textContent = cfg.help;
+  if (input) input.placeholder = cfg.placeholder;
+}
+
+function renderProvenance(d) {
+  const p = d.provenance;
+  if (!p) return '<div style="font-size:11px; opacity:.55;">' + (d.passages || 0) + ' passage(s) searched</div>';
+  let out = '<div style="font-size:11px; opacity:.7; margin-top:4px;"><strong>' + esc(p.label) + '</strong>';
+  if (!p.resolved) out += ' &middot; did not settle the question';
+  out += '</div>';
+  if (p.passages && p.passages.length) {
+    const rows = p.passages.map(function (x) {
+      const used = (p.used || []).some(function (u) {
+        return u.note === x.note && u.heading === x.heading;
+      });
+      const score = (x.score === null || x.score === undefined) ? '' : ' (' + x.score + ')';
+      return '<div style="font-size:11px; opacity:' + (used ? '.75' : '.45') + ';">'
+        + (used ? '&#10003; ' : '&nbsp;&nbsp; ') + esc(x.note) + ' &mdash; ' + esc(x.heading) + score + '</div>';
+    }).join('');
+    out += rows;
+  }
+  return out;
+}
+
+async function askReview() {
+  const input = document.getElementById('askInput');
+  const log = document.getElementById('askLog');
+  const btn = document.getElementById('askBtn');
+  const q = (input.value || '').trim();
+  if (!q || !currentJobId) return;
+  input.value = '';
+  btn.disabled = true;
+  const entry = document.createElement('div');
+  entry.style.marginBottom = '14px';
+  entry.innerHTML = '<div style="font-weight:600;">' + esc(q) + '</div><div style="opacity:.6;">Looking...</div>';
+  log.appendChild(entry);
+  try {
+    const r = await fetch(BASE + '/api/review/' + currentJobId + '/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q, mode: (document.getElementById('askMode') || {}).value || 'manuscript' })
+    });
+    if (!r.ok) {
+      const detail = await r.json().catch(() => ({}));
+      throw new Error(detail.detail || ('HTTP ' + r.status));
+    }
+    const d = await r.json();
+    entry.innerHTML = '<div style="font-weight:600;">' + esc(q) + '</div>'
+      + '<div class="report-content">' + renderMd(d.answer + '\n' + (d.check || '')) + '</div>'
+      + renderProvenance(d);
+  } catch (e) {
+    entry.innerHTML = '<div style="font-weight:600;">' + esc(q) + '</div>'
+      + '<div style="color:var(--error)">' + esc(e.message) + '</div>';
+  }
+  btn.disabled = false;
+}
+
+async function fetchAppendix() {
+  if (!currentJobId) return '';
+  const ra = document.getElementById('reportArea');
+  if (ra._rawAppendix) return ra._rawAppendix;
+  try {
+    const resp = await fetch(BASE + '/api/review/appendix/' + currentJobId);
+    if (resp.ok) {
+      const data = await resp.json();
+      ra._rawAppendix = data.appendix || '';
+      return ra._rawAppendix;
+    }
+  } catch (e) { console.error('Failed to fetch appendix:', e); }
+  return '';
+}
+
+async function fetchAndToggleAppendix() {
+  const sec = document.getElementById('appendixSection');
+  const btn = document.getElementById('appendixToggle');
+  if (!sec) return;
+
+  if (sec.style.display !== 'none') {
+    sec.style.display = 'none';
+    if (btn) btn.textContent = 'Show evidence appendix';
+    return;
+  }
+
+  // Fetch if not yet loaded
+  if (!sec.innerHTML) {
+    if (btn) btn.textContent = 'Loading...';
+    const md = await fetchAppendix();
+    if (md) {
+      sec.innerHTML = '<div class="report-content">' + renderMd(md) + '</div>';
+    } else {
+      sec.innerHTML = '<div class="report-content" style="color:var(--text-muted)">Could not load appendix.</div>';
+    }
+  }
+
+  sec.style.display = 'block';
+  if (btn) btn.textContent = 'Hide evidence appendix';
+  sec.scrollIntoView({ behavior: 'smooth' });
+}
+function showErr(m) { document.getElementById('reportArea').innerHTML = '<div class="report-content" style="color:var(--error)">' + esc(m) + '</div>'; }
+
+function renderMd(md) {
+  let h = esc(md);
+  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_,l,c) => '<pre><code>' + c + '</code></pre>');
+  h = h.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+  h = h.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  h = h.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  h = h.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  h = h.replace(/^---$/gm, '<hr>');
+  h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+  h = h.replace(/^\s*[*-]\s+(.+)$/gm, '<li>$1</li>');
+  h = h.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, m => '<ul>' + m + '</ul>');
+  h = h.replace(/\n\n/g, '</p><p>');
+  h = '<p>' + h + '</p>';
+  h = h.replace(/<p>\s*<(h[1-4]|ul|hr|pre)/g, '<$1');
+  h = h.replace(/<\/(h[1-4]|ul|hr|pre)>\s*<\/p>/g, '</$1>');
+  return h;
+}
+
+function dlReport() {
+  const md = document.getElementById('reportArea')._raw || '';
+  const b = new Blob([md], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  const name = selectedFile ? selectedFile.name.replace(/\.[^.]+$/, '') : 'review';
+  a.href = URL.createObjectURL(b); a.download = name + '_appraisal.md'; a.click();
+}
+function copyReport() {
+  const md = document.getElementById('reportArea')._raw || '';
+  navigator.clipboard.writeText(md).then(() => {
+    const btns = document.querySelectorAll('.report-actions button');
+    const b = btns[1]; if (b) { b.textContent = 'Copied!'; setTimeout(() => b.textContent = 'Copy appraisal', 1500); }
+  });
+}
+
+async function dlAppendix() {
+  let md = document.getElementById('reportArea')._rawAppendix || '';
+  if (!md) md = await fetchAppendix();
+  if (!md) { alert('Appendix not available.'); return; }
+  const b = new Blob([md], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  const name = selectedFile ? selectedFile.name.replace(/\.[^.]+$/, '') : 'review';
+  a.href = URL.createObjectURL(b); a.download = name + '_evidence_appendix.md'; a.click();
+}
+</script>
+</body>
+</html>

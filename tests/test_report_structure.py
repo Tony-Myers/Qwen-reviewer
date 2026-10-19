@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""
+Covers the report-structure additions: severity tiers, computed per-concern
+evidence match, the prioritised action table and the verdict-phrasing detector.
+
+Evidence match is computed from the checks the pipeline already performs rather
+than asked of the model, because a model's stated confidence is a token
+prediction: the run that inverted this corpus's medication finding asserted it
+without hedging. The action table is rendered from the severity labels already
+written, never generated again -- an earlier template asked for the same
+material twice and produced two headings over one list of items.
+
+Both marker styles are exercised: runs have emitted "**Concern:**" and bare
+"Concern:" interchangeably.
+"""
+import sys, types, warnings
+from pathlib import Path
+warnings.filterwarnings("ignore")
+def _stub(n,**a):
+    m=types.ModuleType(n)
+    [setattr(m,k,v) for k,v in a.items()]; sys.modules[n]=m
+_stub("docx",Document=object); _stub("openpyxl",load_workbook=lambda *a,**k:None)
+root=Path(__file__).resolve().parent.parent
+ROOT=root
+sys.path.insert(0,str(root/"app"))
+import review_pipeline as rp
+
+SOURCE = ("Table 4. ML model performance. glm 0.998 0.013 0.134 0.211\n"
+          "Best models were highlighted based on the lowest MAE on the train set.\n"
+          "In ML, the best model is typically selected based on model performance "
+          "on the training sets, which in our case was the glm model.\n"
+          "Twenty-seven recreational cyclists completed baseline tests.\n")
+TABLE_SOURCE = """[TABLE_START]
+Table 4. ML model performance
+glm 0.998 0.013 0.134 0.211
+[TABLE_END]"""
+
+# Style A: bold markers, as the cycling run produced them
+REPORT_A = """# Overall synopsis
+* A study of cycling performance.
+
+# Major strengths
+* **Strength:** Nested cross-validation.
+* **Evidence:** Outer repeated train/test splits with inner LOOCV.
+
+# Directly supported concerns
+* **Concern:** Model selection based on training set performance introduces bias.
+* **Severity:** Critical
+* **Evidence:** The caption states models were selected on the "lowest MAE on the train set".
+* **Why it matters:** This is a fundamental error that renders the comparison invalid.
+
+* **Concern:** The reported test MAE is inconsistent between text and table.
+* **Severity:** Editorial
+* **Evidence:** Table 4 reports 0.211 while the narrative states 0.221.
+* **Why it matters:** It undermines confidence in the reported values.
+
+* **Concern:** Subgroup analyses lack multiplicity correction.
+* **Severity:** Substantive
+* **Evidence:** The file summary notes that five characteristics were tested.
+* **Why it matters:** Type I error risk rises.
+
+# Verification prompts
+* **Check:** Whether baseline performance was a predictor in the change model.
+* **Reason:** Regression to the mean.
+
+# Extraction limits
+* **Limit:** Hyperparameters are in Supplemental Table S5.
+
+# Overall confidence
+* Moderate.
+"""
+
+# Style B: plain markers, as the BMI and sleep runs produced them
+REPORT_B = REPORT_A.replace("**", "")
+
+F = 0
+def ok(label, cond, detail=""):
+    global F
+    print(("  PASS  " if cond else "  FAIL  ") + label + (f"   {detail}" if not cond and detail else ""))
+    if not cond: F += 1
+
+for name, report in (("bold markers", REPORT_A), ("plain markers", REPORT_B)):
+    print(f"\n[{name}]")
+    annotated = rp.annotate_concern_confidence(report, SOURCE, TABLE_SOURCE)
+    ok("verified quotation -> High", "Evidence match: High" in annotated)
+    ok("self-citation -> Low",
+       "Evidence match: Low — the evidence cites this pipeline's own summary" in annotated)
+    ok("bare table value -> Moderate",
+       "Evidence match: Moderate — at least one cited value was located in extracted "
+       "table evidence, but numeric matching alone does not establish the concern."
+       in annotated)
+    ok("only verified quotation -> High",
+       annotated.count("Evidence match: High") == 1,
+       annotated.count("Evidence match: High"))
+    ok("one line per concern", annotated.count("* Evidence match:") == 3,
+       str(annotated.count("* Evidence match:")))
+    ok("running twice changes nothing",
+       rp.annotate_concern_confidence(annotated, SOURCE, TABLE_SOURCE) == annotated)
+    ok("no concern text lost", "Subgroup analyses lack multiplicity" in annotated)
+
+    table = rp.format_action_list(annotated)
+    ok("item table renders", "# Items by evidence" in table)
+    # Ordered by what the citation check found, not by a grade the synthesis
+    # awarded itself. The severity label used one of its three values for 82%
+    # of concerns and, when it did discriminate, ranked its best-supported
+    # concern below its weakest.
+    ok("a concern whose quotations verify is Quoted", "| Quoted |" in table)
+    ok("one resting on the pipeline's own summary is Unquoted",
+       "| Unquoted |" in table)
+    ok("a verification prompt is a Question", "| Question |" in table)
+    ok("the table says it orders provenance and not correctness",
+       "orders provenance, not correctness" in table)
+    ok("Quoted sorts above Unquoted",
+       table.index("| Quoted |") < table.index("| Unquoted |"))
+    lines = [l for l in table.splitlines() if l.startswith("| ") and "---" not in l]
+    ok("one header + four items", len(lines) == 5, str(len(lines)))
+    ok("the verified concern sorts first",
+       lines[1].startswith("| Quoted |"), lines[1][:40])
+
+    over = rp.overclaim_problems(annotated)
+    ok("'fundamental error' flagged", any("fundamental error" in p for p in over), str(over))
+    ok("'renders ... invalid' flagged", any("renders" in p for p in over), str(over))
+
+print("\n[degenerate input must not raise or corrupt]")
+for label, bad in (("empty", ""),
+                   ("no concerns section", "# Overall synopsis\n* Something.\n"),
+                   ("heading but no bullets", "# Directly supported concerns\n\n# Verification prompts\n")):
+    try:
+        out = rp.annotate_concern_confidence(bad, SOURCE)
+        t = rp.format_action_list(bad)
+        ok(f"{label}: survives", isinstance(out, str) and isinstance(t, str))
+    except Exception as exc:
+        ok(f"{label}: survives", False, f"{type(exc).__name__}: {exc}")
+ok("no table when nothing to list", rp.format_action_list("# Overall synopsis\n* x\n") == "")
+
+print("\n[numeric coincidence is not located evidence]")
+# A decimal appearing somewhere in the manuscript is not evidence that the
+# concern's cited value has been located.  In particular, a conventional
+# alpha threshold must not validate an unrelated effect estimate with the
+# same decimal representation.
+_NUMERIC_COINCIDENCE = """
+* Concern: The reported treatment effect of 0.05 is inconsistent with Table 2.
+* Evidence: The treatment effect is 0.05.
+* Why it matters: The interpretation depends on the reported estimate.
+"""
+_NUMERIC_SOURCE = """
+Methods
+Statistical significance was assessed using alpha = 0.05.
+"""
+_numeric_level, _numeric_reason = rp.concern_confidence(
+    _NUMERIC_COINCIDENCE, _NUMERIC_SOURCE
+)
+ok("an unrelated occurrence of the same decimal is not High",
+   _numeric_level != "High", (_numeric_level, _numeric_reason))
+ok("an unrelated occurrence is not described as a located table value",
+   "located in the extracted tables" not in _numeric_reason,
+   _numeric_reason)
+
+
+print("\n[partial numeric matches are not complete located evidence]")
+_PARTIAL_NUMERIC = """
+* Concern: The numerical results are inconsistent between the table and narrative.
+* Evidence: Table 4 gives 0.211, whereas the Results section reports 0.221.
+* Why it matters: The discrepancy changes the reported result.
+"""
+_PARTIAL_TABLE = """[TABLE_START]
+Table 4. ML model performance
+glm 0.998 0.013 0.134 0.211
+[TABLE_END]"""
+_partial_level, _partial_reason = rp.concern_confidence(
+    _PARTIAL_NUMERIC, "", _PARTIAL_TABLE
+)
+ok("a partial numeric match remains Moderate",
+   _partial_level == "Moderate", (_partial_level, _partial_reason))
+ok("numeric matching alone does not establish the concern",
+   "numeric matching alone does not establish the concern" in _partial_reason,
+   _partial_reason)
+
+# A thinking-mode run wrote every field of a concern on one line. The table then
+# carried the whole paragraph as the item, and defaulted every row to High
+# because no line carried the fields it expected. A stray "Severity:" left over
+# from an older prompt must still be trimmed out of the item text.
+_ONE_LINE = ("# Directly supported concerns\n"
+             "- Concern: The prior specification needs clarification. Severity: "
+             "Substantive. Evidence: the prior is a Student's t. Why it matters: "
+             "it should be positive.\n"
+             "* Evidence match: High — every quotation was located.\n\n"
+             "- Concern: The ACWR calculation could be clarified. Evidence: a "
+             "decay constant in days.\n"
+             "* Evidence match: Moderate — an inference.\n\n"
+             "# Verification prompts\n"
+             "- Check: whether season was modelled. Reason: it spans two seasons.\n")
+_table = rp.format_action_list(_ONE_LINE)
+ok("a run-together concern is cut at the next field",
+   "| Quoted | The prior specification needs clarification |" in _table, _table)
+ok("a stray severity label does not reach the item text",
+   "Severity" not in _table, _table)
+ok("its evidence match still places it",
+   "| Reasoned | The ACWR calculation could be clarified |" in _table, _table)
+ok("a run-together check drops its reason",
+   "| Question | Whether season was modelled |" in _table, _table)
+ok("the field-per-line form still works",
+   "| Quoted | Something is wrong. |" in rp.format_action_list(
+       "# Directly supported concerns\n* Concern: Something is wrong.\n"
+       "Evidence: The text states, \"a quotation\".\n"
+       "* Evidence match: High — every quotation was located.\n"))
+ok("clean report yields no overclaims", rp.overclaim_problems("A measured statement.") == [])
+
+print("\n[an unfinished synthesis is refused, not published]")
+# A thinking-mode synthesis spent 9,800 of its 10,000 tokens reasoning and
+# stopped four words into a sentence. Two headings and half a strength arrived,
+# perfectly formatted, and every check downstream passed them.
+_CUT = ("# Overall synopsis\n- Something.\n\n# Major strengths\n"
+        "- Strength: Posterior summaries are reported. Evidence: The table "
+        "reports log odds, credible intervals, odds ratios, and Bayes\n")
+_FULL = ("# Overall synopsis\n- Something.\n\n# Directly supported concerns\n"
+         "* Concern: A thing.\n\n# Overall confidence\n* Moderately confident.\n")
+ok("a report that never reaches its last heading is caught",
+   "never reached its final" in rp.report_looks_truncated(_CUT))
+ok("a complete report passes", rp.report_looks_truncated(_FULL) == "",
+   rp.report_looks_truncated(_FULL))
+ok("an empty one is caught too",
+   "returned nothing" in rp.report_looks_truncated(""))
+ok("a mid-sentence ending is caught even with every heading present",
+   "mid-sentence" in rp.report_looks_truncated(
+       _FULL.rstrip() + "\n* and the last point breaks off here mid"))
+ok("a table or heading ending is not mistaken for one",
+   rp.report_looks_truncated(_FULL.rstrip() + "\n| High | An action |") == "")
+
+server_src_2 = (ROOT / "app" / "server.py").read_text()
+ok("the server refuses to write one",
+   "rp.report_looks_truncated(final_report)" in server_src_2)
+
+print("\n[the version stamp covers every file that shapes a review]")
+import hashlib
+_app = Path(rp.__file__).resolve().parent
+# The deterministic checks and the design registry decide what a report says as
+# much as the prompts do, so they joined the stamp when they were integrated.
+_STAMPED = ["review_pipeline.py", "server.py", "llm_backend.py",
+            "manuscript_checks.py", "design_expectations.py"]
+_expected = hashlib.sha1(
+    b"".join((_app / name).read_bytes() for name in _STAMPED)
+).hexdigest()[:8]
+ok("the stamp hashes every file that shapes a review",
+   rp.PIPELINE_VERSION == _expected, f"{rp.PIPELINE_VERSION} vs {_expected}")
+ok("a change to a check would change the stamp",
+   rp._fingerprint_of(*[_app / n for n in _STAMPED[:-1]]) != rp.PIPELINE_VERSION)
+ok("a server-only edit would change the stamp",
+   rp._fingerprint_of(_app / "review_pipeline.py") != rp.PIPELINE_VERSION)
+ok("so would a backend-only edit, where the sampler and thinking mode live",
+   rp._fingerprint_of(_app / "review_pipeline.py",
+                      _app / "server.py") != rp.PIPELINE_VERSION)
+ok("the stale check uses the same inputs", rp.stale_module_warning() == "",
+   rp.stale_module_warning()[:80])
+ok("a missing file is reported, not guessed",
+   rp._fingerprint_of(_app / "no_such_file.py") == "unknown")
+
+print()
+print(f"{F} FAILURE(S)" if F else "All structural checks passed.")
+sys.exit(1 if F else 0)
