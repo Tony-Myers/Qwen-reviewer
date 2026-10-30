@@ -4,11 +4,51 @@ Evidence cards begin with deterministic identity for substantive final findings.
 
 This module does not perform model inference, source matching, evidence
 assessment, or methodological interpretation. It extracts already-written
-final concerns and verification questions and assigns stable identifiers in
-report order.
+final concerns and verification questions and assigns identifiers in report
+order. The identifiers are deterministic for a given report text; they are
+not persistent identities across edits or reruns.
 
 Upstream lineage is deliberately left unresolved unless it is established
 elsewhere by application-owned state.
+
+Report parsing specification
+----------------------------
+Only the "Directly supported concerns" and "Verification prompts" sections
+are converted into cards (headings compared case-insensitively, any level).
+
+* An item starts on a line of the form ``Concern: ...`` (concerns section) or
+  ``Check: ...`` (verification section). The marker may be preceded by a
+  ``-`` or ``*`` bullet and may be emphasised (``**Concern:**``,
+  ``**Concern**:``, ``*Concern:*``). These are the forms the application's
+  own report parsers in ``review_pipeline`` accept; unlike those parsers a
+  colon is required, so prose such as "Concerns about ..." is not an item.
+* Within an item, a line beginning with one of the labels ``Evidence``,
+  ``Why it matters``, ``Reason``, ``Evidence match``, ``Severity`` or
+  ``Confidence`` followed by a colon starts that field, with the same optional
+  bullet and emphasis. A bullet-prefixed field on its own line (``* Evidence:
+  ...``) therefore belongs to the item above it, as it does in the
+  application's own concern grouping. ``Evidence match``, ``Severity`` and
+  ``Confidence`` are recognised because the application writes or has written
+  them into final reports; without recognising them they would be mistaken
+  for continuation text of the preceding field. They are reproduced verbatim
+  as additional report fields and never change the evidence relationship.
+* Any other non-blank line inside an item continues the current field (the
+  finding text until the first field). Continuation lines are joined to the
+  field with single spaces, so wrapped text and qualifications are kept in
+  order. After a blank line, only an indented line or a recognised field line
+  continues the item; an unindented line, or an unindented bullet that is not
+  a recognised marker or field, ends it.
+* The older single-line layout ("Concern: X. Evidence: Y. Why it matters: Z"
+  and "Check: X. Reason: Y") is still separated, after continuation lines
+  have been joined.
+* Text in the two sections that is not part of a recognised item is not
+  discarded. ``extract_unparsed_report_content`` returns it verbatim so the
+  rendered appendix can show it with an explicit parsing limitation.
+* An item whose finding text is empty is kept, with a parsing limitation and
+  its original report text.
+
+None of this establishes that reported evidence is supported by the
+manuscript. Report-authored fields remain review content.
 """
 
 from __future__ import annotations
@@ -18,8 +58,39 @@ from typing import Any
 
 
 _HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*$")
-_CONCERN_RE = re.compile(r"^\s*[-*]\s+Concern:\s*(.*)$", re.IGNORECASE)
-_CHECK_RE = re.compile(r"^\s*[-*]\s+Check:\s*(.*)$", re.IGNORECASE)
+
+
+def _marker_re(label: str) -> re.Pattern[str]:
+    """Item/field marker with optional bullet and emphasis; colon required."""
+    return re.compile(
+        r"^\s*(?:[-*]\s+)?(?:\*{1,2})?\s*"
+        + label
+        + r"\s*(?:\*{1,2})?\s*:\s*(?:\*{1,2}(?=\s|$))?\s*(.*?)\s*$",
+        re.IGNORECASE,
+    )
+
+
+_CONCERN_RE = _marker_re(r"(?:Concern)")
+_CHECK_RE = _marker_re(r"(?:Check)")
+_FIELD_RE = _marker_re(
+    r"(Evidence\s+match|Evidence|Why\s+it\s+matters|Reason|Severity|Confidence)"
+)
+_INDENTED_RE = re.compile(r"^(?: {2,}|\t)")
+_UNINDENTED_BULLET_RE = re.compile(r"^ ?[-*]\s")
+
+_SECTIONS = {
+    "directly supported concerns": ("concern", "C", _CONCERN_RE),
+    "verification prompts": ("verification_question", "Q", _CHECK_RE),
+}
+
+_FIELD_KEYS = {
+    "evidence": "evidence",
+    "why it matters": "interpretation",
+    "reason": "interpretation",
+    "evidence match": "Evidence match",
+    "severity": "Severity",
+    "confidence": "Confidence",
+}
 
 _INLINE_EVIDENCE_RE = re.compile(
     r"^(.*?)\.\s+Evidence:\s+(.*?)(?:\.\s+Why it matters:\s+(.*))?$",
@@ -66,6 +137,159 @@ def _normalise_heading(text: str) -> str:
     return " ".join(text.strip().lower().split())
 
 
+def _join(parts: list[str]) -> str:
+    return " ".join(part for part in parts if part)
+
+
+def _parse_report(report_text: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Group the two finding sections into items and unattributed blocks.
+
+    Returns ``(items, unparsed)``. Each item carries its finding type, raw
+    report lines, finding parts and fields in report order. Each unparsed
+    block carries the heading it appeared under and its verbatim lines.
+    """
+    items: list[dict[str, Any]] = []
+    unparsed: list[dict[str, Any]] = []
+    section: str | None = None
+    heading_text = ""
+    current: dict[str, Any] | None = None
+    loose: dict[str, Any] | None = None
+    blank_since_last = False
+
+    def close_item() -> None:
+        nonlocal current
+        if current is not None:
+            while current["raw"] and not current["raw"][-1].strip():
+                current["raw"].pop()
+            items.append(current)
+        current = None
+
+    def close_loose() -> None:
+        nonlocal loose
+        if loose is not None:
+            while loose["lines"] and not loose["lines"][-1].strip():
+                loose["lines"].pop()
+            if loose["lines"]:
+                unparsed.append(loose)
+        loose = None
+
+    for line in (report_text or "").splitlines():
+        heading_match = _HEADING_RE.match(line)
+        if heading_match:
+            close_item()
+            close_loose()
+            heading_text = heading_match.group(1).strip()
+            section = _normalise_heading(heading_text)
+            blank_since_last = False
+            continue
+
+        if section not in _SECTIONS:
+            continue
+
+        review_status, _, marker_re = _SECTIONS[section]
+        marker = marker_re.match(line)
+        if marker:
+            close_item()
+            close_loose()
+            current = {
+                "review_status": review_status,
+                "raw": [line],
+                "finding_parts": [marker.group(1)],
+                "fields": [],
+            }
+            blank_since_last = False
+            continue
+
+        if not line.strip():
+            if current is not None:
+                current["raw"].append(line)
+            elif loose is not None:
+                loose["lines"].append(line)
+            blank_since_last = True
+            continue
+
+        field = _FIELD_RE.match(line) if current is not None else None
+        if field:
+            label = _normalise_heading(field.group(1))
+            current["fields"].append([_FIELD_KEYS[label], [field.group(2)]])
+            current["raw"].append(line)
+            blank_since_last = False
+            continue
+
+        indented = bool(_INDENTED_RE.match(line))
+        continues = (
+            current is not None
+            and (indented or not blank_since_last)
+            and (indented or not _UNINDENTED_BULLET_RE.match(line))
+        )
+        if continues:
+            text = line.strip()
+            if current["fields"]:
+                current["fields"][-1][1].append(text)
+            else:
+                current["finding_parts"].append(text)
+            current["raw"].append(line)
+            blank_since_last = False
+            continue
+
+        close_item()
+        if loose is None:
+            loose = {"heading": heading_text, "section": section, "lines": []}
+        loose["lines"].append(line)
+        blank_since_last = False
+
+    close_item()
+    close_loose()
+    return items, unparsed
+
+
+def _item_content(item: dict[str, Any]) -> dict[str, Any]:
+    """Finding text, report fields and parsing limitations for one item."""
+    finding = _join(item["finding_parts"])
+    evidence: list[str] = []
+    interpretation: list[str] = []
+    other_fields: list[dict[str, str]] = []
+    limitations: list[str] = []
+
+    if item["review_status"] == "concern":
+        finding, inline_evidence, inline_interpretation = _split_inline_concern(finding)
+        if inline_evidence is not None:
+            evidence.append(inline_evidence)
+        if inline_interpretation is not None:
+            interpretation.append(inline_interpretation)
+    else:
+        finding, inline_reason = _split_inline_check(finding)
+        if inline_reason is not None:
+            interpretation.append(inline_reason)
+
+    for key, parts in item["fields"]:
+        value = _join(parts)
+        if key == "evidence":
+            evidence.append(value)
+        elif key == "interpretation":
+            interpretation.append(value)
+        else:
+            other_fields.append({"label": key, "text": value})
+
+    evidence = [value for value in evidence if value]
+    interpretation = [value for value in interpretation if value]
+
+    if not finding:
+        limitations.append(
+            "The item marker carried no finding text, so the finding could "
+            "not be separated from the rest of the item."
+        )
+
+    return {
+        "text": finding,
+        "reported_evidence": _join(evidence) or None,
+        "interpretation": _join(interpretation) or None,
+        "other_report_fields": other_fields,
+        "parse_limitations": limitations,
+        "report_block": "\n".join(item["raw"]),
+    }
+
+
 def extract_final_findings(report_text: str) -> list[dict[str, Any]]:
     """Extract final concerns/questions and assign deterministic IDs.
 
@@ -74,8 +298,9 @@ def extract_final_findings(report_text: str) -> list[dict[str, Any]]:
     - concerns: C1, C2, ...
     - verification questions: Q1, Q2, ...
 
-    Finding text is preserved exactly apart from removing the existing
-    Markdown bullet and ``Concern:`` / ``Check:`` marker.
+    Finding text is preserved apart from removing the existing Markdown
+    bullet, emphasis and ``Concern:`` / ``Check:`` marker, and joining wrapped
+    continuation lines with single spaces (see the module docstring).
 
     This function does not infer candidate lineage. ``upstream_lineage`` is
     therefore ``None`` unless a later, separately validated application layer
@@ -84,47 +309,37 @@ def extract_final_findings(report_text: str) -> list[dict[str, Any]]:
     if not report_text:
         return []
 
+    items, _ = _parse_report(report_text)
     findings: list[dict[str, Any]] = []
-    section: str | None = None
-    concern_number = 0
-    question_number = 0
+    counters = {"concern": 0, "verification_question": 0}
+    prefixes = {"concern": "C", "verification_question": "Q"}
 
-    for line in report_text.splitlines():
-        heading_match = _HEADING_RE.match(line)
-        if heading_match:
-            section = _normalise_heading(heading_match.group(1))
-            continue
-
-        if section == "directly supported concerns":
-            match = _CONCERN_RE.match(line)
-            if match:
-                concern_number += 1
-                finding_text, _, _ = _split_inline_concern(match.group(1))
-                findings.append(
-                    {
-                        "finding_id": f"C{concern_number}",
-                        "review_status": "concern",
-                        "text": finding_text,
-                        "upstream_lineage": None,
-                    }
-                )
-            continue
-
-        if section == "verification prompts":
-            match = _CHECK_RE.match(line)
-            if match:
-                question_number += 1
-                finding_text, _ = _split_inline_check(match.group(1))
-                findings.append(
-                    {
-                        "finding_id": f"Q{question_number}",
-                        "review_status": "verification_question",
-                        "text": finding_text,
-                        "upstream_lineage": None,
-                    }
-                )
+    for item in items:
+        status = item["review_status"]
+        counters[status] += 1
+        findings.append(
+            {
+                "finding_id": f"{prefixes[status]}{counters[status]}",
+                "review_status": status,
+                "text": _item_content(item)["text"],
+                "upstream_lineage": None,
+            }
+        )
 
     return findings
+
+
+def extract_unparsed_report_content(report_text: str) -> list[dict[str, str]]:
+    """Return finding-section text that was not converted into a card.
+
+    Each entry gives the section heading as written and the verbatim text.
+    Nothing here is assigned an identifier or interpreted.
+    """
+    _, unparsed = _parse_report(report_text or "")
+    return [
+        {"heading": block["heading"], "text": "\n".join(block["lines"])}
+        for block in unparsed
+    ]
 
 
 def _source_span_location(
@@ -323,72 +538,29 @@ _ALLOWED_EVIDENCE_RELATIONSHIPS = {
 }
 
 
-def _extract_finding_details(report_text: str) -> dict[str, dict[str, str | None]]:
+def _extract_finding_details(report_text: str) -> dict[str, dict[str, Any]]:
     """Extract report-authored evidence/interpretation without verifying it.
 
     The returned Evidence/Why it matters/Reason text remains review content.
     This parser does not establish that any Evidence statement is supported by
     the manuscript.
     """
-    details: dict[str, dict[str, str | None]] = {}
-    section: str | None = None
-    concern_number = 0
-    question_number = 0
-    current_id: str | None = None
+    details: dict[str, dict[str, Any]] = {}
+    items, _ = _parse_report(report_text or "")
+    counters = {"concern": 0, "verification_question": 0}
+    prefixes = {"concern": "C", "verification_question": "Q"}
 
-    evidence_re = re.compile(r"^\s+Evidence:\s*(.*)$", re.IGNORECASE)
-    why_re = re.compile(r"^\s+Why it matters:\s*(.*)$", re.IGNORECASE)
-    reason_re = re.compile(r"^\s+Reason:\s*(.*)$", re.IGNORECASE)
-
-    for line in report_text.splitlines():
-        heading_match = _HEADING_RE.match(line)
-        if heading_match:
-            section = _normalise_heading(heading_match.group(1))
-            current_id = None
-            continue
-
-        if section == "directly supported concerns":
-            match = _CONCERN_RE.match(line)
-            if match:
-                concern_number += 1
-                current_id = f"C{concern_number}"
-                _, inline_evidence, inline_interpretation = (
-                    _split_inline_concern(match.group(1))
-                )
-                details[current_id] = {
-                    "reported_evidence": inline_evidence,
-                    "interpretation": inline_interpretation,
-                }
-                continue
-
-        if section == "verification prompts":
-            match = _CHECK_RE.match(line)
-            if match:
-                question_number += 1
-                current_id = f"Q{question_number}"
-                _, inline_reason = _split_inline_check(match.group(1))
-                details[current_id] = {
-                    "reported_evidence": None,
-                    "interpretation": inline_reason,
-                }
-                continue
-
-        if current_id is None:
-            continue
-
-        evidence_match = evidence_re.match(line)
-        if evidence_match:
-            details[current_id]["reported_evidence"] = evidence_match.group(1)
-            continue
-
-        why_match = why_re.match(line)
-        if why_match:
-            details[current_id]["interpretation"] = why_match.group(1)
-            continue
-
-        reason_match = reason_re.match(line)
-        if reason_match:
-            details[current_id]["interpretation"] = reason_match.group(1)
+    for item in items:
+        status = item["review_status"]
+        counters[status] += 1
+        content = _item_content(item)
+        details[f"{prefixes[status]}{counters[status]}"] = {
+            "reported_evidence": content["reported_evidence"],
+            "interpretation": content["interpretation"],
+            "other_report_fields": content["other_report_fields"],
+            "parse_limitations": content["parse_limitations"],
+            "report_block": content["report_block"],
+        }
 
     return details
 
@@ -512,6 +684,13 @@ def build_evidence_cards(
                 human_verification_required
             ),
             "upstream_lineage": finding["upstream_lineage"],
+            "other_report_fields": list(
+                report_details.get("other_report_fields") or []
+            ),
+            "parse_limitations": list(
+                report_details.get("parse_limitations") or []
+            ),
+            "report_block": report_details.get("report_block"),
         }
 
         cards.append(card)
@@ -564,13 +743,49 @@ def _render_structured_table(table: dict[str, Any]) -> list[str]:
     return rendered
 
 
+def _fenced_text(text: str) -> list[str]:
+    """Verbatim text in a fence longer than any backtick run inside it."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return [fence + "text", text, fence]
+
+
+def _render_unparsed_content(unparsed_content: list[dict[str, str]]) -> list[str]:
+    lines = [
+        "## Report content not converted into cards",
+        "",
+        (
+            "**Parsing limitation:** The following text appears in the "
+            "review's concern or verification sections but is not in a "
+            "recognised Concern: or Check: item, so no card or identifier was "
+            "assigned. It is reproduced verbatim from the review and has not "
+            "been checked against the manuscript."
+        ),
+        "",
+    ]
+    for block in unparsed_content:
+        lines.extend(
+            [
+                f"### Under \"{block.get('heading') or 'unknown section'}\"",
+                "",
+                *_fenced_text(block.get("text") or ""),
+                "",
+            ]
+        )
+    return lines
+
+
 def render_human_evidence_appendix(
     cards: list[dict[str, Any]],
+    *,
+    unparsed_content: list[dict[str, str]] | None = None,
 ) -> str:
     """Render deterministic human-facing evidence cards as Markdown.
 
     Rendering performs no inference, source matching, or evidence
     verification. It only presents state already contained in the cards.
+    ``unparsed_content`` (from ``extract_unparsed_report_content``) is
+    reproduced verbatim under an explicit parsing limitation.
     """
     lines = [
         "# Human Evidence Appendix",
@@ -586,6 +801,13 @@ def render_human_evidence_appendix(
             "source relationship."
         ),
         "",
+        (
+            "Identifiers (C1, Q1, ...) follow the order of this review only; "
+            "they are not stable across edits or reruns. What the application "
+            "extracted from the uploaded files is recorded separately in the "
+            "extraction evidence appendix."
+        ),
+        "",
     ]
 
     if not cards:
@@ -593,6 +815,9 @@ def render_human_evidence_appendix(
             "No substantive concerns or verification questions were "
             "identified for evidence-card rendering."
         )
+        if unparsed_content:
+            lines.append("")
+            lines.extend(_render_unparsed_content(unparsed_content))
         return "\n".join(lines).rstrip() + "\n"
 
     for card in cards:
@@ -730,6 +955,22 @@ def render_human_evidence_appendix(
                 ]
             )
 
+        other_fields = card.get("other_report_fields") or []
+        if other_fields:
+            lines.extend(
+                [
+                    (
+                        "**Other fields written in the review** (reproduced "
+                        "as written; they do not establish the source "
+                        "relationship):"
+                    ),
+                    "",
+                ]
+            )
+            for field in other_fields:
+                lines.append(f"- {field['label']} — {field['text']}")
+            lines.append("")
+
         if card.get("human_verification_required"):
             lines.extend(
                 [
@@ -740,5 +981,21 @@ def render_human_evidence_appendix(
                     "",
                 ]
             )
+
+        limitations = card.get("parse_limitations") or []
+        if limitations:
+            lines.extend(
+                [
+                    "**Parsing limitation:** " + " ".join(limitations),
+                    "",
+                    "Original text of this item in the review:",
+                    "",
+                    *_fenced_text(card.get("report_block") or ""),
+                    "",
+                ]
+            )
+
+    if unparsed_content:
+        lines.extend(_render_unparsed_content(unparsed_content))
 
     return "\n".join(lines).rstrip() + "\n"

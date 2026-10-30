@@ -3,6 +3,9 @@ from pathlib import Path
 
 
 class DevelopmentTraceUI(unittest.TestCase):
+    """Source-presence checks only. Behaviour (envelope unwrapping, job-bound
+    caching, separate appendices) is executed in test_chat_artefact_behaviour.py."""
+
     @classmethod
     def setUpClass(cls):
         cls.source = Path("app/chat.html").read_text()
@@ -10,8 +13,8 @@ class DevelopmentTraceUI(unittest.TestCase):
     def check(self, text):
         self.assertIn(text, self.source)
     def test_completion_and_default_gate(self):
-        self.check("showReport(d.report, d.has_appendix, job_id, d.has_development_trace);")
-        self.check("function showReport(md, hasAppendix, jobId, hasDevelopmentTrace = false)")
+        self.check("showReport(d.report, d.has_appendix, job_id, d.has_development_trace, d.has_human_appendix);")
+        self.check("function showReport(md, hasAppendix, jobId, hasDevelopmentTrace = false, hasHumanAppendix = false)")
 
     def test_trace_controls_and_endpoint(self):
         self.check("if (hasDevelopmentTrace) {")

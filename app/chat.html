@@ -569,9 +569,19 @@ function invalidateCompletedReviewAfterRestart() {
     const appendixDownload = document.getElementById('appendixDownload');
     if (appendixToggle) {
       appendixToggle.disabled = true;
-      appendixToggle.textContent = 'Evidence appendix unavailable after restart';
+      appendixToggle.textContent = 'Extraction evidence appendix unavailable after restart';
     }
     if (appendixDownload) appendixDownload.disabled = true;
+  }
+  const humanAppendixCached = !!(ra && ra._rawHumanAppendix);
+  if (!humanAppendixCached) {
+    const humanToggle = document.getElementById('humanAppendixToggle');
+    const humanDownload = document.getElementById('humanAppendixDownload');
+    if (humanToggle) {
+      humanToggle.disabled = true;
+      humanToggle.textContent = 'Human Evidence Appendix unavailable after restart';
+    }
+    if (humanDownload) humanDownload.disabled = true;
   }
 }
 
@@ -1896,7 +1906,7 @@ async function startReview() {
         es.close();
         activeReviewJobId = null;
         setReviewRunning(false, true);
-        showReport(d.report, d.has_appendix, job_id, d.has_development_trace);
+        showReport(d.report, d.has_appendix, job_id, d.has_development_trace, d.has_human_appendix);
       }
       if (d.type === 'cancelled') {
         es.close();
@@ -1926,12 +1936,16 @@ async function startReview() {
 
 let currentJobId = null;
 
-function showReport(md, hasAppendix, jobId, hasDevelopmentTrace = false) {
+function showReport(md, hasAppendix, jobId, hasDevelopmentTrace = false, hasHumanAppendix = false) {
   const ra = document.getElementById('reportArea');
   ra._raw = md;
+  // Cached artefacts belong to one job. They are cleared here and only ever
+  // refilled by a response for the job recorded in ra._artefactJobId.
   ra._rawAppendix = '';
+  ra._rawHumanAppendix = '';
   ra._developmentTrace = null;
   currentJobId = jobId || null;
+  ra._artefactJobId = currentJobId;
   let html = '<aside class="review-aid-notice" aria-label="Reviewer aid">'
     + '<strong>Reviewer aid — not a final peer-review report</strong>'
     + '<p>This analysis identifies manuscript-specific strengths, potential concerns and questions worth investigating. It is designed to support your judgement as a reviewer, not replace it. Check important findings against the manuscript and, where needed, methodological evidence before deciding whether they warrant a comment to the authors or editor.</p></aside>'
@@ -1940,8 +1954,12 @@ function showReport(md, hasAppendix, jobId, hasDevelopmentTrace = false) {
     + '<button class="btn-secondary" onclick="dlReport()">Download appraisal .md</button>'
     + '<button class="btn-secondary" onclick="copyReport()">Copy appraisal</button>';
   if (hasAppendix) {
-    html += '<button class="btn-secondary" id="appendixToggle" onclick="fetchAndToggleAppendix()">Show evidence appendix</button>'
-      + '<button class="btn-secondary" id="appendixDownload" onclick="dlAppendix()">Download appendix .md</button>';
+    html += '<button class="btn-secondary" id="appendixToggle" onclick="fetchAndToggleAppendix()" title="What the application extracted from the uploaded files. Extraction is automated and can be incomplete or wrong.">Show extraction evidence appendix</button>'
+      + '<button class="btn-secondary" id="appendixDownload" onclick="dlAppendix()">Download extraction appendix .md</button>';
+  }
+  if (hasHumanAppendix) {
+    html += '<button class="btn-secondary" id="humanAppendixToggle" onclick="fetchAndToggleHumanAppendix()" title="The review\'s concerns and verification questions, with what has and has not been established about their evidence.">Show Human Evidence Appendix</button>'
+      + '<button class="btn-secondary" id="humanAppendixDownload" onclick="dlHumanAppendix()">Download Human Evidence Appendix .md</button>';
   }
   if (hasDevelopmentTrace) {
     html += '<button class="btn-secondary" id="developmentTraceToggle" onclick="fetchAndToggleDevelopmentTrace()">Show development trace</button>'
@@ -1949,6 +1967,9 @@ function showReport(md, hasAppendix, jobId, hasDevelopmentTrace = false) {
   }
   html += '</div>';
   html += '<div id="appendixSection" style="display:none; margin-top: 16px;"></div>';
+  if (hasHumanAppendix) {
+    html += '<div id="humanAppendixSection" style="display:none; margin-top: 16px;"></div>';
+  }
   if (hasDevelopmentTrace) {
     html += '<div id="developmentTraceSection" style="display:none; margin-top:16px;"></div>';
   }
@@ -2050,19 +2071,46 @@ async function askReview() {
   btn.disabled = false;
 }
 
+// Fetch one per-review artefact for the job displayed when the request is
+// made. The job identity is captured before the request and checked again
+// after each await: a response that arrives once a different review is
+// displayed is discarded, so it is neither cached nor shown under that review.
+// `extract` validates the response body and returns the value to cache, or
+// null if the body is not a valid artefact for that job.
+async function fetchJobArtefact(endpoint, cacheKey, extract, label) {
+  const jobId = currentJobId;
+  if (!jobId) return null;
+  const ra = document.getElementById('reportArea');
+  if (ra._artefactJobId === jobId && ra[cacheKey]) return ra[cacheKey];
+  try {
+    const resp = await fetch(BASE + endpoint + jobId);
+    if (currentJobId !== jobId || !resp.ok) return null;
+    const data = await resp.json();
+    if (currentJobId !== jobId || ra._artefactJobId !== jobId) return null;
+    const value = extract(data, jobId);
+    if (value === null || value === undefined || value === '') return null;
+    ra[cacheKey] = value;
+    return value;
+  } catch (e) {
+    console.error('Failed to fetch ' + label + ':', e);
+  }
+  return null;
+}
+
+function appendixText(field) {
+  return data => (data && typeof data[field] === 'string') ? data[field] : null;
+}
+
 async function fetchAppendix() {
   if (!currentJobId) return '';
-  const ra = document.getElementById('reportArea');
-  if (ra._rawAppendix) return ra._rawAppendix;
-  try {
-    const resp = await fetch(BASE + '/api/review/appendix/' + currentJobId);
-    if (resp.ok) {
-      const data = await resp.json();
-      ra._rawAppendix = data.appendix || '';
-      return ra._rawAppendix;
-    }
-  } catch (e) { console.error('Failed to fetch appendix:', e); }
-  return '';
+  return (await fetchJobArtefact('/api/review/appendix/', '_rawAppendix',
+                                 appendixText('appendix'), 'extraction appendix')) || '';
+}
+
+async function fetchHumanAppendix() {
+  if (!currentJobId) return '';
+  return (await fetchJobArtefact('/api/review/human-appendix/', '_rawHumanAppendix',
+                                 appendixText('human_appendix'), 'Human Evidence Appendix')) || '';
 }
 
 function traceValue(value) {
@@ -2127,7 +2175,7 @@ function renderDevelopmentTrace(trace) {
   let h = '<aside class="review-aid-notice" aria-label="Development trace">'
     + '<strong>Development Trace — local debugging material</strong>'
     + '<p>This view may contain manuscript text, model outputs and internal diagnostics. '
-    + 'It is separate from the scientific appraisal and evidence appendix. '
+    + 'It is separate from the scientific appraisal and from both evidence appendices. '
     + 'Keep it confidential where appropriate.</p></aside>'
     + '<div class="report-content"><h2>Run</h2>';
 
@@ -2172,23 +2220,26 @@ function renderDevelopmentTrace(trace) {
   return h;
 }
 
-async function fetchDevelopmentTrace() {
-  if (!currentJobId) return null;
-  const ra = document.getElementById('reportArea');
-  if (ra._developmentTrace) return ra._developmentTrace;
-  try {
-    const resp = await fetch(BASE + '/api/review/trace/' + currentJobId);
-    if (resp.ok) {
-      const data = await resp.json();
-      ra._developmentTrace = data;
-      return data;
-    }
-  } catch (e) {
-    console.error('Failed to fetch development trace:', e);
-  }
-  return null;
+// GET /api/review/trace/{job_id} returns the envelope {trace: {...}, filename}.
+// Only the inner trace object is rendered, cached or downloaded. A body
+// without an object-valued trace, or a trace recorded for a different job, is
+// rejected rather than shown.
+function unwrapDevelopmentTrace(data, jobId) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const trace = data.trace;
+  if (!trace || typeof trace !== 'object' || Array.isArray(trace)) return null;
+  if (trace.job_id !== undefined && trace.job_id !== null && trace.job_id !== jobId) return null;
+  return trace;
 }
 
+async function fetchDevelopmentTrace() {
+  if (!currentJobId) return null;
+  return fetchJobArtefact('/api/review/trace/', '_developmentTrace',
+                          unwrapDevelopmentTrace, 'development trace');
+}
+
+// The download is the inner trace object as JSON, the same object the viewer
+// renders, saved as development-trace.json.
 async function dlDevelopmentTrace() {
   const trace = await fetchDevelopmentTrace();
   if (!trace) return;
@@ -2212,8 +2263,11 @@ async function fetchAndToggleDevelopmentTrace() {
   }
 
   if (!sec.innerHTML) {
+    const jobId = currentJobId;
     if (btn) btn.textContent = 'Loading...';
     const trace = await fetchDevelopmentTrace();
+    // The review shown may have changed while the request was in flight.
+    if (currentJobId !== jobId || document.getElementById('developmentTraceSection') !== sec) return;
     sec.innerHTML = trace
       ? renderDevelopmentTrace(trace)
       : '<div class="report-content">Development trace could not be loaded.</div>';
@@ -2230,14 +2284,17 @@ async function fetchAndToggleAppendix() {
 
   if (sec.style.display !== 'none') {
     sec.style.display = 'none';
-    if (btn) btn.textContent = 'Show evidence appendix';
+    if (btn) btn.textContent = 'Show extraction evidence appendix';
     return;
   }
 
   // Fetch if not yet loaded
   if (!sec.innerHTML) {
+    const jobId = currentJobId;
     if (btn) btn.textContent = 'Loading...';
     const md = await fetchAppendix();
+    // The review shown may have changed while the request was in flight.
+    if (currentJobId !== jobId || document.getElementById('appendixSection') !== sec) return;
     if (md) {
       sec.innerHTML = '<div class="report-content">' + renderMd(md) + '</div>';
     } else {
@@ -2246,7 +2303,36 @@ async function fetchAndToggleAppendix() {
   }
 
   sec.style.display = 'block';
-  if (btn) btn.textContent = 'Hide evidence appendix';
+  if (btn) btn.textContent = 'Hide extraction evidence appendix';
+  sec.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function fetchAndToggleHumanAppendix() {
+  const sec = document.getElementById('humanAppendixSection');
+  const btn = document.getElementById('humanAppendixToggle');
+  if (!sec) return;
+
+  if (sec.style.display !== 'none') {
+    sec.style.display = 'none';
+    if (btn) btn.textContent = 'Show Human Evidence Appendix';
+    return;
+  }
+
+  if (!sec.innerHTML) {
+    const jobId = currentJobId;
+    if (btn) btn.textContent = 'Loading...';
+    const md = await fetchHumanAppendix();
+    // The review shown may have changed while the request was in flight.
+    if (currentJobId !== jobId || document.getElementById('humanAppendixSection') !== sec) return;
+    if (md) {
+      sec.innerHTML = '<div class="report-content">' + renderMd(md) + '</div>';
+    } else {
+      sec.innerHTML = '<div class="report-content" style="color:var(--text-muted)">Could not load the Human Evidence Appendix.</div>';
+    }
+  }
+
+  sec.style.display = 'block';
+  if (btn) btn.textContent = 'Hide Human Evidence Appendix';
   sec.scrollIntoView({ behavior: 'smooth' });
 }
 function showErr(m) { document.getElementById('reportArea').innerHTML = '<div class="report-content" style="color:var(--error)">' + esc(m) + '</div>'; }
@@ -2294,6 +2380,15 @@ async function dlAppendix() {
   const a = document.createElement('a');
   const name = selectedFile ? selectedFile.name.replace(/\.[^.]+$/, '') : 'review';
   a.href = URL.createObjectURL(b); a.download = name + '_evidence_appendix.md'; a.click();
+}
+async function dlHumanAppendix() {
+  let md = document.getElementById('reportArea')._rawHumanAppendix || '';
+  if (!md) md = await fetchHumanAppendix();
+  if (!md) { alert('Human Evidence Appendix not available.'); return; }
+  const b = new Blob([md], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  const name = selectedFile ? selectedFile.name.replace(/\.[^.]+$/, '') : 'review';
+  a.href = URL.createObjectURL(b); a.download = name + '_human_evidence_appendix.md'; a.click();
 }
 </script>
 </body>

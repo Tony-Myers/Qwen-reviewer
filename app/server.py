@@ -1247,6 +1247,7 @@ async def start_review(
         "progress": [],
         "report": None,
         "appendix": None,
+        "human_appendix": None,
         "trace": None,
         "error": None,
         "filename": file.filename,
@@ -1404,6 +1405,16 @@ def _build_appendix_text(
     lines.append(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
     lines.extend(_model_header_lines())
     lines.append(f"Pipeline: {rp.PIPELINE_VERSION}")
+    lines.append("")
+    lines.append(
+        "This extraction appendix records what the application extracted from "
+        "the uploaded files: the evidence manifest, detected blocks, tables and "
+        "chunk previews. Automated extraction can be incomplete or wrong. "
+        "Manifest flags are document-level detector results, not verified "
+        "evidence for any particular finding. The review's concerns and "
+        "verification questions are set out in the separate Human Evidence "
+        "Appendix."
+    )
     lines.append("")
     lines.append(f"## Input files\n- {file_path.name}")
     lines.append("")
@@ -2091,17 +2102,43 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
                 f"- **{m.source_name}**: {m.summary_text()}" for m in all_manifests) + "\n\n---\n\n"
         final_report = header + final_report
 
+        # --- Generate evidence appendix (in-memory, not written to disk) ---
+        # The extraction evidence appendix records what the application
+        # extracted from each uploaded file. It is the earlier public appendix,
+        # plus a note that extraction is fallible, and is a separate artefact
+        # from the Human Evidence Appendix below.
+        _add_progress(job_id, "Generating evidence appendix...")
+        appendix_lines = _build_appendix_text(
+            file_path, manifest, table_blocks, chunks,
+        )
+
+        if supplementary:
+            appendix_header = appendix_lines.split("## Input files", 1)[0]
+            sections = []
+            for m, (_, name) in zip(all_manifests, inputs):
+                section = _build_appendix_text(
+                    Path(name), m, per_file_tables[name], per_file_chunks[name])
+                sections.append(f"## Source: {name}\n\n## Evidence manifest" +
+                                section.split("## Evidence manifest", 1)[1])
+            appendix_lines = appendix_header + "## Input files\n" + "\n".join(
+                f"- {name}" for _, name in inputs) + "\n\n" + "\n\n".join(sections)
+            review_jobs[job_id]["sources"] = citation_source
+
         # --- Generate human-facing evidence appendix deterministically ---
-        _add_progress(job_id, "Generating human evidence appendix...")
+        # A separate artefact built from the final report only. No verified
+        # source relationships are supplied here, so every card states that
+        # the relationship is not established.
+        _add_progress(job_id, "Generating Human Evidence Appendix...")
         from human_evidence_appendix import (
             build_evidence_cards,
+            extract_unparsed_report_content,
             render_human_evidence_appendix,
         )
         evidence_cards = build_evidence_cards(final_report)
-        appendix_lines = render_human_evidence_appendix(evidence_cards)
-
-        if supplementary:
-            review_jobs[job_id]["sources"] = citation_source
+        human_appendix = render_human_evidence_appendix(
+            evidence_cards,
+            unparsed_content=extract_unparsed_report_content(final_report),
+        )
 
         # Kept so the reviewer can ask where the paper says something. It is
         # the same extracted text the report was built from, so an answer and a
@@ -2114,6 +2151,7 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         review_jobs[job_id]["text"] = text
         review_jobs[job_id]["report"] = final_report
         review_jobs[job_id]["appendix"] = appendix_lines
+        review_jobs[job_id]["human_appendix"] = human_appendix
         if review_jobs[job_id].get("development_mode"):
             review_jobs[job_id]["trace"] = trace
         review_jobs[job_id]["status"] = "complete"
@@ -2164,6 +2202,7 @@ async def review_status(job_id: str):
                     "type": "complete",
                     "report": job["report"],
                     "has_appendix": bool(job.get("appendix")),
+                    "has_human_appendix": bool(job.get("human_appendix")),
                     "has_development_trace": bool(job.get("development_mode") and job.get("trace")),
                 })
                 yield f"data: {data}\n\n"
@@ -2230,6 +2269,18 @@ async def download_appendix(job_id: str):
         return JSONResponse({"error": "Appendix not ready"}, status_code=404)
 
     return JSONResponse(content={"appendix": job["appendix"]})
+
+
+# ---------------------------------------------------------------------------
+# GET /api/review/human-appendix/{job_id} — download Human Evidence Appendix
+# ---------------------------------------------------------------------------
+@app.get("/api/review/human-appendix/{job_id}")
+async def download_human_appendix(job_id: str):
+    job = review_jobs.get(job_id)
+    if not job or not job.get("human_appendix"):
+        return JSONResponse({"error": "Human Evidence Appendix not ready"}, status_code=404)
+
+    return JSONResponse(content={"human_appendix": job["human_appendix"]})
 
 
 # ---------------------------------------------------------------------------

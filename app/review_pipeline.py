@@ -1559,6 +1559,107 @@ def has_inspectable_model_spec(text: str) -> bool:
     return cue_count >= 2
 
 
+# ---------------------------------------------------------------------------
+# Standard-error and random-allocation detectors
+# ---------------------------------------------------------------------------
+# Both flags are document-level detection safeguards. A positive value makes
+# the programmatic post-checks request verification; it never establishes
+# evidence for a particular analysis or finding. The initial scan in
+# structure_evidence() and refine_manifest_flags() call the same functions so
+# the two stages apply one definition.
+
+# Standard errors. The flag is set only by one of these reporting forms:
+#   1. the words "standard error" or "standard errors";
+#   2. an SE / S.E. abbreviation attached to a value: "SE = <number>",
+#      "SE: <number>", or "± SE" / "+/- SE";
+#   3. "(SE)" directly after a statistic label -- the "estimate (SE)" column
+#      convention -- where the label is mean, M, estimate, coefficient,
+#      difference, B, beta or β;
+#   4. SE as a stand-alone table cell: delimited by a tab or pipe on at least
+#      one side and by a tab, pipe or line boundary on the other.
+# Any other occurrence of the letters SE, such as a compass or regional
+# abbreviation followed by a comma, colon, semicolon, line break or
+# parenthesis, does not set the flag. Known false negatives: SE in
+# space-aligned table text, and table cells that combine SE with other text
+# (for example "SE (95% CI)").
+_SE_TOKEN = r"(?<![\w.])(?:s\.e\.?|se)(?!\w)"
+_SE_VALUE = r"[\-−]?(?:\d|\.\d)"
+_STANDARD_ERROR_RE = re.compile(
+    r"\bstandard\s+errors?\b"
+    rf"|{_SE_TOKEN}\s*[=:]\s*{_SE_VALUE}"
+    rf"|(?:±|\+/-|\+/−)\s*{_SE_TOKEN}"
+    rf"|\b(?:means?|m|estimates?|coefficients?|differences?|b|beta|β)\s*\(\s*{_SE_TOKEN}\s*\)"
+    rf"|[\t|][ ]*{_SE_TOKEN}[ ]*(?=[\t|]|$)"
+    rf"|^[ ]*{_SE_TOKEN}[ ]*[\t|]",
+    re.MULTILINE,
+)
+
+
+def _reports_standard_errors(text_lower: str) -> bool:
+    """True when lower-cased text contains a recognised SE reporting form."""
+    return bool(_STANDARD_ERROR_RE.search(text_lower or ""))
+
+
+# Randomisation. The flag means random allocation or assignment to
+# experimental conditions, or randomised condition order. Random sampling or
+# selection of participants is a different design property and never sets
+# it, and a generic occurrence of "random" or "randomly" does not set it.
+# Within one sentence the flag is set by:
+#   1. "random(ly) allocated/assigned" (and allocation/assignment), or
+#      "allocated/assigned ... at random / randomly" within four words;
+#   2. "randomised"/"randomisation" (either spelling) in a sentence that also
+#      names an allocation context: allocation, assignment, condition, group,
+#      arm, treatment, intervention, control, placebo, order, sequence,
+#      crossover, trial, block or stratified;
+#   3. "counterbalanced"/"counterbalancing" (retained from the earlier
+#      detector; counterbalanced condition order is reported under this flag
+#      although it is systematic rather than random).
+# A randomise-family term does not count when it is negated immediately
+# before ("non-randomised", "not randomised", "no randomisation", "without
+# randomisation") or when the next word or the one after it is a sampling,
+# selection, recruitment, drawing or survey word, or the next word is
+# "test(s)" (a randomisation test is a statistical procedure, not allocation).
+# A document that mentions a non-random sampling method is not excluded: how
+# participants were sampled neither establishes nor rules out how they were
+# allocated.
+_RANDOM_ALLOCATION_RE = re.compile(
+    r"\brandom(?:ly)?\s+(?:allocat|assign)\w*"
+    r"|\b(?:allocat|assign)\w*\s+(?:[\w-]+\s+){0,4}?(?:at\s+random|randomly)\b"
+)
+_RANDOMISE_TERM_RE = re.compile(r"\brandomi[sz](?:ed|ation)\b")
+_ALLOCATION_CONTEXT_RE = re.compile(
+    r"\b(?:allocat\w*|assign\w*|conditions?|groups?|arms?|treatments?|"
+    r"interventions?|controls?|controlled|placebo|order|ordering|sequences?|"
+    r"crossover|cross-over|trials?|blocks?|stratified)\b"
+)
+_COUNTERBALANCED_RE = re.compile(r"\bcounterbalanc(?:ed|ing)\b")
+_NEGATED_BEFORE_RE = re.compile(
+    r"(?:\bnon[\s-]?|\bnot\s+(?:been\s+|be\s+)?|\bno\s+|\bwithout\s+)$"
+)
+_NOT_ALLOCATION_AFTER_RE = re.compile(
+    r"\s+(?:(?:[\w-]+\s+)?(?:sampl|select|recruit|draw|survey)\w*|tests?\b)"
+)
+
+
+def _describes_random_allocation(text_lower: str) -> bool:
+    """True when lower-cased text describes random allocation or order."""
+    for sentence in re.split(r"(?<=[.!?;])\s+|\n\s*\n", text_lower or ""):
+        if _COUNTERBALANCED_RE.search(sentence):
+            return True
+        for found in _RANDOM_ALLOCATION_RE.finditer(sentence):
+            if not _NEGATED_BEFORE_RE.search(sentence[:found.start()]):
+                return True
+        context = re.sub(r"\bin\s+order\s+to\b", " ", sentence)
+        for found in _RANDOMISE_TERM_RE.finditer(sentence):
+            if _NEGATED_BEFORE_RE.search(sentence[:found.start()]):
+                continue
+            if _NOT_ALLOCATION_AFTER_RE.match(sentence[found.end():]):
+                continue
+            if _ALLOCATION_CONTEXT_RE.search(context):
+                return True
+    return False
+
+
 def structure_evidence(
     source_name: str,
     text: str,
@@ -1769,23 +1870,12 @@ def structure_evidence(
     manifest.has_sample_description = bool(re.search(
         r"(?:participant|sample\s+size|n\s*=\s*\d|volunteer|recruit)", text_lower
     ))
-    # --- Randomisation flag (keep this conservative) ---
-    randomisation_positive = bool(re.search(
-        r"(?:\brandomi[sz](?:ed|ation)?\b|\brandom(?:ly)?\s+allocat(?:ed|ion)?\b|\brandom(?:ly)?\s+assign(?:ed|ment)?\b|\bcounterbalanc(?:ed|ing)\b|\brandomi[sz]ed\s+order\b)",
-        text_lower
-    ))
+    # --- Randomisation and standard-error flags ---
+    # Defined once, in _describes_random_allocation() and
+    # _reports_standard_errors(), and shared with refine_manifest_flags().
+    manifest.has_randomisation = _describes_random_allocation(text_lower)
 
-    sampling_nonrandom = bool(re.search(
-        r"(?:\bpurposive\s+sampling\b|\bconvenience\s+sampling\b|\bconsecutive\s+sampling\b|\bquota\s+sampling\b|\bsnowball\s+sampling\b|\bparticipants\s+were\s+invited\b|\bparticipants\s+were\s+selected\b)",
-        text_lower
-    ))
-
-    manifest.has_randomisation = randomisation_positive and not sampling_nonrandom
-
-    manifest.has_standard_errors = bool(re.search(
-        r"(?:standard\s+errors?|\bse\s*=|\bs\.e\.\s*=|\(\s*se\s*\)"
-        r"|\bse\b(?=\s*(?:\||\t|,|;|:|\n)))", text_lower
-    ))
+    manifest.has_standard_errors = _reports_standard_errors(text_lower)
     manifest.has_variance_components = bool(re.search(
         r"(?:variance\s+component|between.?\w+\s+variance|random.*variance|σ²|sigma\s*squared)", text_lower
     ))
@@ -1988,6 +2078,12 @@ def programmatic_post_checks(report_text: str, manifest: EvidenceManifest) -> Li
 
     Positive manifest flags trigger source verification; they do not by
     themselves confirm presence for a specific analysis or substantive claim.
+    Every branch driven only by a manifest presence flag or an extraction
+    count therefore emits a "CHECK:" instruction, never a "CORRECTION:".
+    "CORRECTION:" is kept for the rule-based branches that follow from the
+    method classification (VIF, Bayesian diagnostics, residual plots,
+    hierarchical diagnostics, survey design) and for the cited-study number
+    check; those branches do not assert that evidence was found.
 
     Returns a list of validation instructions to feed into LLM validation.
     """
@@ -1998,9 +2094,10 @@ def programmatic_post_checks(report_text: str, manifest: EvidenceManifest) -> Li
     if manifest.n_tables > 0:
         if re.search(r"(?:table[s]?\s+(?:are|is|were|was)\s+(?:missing|absent|not\s+provided|not\s+reported))", report_lower):
             corrections.append(
-                f"CORRECTION: The report claims tables are missing, but {manifest.n_tables} table(s) were extracted "
-                f"({', '.join(manifest.table_labels) if manifest.table_labels else 'unlabelled'}). "
-                f"Remove or revise this claim."
+                f"CHECK: The report claims tables are missing, while the extraction recorded {manifest.n_tables} "
+                f"table(s) ({', '.join(manifest.table_labels) if manifest.table_labels else 'unlabelled'}). "
+                f"Verify the extracted tables before retaining or revising the claim; the extraction count alone "
+                f"does not show which table the report means or that the extracted table is the one at issue."
             )
 
     # 2. Absolute absence claims about model specification/equations.
@@ -2021,9 +2118,10 @@ def programmatic_post_checks(report_text: str, manifest: EvidenceManifest) -> Li
             report_lower,
         ):
             corrections.append(
-                "CORRECTION: The report claims that model specification content is absent, "
-                "but the extracted evidence contains inspectable model-specification content. "
-                "Revise the absolute absence claim. This does not establish that the "
+                "CHECK: The report claims that model specification content is absent, "
+                "while the document-level detector found inspectable model-specification content. "
+                "Verify the manuscript before retaining or revising the absolute absence claim; "
+                "the detector result alone is not evidence. Presence would not establish that the "
                 "specification is complete, adequate, or clear."
             )
 
@@ -2033,10 +2131,11 @@ def programmatic_post_checks(report_text: str, manifest: EvidenceManifest) -> Li
             report_lower,
         ):
             corrections.append(
-                "CORRECTION: The report claims that an equation is absent, but the "
-                "extracted evidence contains equation content. Revise the absolute "
-                "absence claim. This does not establish that the equation is adequately "
-                "explained or specified."
+                "CHECK: The report claims that an equation is absent, while the "
+                "document-level detector found equation-like content. Verify the manuscript "
+                "before retaining or revising the absolute absence claim; the detector result "
+                "alone is not evidence. Presence would not establish that the equation is "
+                "adequately explained or specified."
             )
 
     # 3. Requesting VIF for single-predictor models
@@ -2136,17 +2235,20 @@ def programmatic_post_checks(report_text: str, manifest: EvidenceManifest) -> Li
     if manifest.has_sample_description:
         if re.search(r"sample\s+(?:size|description)\s+(?:is|are|was|were)\s+(?:missing|not\s+reported|absent)", report_lower):
             corrections.append(
-                "CORRECTION: The report claims sample description is missing, but participant/sample "
-                "information was found in the extracted evidence. Revise this claim."
+                "CHECK: The report claims the sample description is missing, while the document-level "
+                "detector found participant/sample terms. Verify the manuscript before retaining or "
+                "revising the claim; the detector result alone is not evidence."
             )
 
     # 7. "Randomisation unclear" when described
     if manifest.has_randomisation:
         if re.search(r"randomi[sz]ation\s+(?:is|was|remains)\s+(?:unclear|ambiguous|not\s+described|not\s+specified)", report_lower):
             corrections.append(
-                "CORRECTION: The report claims randomisation is unclear or not described, but "
-                "randomisation details were found in the extracted evidence. Revise: the criticism "
-                "should target specific aspects that remain unclear, not claim absence."
+                "CHECK: The report claims randomisation is unclear or not described, while the "
+                "document-level detector found random-allocation wording. Verify the manuscript before "
+                "retaining or revising the claim; the detector result alone is not evidence. If the "
+                "manuscript does describe allocation, the criticism should name the aspects that remain "
+                "unclear rather than claim absence."
             )
 
     # 8. "P-values/CIs not reported" when present
@@ -2159,9 +2261,10 @@ def programmatic_post_checks(report_text: str, manifest: EvidenceManifest) -> Li
             report_lower,
         ):
             corrections.append(
-                "CORRECTION: The report claims p-values are not reported, but p-values were found "
-                "in the extracted evidence. Revise to specify which particular p-values are missing "
-                "rather than claiming general absence."
+                "CHECK: The report makes a blanket claim that p-values are not reported, while the "
+                "document-level detector found p-value-like evidence. Verify the manuscript or table "
+                "evidence before retaining or revising the claim; the manifest flag alone is not evidence. "
+                "If p-values are reported for some analyses, name the particular p-values that are missing."
             )
 
     if manifest.has_confidence_intervals:
@@ -2202,25 +2305,29 @@ def programmatic_post_checks(report_text: str, manifest: EvidenceManifest) -> Li
             report_lower,
         ):
             corrections.append(
-                "CORRECTION: The report claims standard errors are not reported, but standard errors "
-                "were found in the extracted evidence. Revise to specify which particular SEs are "
-                "missing rather than claiming general absence."
+                "CHECK: The report makes a blanket claim that standard errors are not reported, while the "
+                "document-level detector found standard-error-like evidence. Verify the manuscript or "
+                "table evidence before retaining or revising the claim; the manifest flag alone is not "
+                "evidence. If standard errors are reported for some analyses, name the particular "
+                "standard errors that are missing."
             )
 
     # 10. "Variance components not reported/tested" when present
     if manifest.has_variance_components:
         if re.search(r"variance\s+component[s]?\s+(?:are|is|were|was)\s+(?:not\s+reported|missing|absent)", report_lower):
             corrections.append(
-                "CORRECTION: The report claims variance components are not reported, but variance "
-                "component estimates were found in the extracted evidence. Revise this claim."
+                "CHECK: The report claims variance components are not reported, while the document-level "
+                "detector found variance-component terms. Verify the manuscript or table evidence before "
+                "retaining or revising the claim; the manifest flag alone is not evidence."
             )
 
     # 11. "Model fit not reported" when DIC/AIC/BIC is present
     if manifest.has_model_fit_stats:
         if re.search(r"(?:model\s+fit|goodness[\-\s]of[\-\s]fit|fit\s+statistic)[s]?\s+(?:are|is|were|was)\s+(?:not\s+reported|missing|absent)", report_lower):
             corrections.append(
-                "CORRECTION: The report claims model fit statistics are not reported, but fit "
-                "statistics (e.g., DIC, AIC, deviance) were found in the extracted evidence."
+                "CHECK: The report claims model fit statistics are not reported, while the document-level "
+                "detector found fit-statistic terms (e.g., DIC, AIC, deviance). Verify the manuscript or "
+                "table evidence before retaining or revising the claim; the manifest flag alone is not evidence."
             )
 
     # 12. Cross-contamination: numbers from cited studies confused with current study
@@ -2260,11 +2367,9 @@ def refine_manifest_flags(manifest: EvidenceManifest, full_text: str) -> Evidenc
     if seen("95% ci", "confidence interval", "lower bound", "upper bound"):
         manifest.has_confidence_intervals = True
 
-    # Standard errors only. Bare "SE" in prose is ambiguous and is not
-    # sufficient to establish a positive evidence state. Retain explicit
-    # terminology and delimiter-bounded forms used in statistical tables.
-    if (seen("\tse\t", "standard error", "(se)", "se =", "s.e. =")
-            or re.search(r"\bse\b(?=\s*(?:\||\t|,|;|:|\n))", full_low)):
+    # Standard errors: the same reporting forms as the initial scan. Bare "SE"
+    # in prose, whatever punctuation follows it, does not set the flag.
+    if _reports_standard_errors(full_low):
         manifest.has_standard_errors = True
 
     # Fit statistics / performance metrics / effect sizes
@@ -2281,14 +2386,10 @@ def refine_manifest_flags(manifest: EvidenceManifest, full_text: str) -> Evidenc
             or re.search(r"\bp\s*\([^\n)]{1,60}\)", full_low)):
         manifest.has_p_values = True
 
-    # Randomisation refinement must preserve the distinction between
-    # experimental allocation/order and random sampling or selection.
-    if re.search(
-        r"(?:\brandomi[sz](?:ed|ation)?\b|\brandom(?:ly)?\s+allocat(?:ed|ion)?\b|"
-        r"\brandom(?:ly)?\s+assign(?:ed|ment)?\b|\bcounterbalanc(?:ed|ing)\b|"
-        r"\brandomi[sz]ed\s+order\b|\border\s+of\s+test\s+completion\b)",
-        full_low,
-    ):
+    # Randomisation: the same definition as the initial scan, which keeps
+    # random allocation or condition order distinct from random sampling or
+    # selection.
+    if _describes_random_allocation(full_low):
         manifest.has_randomisation = True
 
     return manifest
@@ -9798,6 +9899,7 @@ DERIVED_INPUT_MARKERS = (
     "# Local peer-review report",
     "# Reviewer critical-appraisal aid",
     "# Evidence appendix",
+    "# Human Evidence Appendix",
     "Evidence manifest for:",
     "## Chunk previews",
     "Detected model/result blocks",
@@ -11943,8 +12045,12 @@ def validate_report_against_evidence(
     correction_block = ""
     if programmatic_corrections:
         correction_block = (
-            "\n\nPROGRAMMATIC CORRECTIONS "
-            "(these have been verified automatically and MUST be applied):\n"
+            "\n\nPROGRAMMATIC CHECKS AND CORRECTIONS:\n"
+            "Items marked CHECK come from document-level detectors or extraction counts. "
+            "They are not evidence and have not been verified against any particular analysis. "
+            "Verify each one against the evidence summaries and tables; revise the report only "
+            "where that evidence supports the revision, and otherwise leave the claim as it is.\n"
+            "Items marked CORRECTION are rule-based corrections and MUST be applied.\n"
             + "\n".join(f"- {c}" for c in programmatic_corrections)
             + "\n"
         )
@@ -12016,7 +12122,7 @@ Style rules:
 - Do not describe table numbering as inconsistent unless the evidence summaries themselves contain conflicting labels.
 - Do not treat notation or terminology conventions as major concerns unless they create genuine inferential ambiguity.
 - Return the revised report only.
-- Apply all PROGRAMMATIC CORRECTIONS listed above.
+- Apply every item marked CORRECTION under PROGRAMMATIC CHECKS AND CORRECTIONS above, and resolve every item marked CHECK by verifying it against the evidence as described there.
 
 Report:
 \"\"\"

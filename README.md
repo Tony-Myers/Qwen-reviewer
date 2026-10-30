@@ -3,8 +3,9 @@
 A peer-review assistant for quantitative manuscripts that runs entirely on your
 own machine. It parses a paper, extracts typed evidence blocks, works out which
 statistical framework the authors used, critiques each section against the
-expectations appropriate to that framework, and writes a review report with a
-human evidence appendix.
+expectations appropriate to that framework, and writes a review report with
+two appendices: an extraction evidence appendix and a separate Human Evidence
+Appendix.
 
 **No manuscript text leaves the machine.** Manuscript review, reviewer notes,
 Academic Chat model inference, and substantive claim assessment run locally
@@ -99,8 +100,9 @@ llama.cpp build predates the model; `brew upgrade llama.cpp` usually fixes it.
 
 That starts `llama-server` on port 8081 if it is not already running, waits for
 the model to load, then starts the review interface on
-<http://localhost:8090>. Upload a PDF and watch the progress log; the report
-and evidence appendix download when it finishes.
+<http://localhost:8090>. Upload a PDF and watch the progress log; when it
+finishes, the report, the extraction evidence appendix and the Human Evidence
+Appendix can each be viewed and downloaded.
 
 Three settings sit beside the **Start review** button and apply to that review
 only, so none needs a restart:
@@ -109,7 +111,7 @@ only, so none needs a restart:
 | --- | --- |
 | **Reasoning** | `instruct`, `thinking`, or `thinking: synthesis only` — the hybrid, which reasons in the synthesis and validation but not in the chunk notes. See [Reasoning mode](#reasoning-mode). |
 | **Vision** | whether a table whose text layer looks damaged is re-read from the page image. See [Reading damaged tables from the page image](#reading-damaged-tables-from-the-page-image). |
-| **Development mode** | off by default. When selected, the detailed development trace for that review (source chunks, chunk reviews, candidate findings, tables supplied to synthesis, synthesis passes and final assembly) is retained in memory and can be viewed or downloaded as JSON under the report. It does not change the review itself. See [Development trace](#development-trace). |
+| **Development mode** | off by default. When selected, the detailed development trace for that review (source chunks, chunk reviews, candidate findings, tables supplied to synthesis, synthesis passes and final assembly) is kept with the completed review and can be viewed or downloaded as JSON under the report. It is supplementary diagnostic material and replaces neither appendix. The setting is not passed to any model call. See [Development mode and the development trace](#development-mode-and-the-development-trace). |
 
 Once a review has finished, an **Ask about this manuscript** box appears below
 it. See [Asking about a reviewed manuscript](#asking-about-a-reviewed-manuscript).
@@ -164,10 +166,16 @@ unless `--keep-llama` is given.
    confidence interval, a fit index failing a threshold the manuscript itself
    declared, a set of category percentages that does not sum, a value the text
    attributes to one table that appears only in another.
-7. **Output** — a markdown review report plus a human evidence appendix
-   (see [Human evidence appendix](#human-evidence-appendix)). The detailed
-   record of what was extracted and fed to the model is available as a
-   [development trace](#development-trace) when Development mode is selected.
+7. **Output** — a markdown review report and two appendices: an
+   [extraction evidence appendix](#extraction-evidence-appendix) showing what
+   was extracted from each file (manifest, block and chunk previews, extracted
+   tables), and a separate [Human Evidence Appendix](#human-evidence-appendix)
+   that sets out the report's concerns and verification questions for human
+   checking. A fuller [development trace](#development-mode-and-the-development-trace)
+   is available when Development mode is selected. The command line
+   (`run_review.sh`) writes the report and the extraction evidence appendix;
+   the Human Evidence Appendix and Development mode are part of the web
+   interface.
 
 ### Manuscripts under review
 
@@ -223,8 +231,8 @@ headers and labels have come away from their data. A clean table is left alone,
 because rendering a page and asking a model to read it costs about a minute.
 
 **The transcription is added beside the text-layer version, never in place of
-it,** labelled `Source: vision` in the extracted table evidence (visible in the
-development trace). Two reasons. A reader
+it,** labelled `Source: vision` in the extracted tables of the extraction
+evidence appendix. Two reasons. A reader
 can see which reading a concern rests on. And because the transcription joins
 the source text, the citation check verifies quotations against it like any
 other evidence — a reading with nothing behind it is the thing this pipeline
@@ -254,7 +262,8 @@ The primary manuscript remains the object of appraisal. Supplements provide
 additional evidence, not additional papers to review. With supplements, source
 labels distinguish the primary manuscript and each numbered supplement (even
 when filenames repeat) in chunk notes, manifests, synthesis, report input and
-evidence summaries. The final synthesis and validation are
+evidence summaries, and the extraction evidence appendix, which has one section
+per source. The final synthesis and validation are
 instructed to consider information appropriately supplied in supplements before
 criticising its absence from the main paper. Extraction or empty-text failures
 in any supplied file fail the review rather than silently dropping evidence.
@@ -506,54 +515,134 @@ So:
 
 ---
 
-### Human evidence appendix
+### Extraction evidence appendix
 
-The appendix that downloads with a review is built deterministically from the
-final report; it involves no model call. Each substantive concern receives a
-stable identifier (C1, C2, ...) and each verification prompt another (Q1, Q2,
-...), in report order. For every item the appendix shows the finding, the
-evidence the review itself reported, the reviewer interpretation, and the
-source relationship.
+The extraction evidence appendix records what the application extracted from
+the uploaded files and passed to the model: for each source, the evidence
+manifest, previews of the detected text blocks (up to five of each type), the
+extracted tables and a preview of each chunk. With supplements it has one section per source. It is
+a record of automated extraction, which can be incomplete or wrong, and its
+manifest flags are detector results (see
+[Evidence-manifest flags](#evidence-manifest-flags)); nothing in it is
+verified support for a particular finding. Block and chunk entries are
+previews and are truncated.
 
-Evidence written in the review is presented as evidence *reported in the
-review*. It is never promoted to verified manuscript evidence by the appendix:
-a stronger source relationship (direct manuscript support, direct table
-evidence, and so on) can only come from state the application has itself
-established, such as an exact source span checked against the extracted text.
-Where no such relationship has been established, the item is marked
-"Not established — human verification required" and carries a prompt to check
-the point against the manuscript before using it. In the current release the
-review pipeline does not yet supply verified relationships to the appendix, so
-every item is presented this way: the appendix organises the findings for human
-checking; it does not verify them.
+### Human Evidence Appendix
+
+The Human Evidence Appendix is a separate artefact, built deterministically
+from the final report with no model call. It covers the report's two finding
+sections, "Directly supported concerns" and "Verification prompts". Each
+concern receives an identifier (C1, C2, ...) and each verification prompt
+another (Q1, Q2, ...), in report order. The identifiers are deterministic for
+a given report text; they are not stable across edits or reruns.
+
+For every item the appendix shows the finding, the evidence the review itself
+reported, the reviewer interpretation (`Why it matters` or `Reason`), any other
+fields the review wrote for the item (such as the citation check's
+`Evidence match` line), and the source relationship.
+
+- **Evidence status.** Evidence written in the review is presented as evidence
+  *reported in the review*. The appendix never promotes it to verified
+  manuscript evidence. A stronger source relationship (direct manuscript
+  support, direct table evidence, and so on) can only come from state the
+  application has itself established, such as an exact source span checked
+  against the extracted text. The current review pipeline supplies no such
+  relationships, so every item is marked "Not established — human
+  verification required" and carries a prompt to check it against the
+  manuscript. An `Evidence match` line records whether the citation check
+  located a quotation; it is reproduced as written and does not establish that
+  the quotation supports the finding.
+- **What is parsed.** An item starts with `Concern:` or `Check:`, with or
+  without a `-`/`*` bullet or bold or italic emphasis. The fields
+  `Evidence:`, `Why it matters:`, `Reason:`, `Evidence match:`, `Severity:`
+  and `Confidence:` belong to the item above them, including when written as
+  a separate bullet. Wrapped continuation lines are kept and joined with
+  single spaces.
+- **What is not parsed is still shown.** Text in either section that is not
+  part of a recognised item is reproduced verbatim under a "Report content not
+  converted into cards" heading with a parsing limitation, rather than
+  dropped. An item with no finding text keeps its original report text, with a
+  parsing limitation.
+
+The other report sections (synopsis, strengths, extraction limits, overall
+confidence) are in the report itself and are not repeated in this appendix.
 
 ### Evidence-manifest flags
 
 The evidence manifest records document-level detections, for example that
-material resembling confidence intervals, standard errors or randomisation was
-found somewhere in the extracted text. A positive flag is a safeguard against an
-unchecked blanket claim that a statistic is absent; it does not establish that
-the statistic is reported for any particular analysis, and it is never used as
-evidence for a strength or concern. The synthesis and validation prompts are
-instructed accordingly: a positive flag triggers verification against the
-manuscript or table evidence. Detection is deliberately conservative: ordinary
-comparative words such as "lower" or "upper" do not count as confidence
-intervals, a bare "SE" in prose does not count as a standard error, and random
-sampling or selection is distinguished from random allocation or assignment.
+material resembling confidence intervals, standard errors or randomisation
+occurs somewhere in the extracted text. A positive flag does not establish
+that the statistic belongs to any particular analysis, and it is never used as
+evidence for a strength or concern.
 
-### Development trace
+- **Post-checks request verification.** When the report makes a blanket claim
+  that something is absent (tables, model specification, equations, sample
+  description, randomisation, p-values, confidence intervals, standard errors,
+  variance components, model fit statistics) and the corresponding flag or the
+  extracted-table count is positive, the programmatic post-check emits a
+  `CHECK:` instruction. The validation pass is told that these are not
+  evidence, to verify each against the evidence summaries and tables, and to
+  revise the report only where that evidence supports it. The rule-based
+  `CORRECTION:` instructions that follow from the method classification (for
+  example, no VIF request for a single-predictor model) are unchanged.
+- **Standard errors.** The flag is set only by the words "standard error(s)";
+  an SE or S.E. abbreviation attached to a value ("SE = 0.10", "SE: 0.10",
+  "± SE"); "(SE)" directly after a statistic label such as "estimate (SE)" or
+  "mean (SE)"; or SE as a stand-alone table cell delimited by a tab or pipe.
+  Any other occurrence of the letters SE, such as a regional abbreviation
+  followed by a comma or in parentheses, does not set it. SE in space-aligned
+  table text, or in a cell combined with other text, is not detected.
+- **Randomisation.** The flag means random allocation or assignment to
+  conditions, or a randomised condition order. It is set by "randomly
+  allocated/assigned" (or "allocated/assigned ... at random"), or by
+  "randomised"/"randomisation" in a sentence that also names an allocation
+  context (allocation, assignment, condition, group, arm, treatment,
+  intervention, control, placebo, order, sequence, crossover, trial, block or
+  stratified). Random sampling or selection does not set it ("randomised
+  sampling", "randomly selected", "a random sample"), nor do a generic
+  "random", negated forms ("non-randomised", "not randomised", "without
+  randomisation") or a randomisation test. How participants were sampled does
+  not rule allocation in or out. "Counterbalanced" condition order also sets
+  the flag, as it did before, although counterbalancing is systematic rather
+  than random. These are sentence-level wording rules: "participants were
+  randomised" with no allocation context in the sentence, or "random order",
+  is not detected.
+- **Confidence intervals.** Ordinary comparative words such as "lower" or
+  "upper" do not count; "95% CI", "confidence interval", "lower bound" and
+  "upper bound" do.
 
-Development mode is off by default. When it is selected for a review, the
-server retains that review's development trace in memory: source chunks, chunk
-reviews, candidate findings and their groups, observational proposition and
-triage diagnostics, the tables supplied to synthesis, each synthesis pass, and
-the final assembly. Under the finished report it can be viewed section by
-section or downloaded as JSON. Without Development mode no trace is retained
-and the trace endpoint returns 404. The setting does not change any model call
-or the review itself.
+These are deterministic pattern rules, tested on synthetic sentences. They
+have not been validated against a corpus of manuscripts.
 
-The trace may contain manuscript text and model outputs. Treat it with the same
-confidentiality as the manuscript.
+### Development mode and the development trace
+
+Development mode is off by default and applies to one review. It is
+supplementary diagnostic functionality: it adds nothing to the report and
+replaces neither appendix, which are produced for every review either way.
+
+When it is selected, the completed review keeps its development trace: source
+chunks, chunk reviews, candidate findings and their groups, observational
+proposition and triage diagnostics, the tables supplied to synthesis, each
+synthesis pass, and the final assembly. Under the finished report it can be
+viewed section by section or downloaded as JSON; the download is the trace
+object itself. Each view or download is tied to the review that requested it,
+so a slow response for an earlier review is discarded rather than shown under
+a later one. Without Development mode the trace is not kept with the completed
+review and the trace endpoint returns 404. The setting is not passed to any
+model call; with stand-in model stages, the tests confirm that ON and OFF give
+identical model inputs, report and appendices.
+
+What Development mode is not:
+
+- **Not a deletion policy.** The trace is still assembled in memory while a
+  review runs, whatever the setting; with Development mode off it is simply
+  not kept once the review completes. The extracted manuscript text, the
+  report and both appendices stay in the server's memory for every completed
+  review (the text is what answers questions about the manuscript) until the
+  server process stops.
+- **Not a privacy boundary for the trace.** The trace may contain manuscript
+  text and model outputs. Treat it, and the server, with the same
+  confidentiality as the manuscript.
 
 ## Configuration
 
@@ -768,7 +857,7 @@ app/
   server.py             FastAPI app: chat, review upload, progress stream, ask
   llm_backend.py        backend abstraction over llama.cpp and mlx_lm
   reviewer_notes.py     retrieval over the reviewer notes (not fingerprinted)
-  human_evidence_appendix.py  deterministic human evidence appendix
+  human_evidence_appendix.py  deterministic Human Evidence Appendix
   chat.html             web interface
 scripts/
   qwen_service.sh       start, stop and inspect the service

@@ -1252,3 +1252,282 @@ This synthetic study used a non-randomised pre/post design.
             rendered,
         )
         self.assertNotIn("Evidence match:", rendered)
+
+
+from app.human_evidence_appendix import (
+    extract_unparsed_report_content,
+    render_human_evidence_appendix,
+)
+
+
+def render_live(report):
+    """Render as the live server path does."""
+    return render_human_evidence_appendix(
+        build_evidence_cards(report),
+        unparsed_content=extract_unparsed_report_content(report),
+    )
+
+
+class ReportPreservationTests(unittest.TestCase):
+    """Synthetic regressions for report content the appendix must keep."""
+
+    def assert_unestablished(self, card):
+        self.assertEqual(card["evidence_relationship"], "source_relationship_not_established")
+        self.assertIsNone(card["verified_source_evidence"])
+        self.assertIsNone(card["source_location"])
+        self.assertTrue(card["human_verification_required"])
+
+    def test_wrapped_finding_evidence_and_interpretation_are_kept(self):
+        report = """## Directly supported concerns
+
+- Concern: Groups differed at baseline in the synthetic score,
+  but only in the subgroup with complete follow-up.
+  Evidence: Table 1 reports different baseline values,
+  restricted to the complete-case subgroup.
+  Why it matters: The imbalance may affect interpretation,
+  unless the analysis adjusts for baseline.
+"""
+        card = build_evidence_cards(report)[0]
+        self.assertEqual(
+            card["finding"],
+            "Groups differed at baseline in the synthetic score, "
+            "but only in the subgroup with complete follow-up.",
+        )
+        self.assertEqual(
+            card["reported_evidence"],
+            "Table 1 reports different baseline values, "
+            "restricted to the complete-case subgroup.",
+        )
+        self.assertEqual(
+            card["interpretation"],
+            "The imbalance may affect interpretation, "
+            "unless the analysis adjusts for baseline.",
+        )
+        self.assert_unestablished(card)
+        rendered = render_live(report)
+        self.assertIn("only in the subgroup with complete follow-up", rendered)
+        self.assertIn("restricted to the complete-case subgroup", rendered)
+        self.assertIn("unless the analysis adjusts for baseline", rendered)
+
+    def test_wrapped_check_and_reason_are_kept(self):
+        report = """## Verification prompts
+
+- Check: whether the synthetic outcome was measured blind,
+  including at follow-up.
+  Reason: The methods describe assessors
+  but not their awareness of allocation.
+"""
+        card = build_evidence_cards(report)[0]
+        self.assertEqual(card["finding_id"], "Q1")
+        self.assertEqual(
+            card["finding"],
+            "whether the synthetic outcome was measured blind, including at follow-up.",
+        )
+        self.assertEqual(
+            card["interpretation"],
+            "The methods describe assessors but not their awareness of allocation.",
+        )
+
+    def test_lazy_unindented_continuation_is_kept(self):
+        report = """## Directly supported concerns
+
+- Concern: The synthetic comparison is unadjusted
+for the baseline covariate.
+  Evidence: No adjusted model is reported.
+"""
+        card = build_evidence_cards(report)[0]
+        self.assertEqual(
+            card["finding"],
+            "The synthetic comparison is unadjusted for the baseline covariate.",
+        )
+
+    def test_indented_continuation_after_blank_line_is_kept(self):
+        report = """## Directly supported concerns
+
+- Concern: The synthetic primary outcome changed.
+
+  This applies to the second analysis only.
+  Evidence: The registered outcome differs from the reported one.
+"""
+        card = build_evidence_cards(report)[0]
+        self.assertEqual(
+            card["finding"],
+            "The synthetic primary outcome changed. This applies to the second analysis only.",
+        )
+        self.assertEqual(
+            card["reported_evidence"],
+            "The registered outcome differs from the reported one.",
+        )
+
+    def test_bullet_prefixed_sibling_evidence_field(self):
+        # The form used by the supplement regression's fake report.
+        report = """# Directly supported concerns
+* Concern: Check the sensitivity analysis.
+* Evidence: "The sensitivity analysis used complete cases and robust standard errors."
+"""
+        cards = build_evidence_cards(report)
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["finding"], "Check the sensitivity analysis.")
+        self.assertEqual(
+            cards[0]["reported_evidence"],
+            '"The sensitivity analysis used complete cases and robust standard errors."',
+        )
+        self.assert_unestablished(cards[0])
+        self.assertEqual(extract_unparsed_report_content(report), [])
+
+    def test_bullet_prefixed_indented_fields(self):
+        report = """## Directly supported concerns
+
+- Concern: The synthetic dose was not reported.
+  - Evidence: The methods give no dose.
+  - Why it matters: Replication is not possible.
+"""
+        card = build_evidence_cards(report)[0]
+        self.assertEqual(card["reported_evidence"], "The methods give no dose.")
+        self.assertEqual(card["interpretation"], "Replication is not possible.")
+
+    def test_bold_marker_and_field_forms(self):
+        report = """## Directly supported concerns
+
+- **Concern:** The comparison group is undefined.
+  **Evidence:** The synthetic methods name no comparator.
+  **Why it matters**: Effects cannot be interpreted.
+
+## Verification prompts
+
+**Check:** whether the comparator was concurrent.
+*Reason:* The synthetic dates are not given.
+"""
+        cards = build_evidence_cards(report)
+        self.assertEqual([c["finding_id"] for c in cards], ["C1", "Q1"])
+        self.assertEqual(cards[0]["finding"], "The comparison group is undefined.")
+        self.assertEqual(cards[0]["reported_evidence"], "The synthetic methods name no comparator.")
+        self.assertEqual(cards[0]["interpretation"], "Effects cannot be interpreted.")
+        self.assertEqual(cards[1]["finding"], "whether the comparator was concurrent.")
+        self.assertEqual(cards[1]["interpretation"], "The synthetic dates are not given.")
+
+    def test_inline_layout_with_wrapped_evidence(self):
+        report = """# Directly supported concerns
+
+- Concern: Groups differed at baseline. Evidence: Table 1 shows different
+  baseline values. Why it matters: The imbalance may affect interpretation.
+"""
+        card = build_evidence_cards(report)[0]
+        self.assertEqual(card["finding"], "Groups differed at baseline.")
+        self.assertEqual(card["reported_evidence"], "Table 1 shows different baseline values.")
+        self.assertEqual(card["interpretation"], "The imbalance may affect interpretation.")
+
+    def test_application_fields_are_reproduced_not_merged(self):
+        report = """## Directly supported concerns
+
+* Concern: The synthetic effect estimate lacks precision.
+* Evidence: "The estimate was 0.4."
+* Severity: Substantive
+* Evidence match: Quoted — the quotation was found in the extracted text.
+"""
+        card = build_evidence_cards(report)[0]
+        self.assertEqual(card["reported_evidence"], '"The estimate was 0.4."')
+        self.assertEqual(
+            card["other_report_fields"],
+            [
+                {"label": "Severity", "text": "Substantive"},
+                {"label": "Evidence match",
+                 "text": "Quoted — the quotation was found in the extracted text."},
+            ],
+        )
+        self.assert_unestablished(card)
+        rendered = render_live(report)
+        self.assertIn("**Other fields written in the review**", rendered)
+        self.assertIn("- Evidence match — Quoted — the quotation was found", rendered)
+        self.assertIn("Not established — human verification required", rendered)
+        self.assertNotIn("**Verified manuscript evidence:**", rendered)
+
+    def test_unmarked_section_text_is_retained_with_limitation(self):
+        report = """# Directly supported concerns
+* Concern: Check the sensitivity analysis.
+* Evidence: "Synthetic evidence."
+# Verification prompts
+Check the design.
+"""
+        cards = build_evidence_cards(report)
+        self.assertEqual([c["finding_id"] for c in cards], ["C1"])
+        self.assertEqual(
+            extract_unparsed_report_content(report),
+            [{"heading": "Verification prompts", "text": "Check the design."}],
+        )
+        rendered = render_live(report)
+        self.assertIn("## Report content not converted into cards", rendered)
+        self.assertIn("**Parsing limitation:**", rendered)
+        self.assertIn("Check the design.", rendered)
+
+    def test_unindented_paragraph_after_item_is_not_attached(self):
+        report = """## Directly supported concerns
+
+- Concern: The synthetic follow-up was short.
+  Evidence: Follow-up lasted two weeks.
+
+The reviewer may wish to weigh this against the stated aims.
+"""
+        card = build_evidence_cards(report)[0]
+        self.assertEqual(card["reported_evidence"], "Follow-up lasted two weeks.")
+        self.assertNotIn("stated aims", card["finding"])
+        unparsed = extract_unparsed_report_content(report)
+        self.assertEqual(
+            unparsed[0]["text"],
+            "The reviewer may wish to weigh this against the stated aims.",
+        )
+
+    def test_prose_without_marker_colon_is_not_an_item(self):
+        report = """## Directly supported concerns
+
+Concerns about the synthetic design are listed in the verification prompts.
+"""
+        self.assertEqual(build_evidence_cards(report), [])
+        rendered = render_live(report)
+        self.assertIn("No substantive concerns or verification questions", rendered)
+        self.assertIn("Concerns about the synthetic design", rendered)
+
+    def test_item_without_finding_text_keeps_original_block(self):
+        report = """## Directly supported concerns
+
+- Concern:
+  Evidence: A synthetic value is reported.
+"""
+        card = build_evidence_cards(report)[0]
+        self.assertEqual(card["finding"], "")
+        self.assertTrue(card["parse_limitations"])
+        rendered = render_live(report)
+        self.assertIn("**Parsing limitation:**", rendered)
+        self.assertIn("Original text of this item in the review:", rendered)
+        self.assertIn("  Evidence: A synthetic value is reported.", rendered)
+
+    def test_marker_on_its_own_line_takes_finding_from_continuation(self):
+        report = """## Directly supported concerns
+
+- Concern:
+  The synthetic dropout rate differs between arms.
+  Evidence: 4 of 20 versus 9 of 20.
+"""
+        card = build_evidence_cards(report)[0]
+        self.assertEqual(card["finding"], "The synthetic dropout rate differs between arms.")
+        self.assertEqual(card["parse_limitations"], [])
+
+    def test_unparsed_text_with_backticks_stays_fenced(self):
+        report = """## Verification prompts
+
+A note containing ``` backticks.
+"""
+        rendered = render_live(report)
+        self.assertIn("````text\nA note containing ``` backticks.\n````", rendered)
+
+
+class DerivedInputGuardTests(unittest.TestCase):
+    def test_rendered_human_appendix_is_refused_as_review_input(self):
+        import app.review_pipeline as rp
+
+        rendered = render_live("""## Directly supported concerns
+
+- Concern: A synthetic concern.
+  Evidence: A synthetic statement.
+""")
+        self.assertIn("# Human Evidence Appendix", rp.detect_derived_input(rendered))
