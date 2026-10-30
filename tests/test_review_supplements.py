@@ -136,12 +136,15 @@ class Supplements(unittest.TestCase):
                     names = [chunk.source_name for chunk, _ in chunks]
                     self.assertEqual(len(set(names)), count + 1)
                     self.assertEqual(list(job['sources']), names)
-                    self.assertEqual(job['appendix'].count('# Evidence appendix'), 1)
+                    # The downloadable appendix is the human evidence appendix,
+                    # built from the final report; per-source extraction detail
+                    # is available in the opt-in development trace instead.
+                    self.assertEqual(job['appendix'].count('# Human Evidence Appendix'), 1)
+                    self.assertNotIn('# Evidence appendix', job['appendix'])
                     for manifest in options['all_manifests']:
                         self.assertTrue(all(b.source_name == manifest.source_name for b in manifest.blocks))
                     for name in names:
                         self.assertIn(name, job['report'])
-                        self.assertIn(name, job['appendix'])
                     for _, kw in chunks:
                         self.assertIn('not separate manuscripts', kw['method_expectations'])
                     self.assertIn('Quotation source locations', job['report'])
@@ -161,6 +164,7 @@ class Supplements(unittest.TestCase):
             cancel_requested=False,
             thinking=None,
             thinking_scope='review',
+            development_mode=True,
         )
 
         raw_draft = REPORT.replace(

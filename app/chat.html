@@ -385,6 +385,9 @@
             <option value="0">off</option>
           </select>
         </label>
+        <label class="reasoning-choice" for="developmentMode" title="Retain and expose the detailed local development trace for this review. Does not change the scientific review.">
+          <input type="checkbox" id="developmentMode"> Development mode
+        </label>
       </div>
     </div>
     <div class="progress-area" id="progressArea">
@@ -1869,6 +1872,7 @@ async function startReview() {
   // review only. The chosen mode is recorded in the report header.
   fd.append('thinking', document.getElementById('reasoningMode').value);
   fd.append('vision', document.getElementById('visionMode').value);
+  fd.append('development_mode', document.getElementById('developmentMode').checked ? '1' : '0');
 
   try {
     const r = await fetch(BASE + '/api/review', { method: 'POST', body: fd });
@@ -1892,7 +1896,7 @@ async function startReview() {
         es.close();
         activeReviewJobId = null;
         setReviewRunning(false, true);
-        showReport(d.report, d.has_appendix, job_id);
+        showReport(d.report, d.has_appendix, job_id, d.has_development_trace);
       }
       if (d.type === 'cancelled') {
         es.close();
@@ -1922,10 +1926,11 @@ async function startReview() {
 
 let currentJobId = null;
 
-function showReport(md, hasAppendix, jobId) {
+function showReport(md, hasAppendix, jobId, hasDevelopmentTrace = false) {
   const ra = document.getElementById('reportArea');
   ra._raw = md;
   ra._rawAppendix = '';
+  ra._developmentTrace = null;
   currentJobId = jobId || null;
   let html = '<aside class="review-aid-notice" aria-label="Reviewer aid">'
     + '<strong>Reviewer aid — not a final peer-review report</strong>'
@@ -1938,8 +1943,15 @@ function showReport(md, hasAppendix, jobId) {
     html += '<button class="btn-secondary" id="appendixToggle" onclick="fetchAndToggleAppendix()">Show evidence appendix</button>'
       + '<button class="btn-secondary" id="appendixDownload" onclick="dlAppendix()">Download appendix .md</button>';
   }
+  if (hasDevelopmentTrace) {
+    html += '<button class="btn-secondary" id="developmentTraceToggle" onclick="fetchAndToggleDevelopmentTrace()">Show development trace</button>'
+      + '<button class="btn-secondary" id="developmentTraceDownload" onclick="dlDevelopmentTrace()">Download full trace JSON</button>';
+  }
   html += '</div>';
   html += '<div id="appendixSection" style="display:none; margin-top: 16px;"></div>';
+  if (hasDevelopmentTrace) {
+    html += '<div id="developmentTraceSection" style="display:none; margin-top:16px;"></div>';
+  }
   // Asking where the paper says something is the cheapest way to check a
   // concern, and every answer is put through the same citation check as the
   // report, against the same extracted text.
@@ -2051,6 +2063,164 @@ async function fetchAppendix() {
     }
   } catch (e) { console.error('Failed to fetch appendix:', e); }
   return '';
+}
+
+function traceValue(value) {
+  if (value === null || value === undefined || value === '') {
+    return '<div style="color:var(--text-muted)">Not available for this run.</div>';
+  }
+  if (typeof value === 'string') {
+    return '<pre><code>' + esc(value) + '</code></pre>';
+  }
+  return '<pre><code>' + esc(JSON.stringify(value, null, 2)) + '</code></pre>';
+}
+
+function traceDetails(title, value, open = false) {
+  const empty = value === null || value === undefined || value === ''
+    || (Array.isArray(value) && value.length === 0);
+  const suffix = empty ? ' — no data' : '';
+  return '<details' + (open ? ' open' : '') + '>'
+    + '<summary><strong>' + esc(title + suffix) + '</strong></summary>'
+    + '<div style="margin:10px 0 14px 14px;">' + traceValue(value) + '</div>'
+    + '</details>';
+}
+
+function renderDevelopmentTraceFile(file, index) {
+  const name = file?.source_name || ('Source ' + (index + 1));
+  let h = '<h2>Source processing — ' + esc(name) + '</h2>';
+  h += traceDetails('Source chunks', file?.source_chunks);
+  h += traceDetails('Chunk reviews', file?.chunk_outputs);
+
+  h += '<h2>Finding development — ' + esc(name) + '</h2>';
+  h += traceDetails('Candidate findings', file?.candidate_findings, true);
+  h += traceDetails('Finding groups', file?.finding_groups);
+  h += traceDetails('Methodological propositions', file?.candidate_propositions);
+  h += traceDetails('Proposition verification', file?.candidate_proposition_verification);
+  h += traceDetails('Candidate triage', file?.candidate_triage);
+  h += traceDetails('Proposition generation diagnostics', {
+    raw: file?.candidate_propositions_raw,
+    error: file?.candidate_propositions_error
+  });
+  h += traceDetails('Proposition verification diagnostics', {
+    raw: file?.candidate_proposition_verification_raw,
+    error: file?.candidate_proposition_verification_error
+  });
+  h += traceDetails('Candidate triage diagnostics', {
+    raw: file?.candidate_triage_raw,
+    budget: file?.candidate_triage_budget,
+    note: file?.candidate_triage_note,
+    error: file?.candidate_triage_error
+  });
+
+  h += '<h2>File synthesis — ' + esc(name) + '</h2>';
+  h += traceDetails('Combined chunk review', file?.combined_chunk_review);
+  h += traceDetails('Tables supplied to synthesis', file?.tables_text);
+  h += traceDetails('File-level synthesis', file?.file_summary, true);
+  return h;
+}
+
+function renderDevelopmentTrace(trace) {
+  if (!trace || typeof trace !== 'object') {
+    return '<div class="report-content" style="color:var(--text-muted)">Development trace is unavailable.</div>';
+  }
+
+  let h = '<aside class="review-aid-notice" aria-label="Development trace">'
+    + '<strong>Development Trace — local debugging material</strong>'
+    + '<p>This view may contain manuscript text, model outputs and internal diagnostics. '
+    + 'It is separate from the scientific appraisal and evidence appendix. '
+    + 'Keep it confidential where appropriate.</p></aside>'
+    + '<div class="report-content"><h2>Run</h2>';
+
+  h += traceDetails('Run information', {
+    job_id: trace.job_id ?? null,
+    pipeline: trace.pipeline ?? null
+  }, true);
+
+  const files = Array.isArray(trace.files) ? trace.files : [];
+  if (!files.length) {
+    h += '<h2>Source processing</h2>'
+      + '<div style="color:var(--text-muted)">No per-file trace data are available.</div>';
+  } else {
+    files.forEach((file, index) => {
+      h += renderDevelopmentTraceFile(file, index);
+    });
+  }
+
+  h += '<h2>Final synthesis &amp; validation</h2>';
+  const passes = Array.isArray(trace.final_synthesis) ? trace.final_synthesis : [];
+  if (!passes.length) {
+    h += '<div style="color:var(--text-muted)">No final-synthesis pass data are available.</div>';
+  } else {
+    passes.forEach((pass, index) => {
+      h += traceDetails('Pass ' + (pass?.pass ?? (index + 1)), {
+        temperature: pass?.temperature,
+        raw: pass?.raw,
+        programmatic_corrections: pass?.programmatic_corrections,
+        items_before_validation: pass?.items_before_validation,
+        items_after_validation: pass?.items_after_validation,
+        validated: pass?.validated
+      });
+    });
+  }
+
+  h += '<h2>Final assembly</h2>';
+  h += traceDetails('Merge statistics', trace.merge_stats);
+  h += traceDetails('Synthesis note', trace.synthesis_note);
+  h += traceDetails('Merged pre-postprocessing report', trace.merged_pre_postprocessing);
+  h += traceDetails('Final report', trace.final_report);
+  h += '</div>';
+  return h;
+}
+
+async function fetchDevelopmentTrace() {
+  if (!currentJobId) return null;
+  const ra = document.getElementById('reportArea');
+  if (ra._developmentTrace) return ra._developmentTrace;
+  try {
+    const resp = await fetch(BASE + '/api/review/trace/' + currentJobId);
+    if (resp.ok) {
+      const data = await resp.json();
+      ra._developmentTrace = data;
+      return data;
+    }
+  } catch (e) {
+    console.error('Failed to fetch development trace:', e);
+  }
+  return null;
+}
+
+async function dlDevelopmentTrace() {
+  const trace = await fetchDevelopmentTrace();
+  if (!trace) return;
+  const blob = new Blob([JSON.stringify(trace, null, 2)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'development-trace.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function fetchAndToggleDevelopmentTrace() {
+  const sec = document.getElementById('developmentTraceSection');
+  const btn = document.getElementById('developmentTraceToggle');
+  if (!sec) return;
+
+  if (sec.style.display !== 'none') {
+    sec.style.display = 'none';
+    if (btn) btn.textContent = 'Show development trace';
+    return;
+  }
+
+  if (!sec.innerHTML) {
+    if (btn) btn.textContent = 'Loading...';
+    const trace = await fetchDevelopmentTrace();
+    sec.innerHTML = trace
+      ? renderDevelopmentTrace(trace)
+      : '<div class="report-content">Development trace could not be loaded.</div>';
+  }
+
+  sec.style.display = 'block';
+  if (btn) btn.textContent = 'Hide development trace';
 }
 
 async function fetchAndToggleAppendix() {

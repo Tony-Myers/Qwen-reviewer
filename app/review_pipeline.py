@@ -1771,7 +1771,7 @@ def structure_evidence(
     ))
     # --- Randomisation flag (keep this conservative) ---
     randomisation_positive = bool(re.search(
-        r"(?:\brandomi[sz](?:ed|ation)?\b|\brandom\s+allocat(?:ed|ion)?\b|\brandom\s+assign(?:ed|ment)?\b|\bcounterbalanc(?:ed|ing)\b|\brandomi[sz]ed\s+order\b)",
+        r"(?:\brandomi[sz](?:ed|ation)?\b|\brandom(?:ly)?\s+allocat(?:ed|ion)?\b|\brandom(?:ly)?\s+assign(?:ed|ment)?\b|\bcounterbalanc(?:ed|ing)\b|\brandomi[sz]ed\s+order\b)",
         text_lower
     ))
 
@@ -1984,9 +1984,12 @@ def _inline_table_duplicates_existing(inline_text: str, existing_blocks: List[Ev
 def programmatic_post_checks(report_text: str, manifest: EvidenceManifest) -> List[str]:
     """
     Catch common LLM reviewer errors by comparing claims in the report
-    against what the evidence manifest confirms is present.
+    with document-level detection safeguards in the evidence manifest.
 
-    Returns a list of correction instructions to feed into LLM validation.
+    Positive manifest flags trigger source verification; they do not by
+    themselves confirm presence for a specific analysis or substantive claim.
+
+    Returns a list of validation instructions to feed into LLM validation.
     """
     corrections: List[str] = []
     report_lower = report_text.lower()
@@ -2170,9 +2173,9 @@ def programmatic_post_checks(report_text: str, manifest: EvidenceManifest) -> Li
             report_lower,
         ):
             corrections.append(
-                "CORRECTION: The report claims confidence intervals are not reported, but CIs were "
-                "found in the extracted evidence. Revise to specify which particular CIs are missing "
-                "rather than claiming general absence."
+                "CHECK: The report makes a blanket claim that confidence intervals are not reported, "
+                "while the document-level detector found CI-like evidence. Verify the manuscript or "
+                "table evidence before retaining or revising the claim; the manifest flag alone is not evidence."
             )
         # Also catch comma-separated lists: "standard errors, confidence intervals, ... are not reported"
         elif re.search(
@@ -2183,8 +2186,10 @@ def programmatic_post_checks(report_text: str, manifest: EvidenceManifest) -> Li
             report_lower,
         ):
             corrections.append(
-                "CORRECTION: The report claims confidence intervals (alongside other statistics) are "
-                "not reported, but the evidence manifest confirms CIs are present. Revise this claim."
+                "CHECK: The report makes a blanket claim that confidence intervals are not reported "
+                "alongside other statistics, while the document-level detector found CI-like evidence. "
+                "Verify the manuscript or table evidence before retaining or revising the claim; "
+                "the manifest flag alone is not evidence."
             )
 
     # 9. "Standard errors not reported" when present
@@ -2249,13 +2254,16 @@ def refine_manifest_flags(manifest: EvidenceManifest, full_text: str) -> Evidenc
             or re.search(r"(?m)^.{0,120}[=∼~].{0,60}\(\d{1,2}\)\s*$", full_low)):
         manifest.has_equations = True
 
-    # Confidence intervals
-    if seen("95% ci", "confidence interval", "lower bound", "upper bound", " lower ", " upper "):
+    # Refinement may recover explicit evidence missed by the initial scan,
+    # but ordinary comparative language such as "lower" or "upper" is not
+    # sufficient to establish a confidence-interval evidence state.
+    if seen("95% ci", "confidence interval", "lower bound", "upper bound"):
         manifest.has_confidence_intervals = True
 
-    # Standard errors only. SDs and variances are distinct quantities and
-    # must not make the manifest claim that standard errors were reported.
-    if (seen(" se ", "\tse\t", "standard error", "(se)")
+    # Standard errors only. Bare "SE" in prose is ambiguous and is not
+    # sufficient to establish a positive evidence state. Retain explicit
+    # terminology and delimiter-bounded forms used in statistical tables.
+    if (seen("\tse\t", "standard error", "(se)", "se =", "s.e. =")
             or re.search(r"\bse\b(?=\s*(?:\||\t|,|;|:|\n))", full_low)):
         manifest.has_standard_errors = True
 
@@ -2273,8 +2281,14 @@ def refine_manifest_flags(manifest: EvidenceManifest, full_text: str) -> Evidenc
             or re.search(r"\bp\s*\([^\n)]{1,60}\)", full_low)):
         manifest.has_p_values = True
 
-    # Randomisation
-    if seen("randomized", "randomised", "randomized into", "randomised into", "randomization", "randomisation", "order of test completion"):
+    # Randomisation refinement must preserve the distinction between
+    # experimental allocation/order and random sampling or selection.
+    if re.search(
+        r"(?:\brandomi[sz](?:ed|ation)?\b|\brandom(?:ly)?\s+allocat(?:ed|ion)?\b|"
+        r"\brandom(?:ly)?\s+assign(?:ed|ment)?\b|\bcounterbalanc(?:ed|ing)\b|"
+        r"\brandomi[sz]ed\s+order\b|\border\s+of\s+test\s+completion\b)",
+        full_low,
+    ):
         manifest.has_randomisation = True
 
     return manifest
@@ -5560,10 +5574,10 @@ Claim-strength ladder:
 - Prefer "could not verify from the extracted material" over "missing" when extraction is partial.
 
 Manifest-awareness rule:
-- An evidence manifest is provided listing what the extraction pipeline has confirmed is present (e.g., confidence intervals, p-values, model fit statistics).
-- Do NOT claim a statistic type is "absent", "missing", or "not reported" if the manifest says it is present.
-- If the manifest says "Confidence intervals reported: True", you may still note that CIs are not provided for every individual test, but you must NOT make blanket claims that CIs are missing.
-- Frame any gap as "CIs are reported for some analyses but not all" or "CIs for [specific test] could not be identified", not "CIs are not reported".
+- The evidence manifest contains document-level detection safeguards. A True flag means the pipeline detected material consistent with that statistic type somewhere in the extracted document.
+- Treat a positive flag as a reason to avoid an unqualified document-wide absence claim until the manuscript evidence has been checked. It does NOT establish that the statistic applies to a particular analysis, result, or claim.
+- Never use a manifest flag itself as evidence for a Strength, Concern, or substantive finding. Such claims require manuscript text, a table cell, or another specific source item.
+- If the manifest says "Confidence intervals reported: True", you may still investigate whether a CI is absent for a specific analysis, but do not infer from the flag alone where or how CIs were used.
 - Apply the same principle to standard errors, p-values, effect sizes, and model fit statistics.
 
 Design-verification rule:
@@ -5649,7 +5663,7 @@ Internal-consistency checks. These are among the most useful things you can find
 - A claim about the model that the coefficient table contradicts: a covariate the text says was adjusted for that does not appear among that model's predictors, or a term present in one model but silently absent from another that is described the same way.
 - A quantity described as controlled for, held constant, or included, where the reported model for that subgroup does not list it.
 Report each with the exact quoted text and, where relevant, the conflicting table value. If the chunk shows no such inconsistency, say nothing about this; do not manufacture one.
-- If the evidence manifest above says a statistic type is present (e.g., "Confidence intervals reported: True"), do not make blanket claims that CIs are missing. You may note that CIs are not provided for a specific test in this chunk, but frame the gap narrowly.
+- If the evidence manifest above has a positive statistic-type flag (e.g., "Confidence intervals reported: True"), treat it only as a document-level safeguard against an unchecked blanket absence claim. Verify the manuscript or table evidence before making any substantive statement about where that statistic is reported. Never cite the flag itself as evidence.
 - For observational or survey data, distinguish between "verify whether X was handled" and "X was omitted". Use "Verify whether..." unless the text explicitly confirms the omission.
 - Do NOT raise survey-specific concerns (survey weights, clustering adjustments) unless the paper describes a population-level survey design.
 - Do NOT raise generic scrutiny points (missing data mechanisms, interaction testing) unless this specific chunk provides evidence that the concern is relevant.
@@ -11856,10 +11870,10 @@ Concern-selection rules:
 - Do not raise medication-adjustment checks unless medication use is directly relevant to the outcome or exposure and is mentioned in the evidence.
 
 Missingness and reporting rules:
-- Do not claim that a table, coefficient, equation, diagnostic, statistic, or model detail is missing if it is present in the file summaries, the evidence manifest, or the extracted tables above.
+- Do not claim that a table, coefficient, equation, diagnostic, statistic, or model detail is missing if manuscript evidence in the file summaries or extracted tables shows it is present. A positive manifest flag alone requires verification; it does not establish presence for a specific analysis.
 - Before writing any "Extraction limits" bullet, check the extracted tables. Do not record as an extraction limit a value that appears there. Similarly, do not raise a "Check:" asking for a number the tables already give; answer it from the table instead, and report the answer as a concern only if the number warrants one.
-- If the evidence manifest says a statistic type is present, for example "Confidence intervals reported: True", do not make blanket claims that it is missing.
-- You may say that a statistic is "reported for some analyses but not visible for [specific analysis] in the extracted material" if that is accurate.
+- If the evidence manifest has a positive statistic-type flag, for example "Confidence intervals reported: True", treat it as a document-level detection safeguard, not as evidence for a particular analysis or result.
+- Do not make an unchecked blanket absence claim when such a flag is positive. Verify the manuscript or table evidence first, and never use the manifest flag itself to support a Strength, Concern, or substantive finding.
 - Apply the same principle to standard errors, p-values, effect sizes, model fit statistics, equations, and diagnostics.
 - If reporting is present but limited, say "reported briefly" or "not fully detailed", not "unreported".
 - If the manuscript text points to an item but extraction is inadequate, say it appears to be present but could not be fully evaluated from the extracted material.
@@ -11953,15 +11967,15 @@ Do not introduce new criticisms.
 {correction_block}
 
 Evidence hierarchy:
-- A directly supported concern must be grounded in specific evidence from the summaries, tables, or manifest.
+- A directly supported concern must be grounded in specific manuscript evidence from the summaries or tables. A manifest flag may trigger verification but is not itself evidence for a concern.
 - A verification prompt must be motivated by specific evidence but must not be phrased as a confirmed flaw.
 - An extraction limit must be framed as a limitation of the review, not a manuscript fault.
 
 Important correction rules:
 - If the evidence mentions MCMC, Gibbs sampling, MLwiN, or DIC without explicit Bayesian terms, treat it as a frequentist model. Remove hedging that the framework is unclear and remove Bayesian-specific diagnostic requests.
 - If tables, coefficients, standard errors, confidence intervals, fit statistics, equations, diagnostics, or model details are present in the evidence summaries, do not describe them as missing, absent, or unverifiable.
-- If the evidence manifest says a statistic type is present, for example "Confidence intervals reported: True", remove blanket claims that this statistic type is missing.
-- You may revise to: "reported for some analyses but not visible for [specific analysis] in the extracted material" if this is supported.
+- If the evidence manifest has a positive statistic-type flag, for example "Confidence intervals reported: True", treat it as a document-level detection safeguard rather than proof that the statistic is reported for a particular analysis.
+- Before correcting a blanket absence claim, check the supplied manuscript or table evidence. Never replace the claim with a positive substantive statement supported only by the manifest.
 - If something is present but concise, revise wording to "reported briefly", "not fully detailed", or "could not be fully evaluated from the extracted material".
 - If a model form appears in the evidence summaries, do not say the functional form is undefined.
 - If the evidence summaries refer to an equation, figure, table, appendix, or supplementary item, do not say the item is missing unless the evidence explicitly indicates absence.

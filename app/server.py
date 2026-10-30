@@ -1157,12 +1157,18 @@ SUPPORTED_REVIEW_SUFFIXES = {
 MAX_REVIEW_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MiB for the complete upload (primary + supplements)
 REVIEW_UPLOAD_CHUNK_BYTES = 1024 * 1024      # 1 MiB
 
+def _development_mode_enabled(value) -> bool:
+    """Parse Development mode; non-string values default OFF."""
+    return isinstance(value, str) and value.strip().lower() in ("1", "true", "on", "yes")
+
+
 @app.post("/api/review")
 async def start_review(
     file: UploadFile = File(...),
     domain: str = Form("general"),
     thinking: str = Form(""),
     vision: str = Form(""),
+    development_mode: str = Form(""),
     supplements: list[UploadFile] | None = File(None),
 ):
     # Direct Python callers omit the optional FastAPI File parameter.
@@ -1230,11 +1236,14 @@ async def start_review(
     elif vision_choice in ("0", "false", "off", "no"):
         want_vision = False
 
+    want_development_mode = _development_mode_enabled(development_mode)
+
     review_jobs[job_id] = {
         "status": "running",
         "thinking": want_thinking,
         "thinking_scope": thinking_scope,
         "vision": want_vision,
+        "development_mode": want_development_mode,
         "progress": [],
         "report": None,
         "appendix": None,
@@ -2082,22 +2091,16 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
                 f"- **{m.source_name}**: {m.summary_text()}" for m in all_manifests) + "\n\n---\n\n"
         final_report = header + final_report
 
-        # --- Generate evidence appendix (in-memory, not written to disk) ---
-        _add_progress(job_id, "Generating evidence appendix...")
-        appendix_lines = _build_appendix_text(
-            file_path, manifest, table_blocks, chunks,
+        # --- Generate human-facing evidence appendix deterministically ---
+        _add_progress(job_id, "Generating human evidence appendix...")
+        from human_evidence_appendix import (
+            build_evidence_cards,
+            render_human_evidence_appendix,
         )
+        evidence_cards = build_evidence_cards(final_report)
+        appendix_lines = render_human_evidence_appendix(evidence_cards)
 
         if supplementary:
-            appendix_header = appendix_lines.split("## Input files", 1)[0]
-            sections = []
-            for m, (_, name) in zip(all_manifests, inputs):
-                section = _build_appendix_text(
-                    Path(name), m, per_file_tables[name], per_file_chunks[name])
-                sections.append(f"## Source: {name}\n\n## Evidence manifest" +
-                                section.split("## Evidence manifest", 1)[1])
-            appendix_lines = appendix_header + "## Input files\n" + "\n".join(
-                f"- {name}" for _, name in inputs) + "\n\n" + "\n\n".join(sections)
             review_jobs[job_id]["sources"] = citation_source
 
         # Kept so the reviewer can ask where the paper says something. It is
@@ -2111,7 +2114,8 @@ def _run_review_inner(job_id: str, file_path: Path, domain: str, tmp_dir: Path):
         review_jobs[job_id]["text"] = text
         review_jobs[job_id]["report"] = final_report
         review_jobs[job_id]["appendix"] = appendix_lines
-        review_jobs[job_id]["trace"] = trace
+        if review_jobs[job_id].get("development_mode"):
+            review_jobs[job_id]["trace"] = trace
         review_jobs[job_id]["status"] = "complete"
         _add_progress(job_id, "Review complete.")
 
@@ -2160,6 +2164,7 @@ async def review_status(job_id: str):
                     "type": "complete",
                     "report": job["report"],
                     "has_appendix": bool(job.get("appendix")),
+                    "has_development_trace": bool(job.get("development_mode") and job.get("trace")),
                 })
                 yield f"data: {data}\n\n"
                 break
@@ -2201,7 +2206,9 @@ async def download_report(job_id: str):
 @app.get("/api/review/trace/{job_id}")
 async def download_review_trace(job_id: str):
     job = review_jobs.get(job_id)
-    if not job or not job.get("trace"):
+    if not job or not job.get("development_mode"):
+        return JSONResponse({"error": "Development trace not enabled for this review"}, status_code=404)
+    if not job.get("trace"):
         return JSONResponse({"error": "Trace not ready"}, status_code=404)
 
     filename = job.get("filename", "document").rsplit(".", 1)[0]
