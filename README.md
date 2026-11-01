@@ -890,7 +890,7 @@ still overrun it. Raise `LLAMA_SERVER_CTX` if memory allows.
 start-up, so edits need `./scripts/qwen_service.sh restart` to take effect. The
 service tells you when the running process is older than the files on disk.
 
-AI-assisted development
+## AI-assisted development
 
 Development of this software has been supported by Claude (Anthropic), ChatGPT (OpenAI), and OpenAI Codex for tasks including software development, debugging, architectural and methodological review, documentation, testing, and software-quality assessment.
 
