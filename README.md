@@ -889,3 +889,9 @@ still overrun it. Raise `LLAMA_SERVER_CTX` if memory allows.
 **The report says the code changed.** The app server imports the pipeline at
 start-up, so edits need `./scripts/qwen_service.sh restart` to take effect. The
 service tells you when the running process is older than the files on disk.
+
+AI-assisted development
+
+Development of this software has been supported by Claude (Anthropic), ChatGPT (OpenAI), and OpenAI Codex for tasks including software development, debugging, architectural and methodological review, documentation, testing, and software-quality assessment.
+
+All AI-generated or AI-assisted changes are reviewed and accepted by the project author, who retains responsibility for the released software.
